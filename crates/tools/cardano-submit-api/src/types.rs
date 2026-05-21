@@ -693,6 +693,55 @@ impl fmt::Display for ValidityInterval {
     }
 }
 
+/// Plutus execution-unit budget mirroring upstream `newtype
+/// ExUnits = WrapExUnits {unWrapExUnits :: ExUnits' Natural}` over
+/// the record `data ExUnits' a = ExUnits' { exUnitsMem' :: a,
+/// exUnitsSteps' :: a }`. CBOR wire format is a 2-element record
+/// array `[mem, steps]`.
+///
+/// Display matches the stock-derived Show on the newtype +
+/// inner record: `WrapExUnits {unWrapExUnits = ExUnits'
+/// {exUnitsMem' = <n>, exUnitsSteps' = <m>}}`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ExUnits {
+    /// Memory budget.
+    pub mem: u64,
+    /// CPU-step budget.
+    pub steps: u64,
+}
+
+impl ExUnits {
+    /// Decode an `ExUnits` from its canonical 2-element CBOR
+    /// record array `[mem, steps]`.
+    fn from_decoder(dec: &mut yggdrasil_ledger::Decoder<'_>) -> Result<Self, DecoderError> {
+        let len = dec
+            .array()
+            .map_err(|err| DecoderError(format!("ExUnits: expected 2-array: {err:?}")))?;
+        if len != 2 {
+            return Err(DecoderError(format!(
+                "ExUnits: expected 2-element array, got len {len}"
+            )));
+        }
+        let mem = dec
+            .unsigned()
+            .map_err(|err| DecoderError(format!("ExUnits: expected mem: {err:?}")))?;
+        let steps = dec
+            .unsigned()
+            .map_err(|err| DecoderError(format!("ExUnits: expected steps: {err:?}")))?;
+        Ok(Self { mem, steps })
+    }
+}
+
+impl fmt::Display for ExUnits {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "WrapExUnits {{unWrapExUnits = ExUnits' {{exUnitsMem' = {}, exUnitsSteps' = {}}}}}",
+            self.mem, self.steps
+        )
+    }
+}
+
 /// Typed payload for
 /// `ShelleyLedgerPredFailure::ShelleyIncompleteWithdrawals`.
 ///
@@ -5528,8 +5577,9 @@ pub enum ConwayUtxoPredFailure {
     /// `NonEmptyMap TxIn (TxOut era)`. Raw pending map decoder.
     ScriptsNotPaidUTxO(Vec<u8>),
     /// Tag 14: tx execution units exceed the maximum —
-    /// `Mismatch RelLTEQ ExUnits`. Raw pending ExUnits decoder.
-    ExUnitsTooBigUTxO(Vec<u8>),
+    /// `Mismatch RelLTEQ ExUnits` via ToGroup flattened,
+    /// expected-first per `swapMismatch` (R637 typed).
+    ExUnitsTooBigUTxO(Mismatch<ExUnits>),
     /// Tag 15: collateral inputs contain non-ADA tokens —
     /// `Value era`. Raw pending Value decoder.
     CollateralContainsNonADA(Vec<u8>),
@@ -5807,10 +5857,21 @@ impl ConwayUtxoPredFailure {
                 "ScriptsNotPaidUTxO",
                 2,
             )?)),
-            14 => Ok(Self::ExUnitsTooBigUTxO(capture_raw(
-                "ExUnitsTooBigUTxO",
-                3,
-            )?)),
+            14 => {
+                if len != 3 {
+                    return Err(DecoderError(format!(
+                        "ExUnitsTooBigUTxO: expected 3-element envelope, got len {len}"
+                    )));
+                }
+                // swapMismatch: wire order is expected-then-supplied.
+                let expected = ExUnits::from_decoder(&mut dec)?;
+                let supplied = ExUnits::from_decoder(&mut dec)?;
+                Ok(Self::ExUnitsTooBigUTxO(Mismatch {
+                    relation: MismatchRelation::RelLTEQ,
+                    supplied,
+                    expected,
+                }))
+            }
             15 => Ok(Self::CollateralContainsNonADA(capture_raw(
                 "CollateralContainsNonADA",
                 2,
@@ -5916,11 +5977,11 @@ impl fmt::Display for ConwayUtxoPredFailure {
             Self::ValueNotConservedUTxO(b)
             | Self::OutputTooBigUTxO(b)
             | Self::ScriptsNotPaidUTxO(b)
-            | Self::ExUnitsTooBigUTxO(b)
             | Self::CollateralContainsNonADA(b)
             | Self::BabbageOutputTooSmallUTxO(b) => {
                 write!(f, "{} <raw-cbor {} bytes>", self.constructor(), b.len())
             }
+            Self::ExUnitsTooBigUTxO(mm) => write!(f, "ExUnitsTooBigUTxO ({mm})"),
             Self::BabbageNonDisjointRefInputs(ins) => {
                 write!(f, "BabbageNonDisjointRefInputs ({ins})")
             }
@@ -8304,6 +8365,40 @@ mod tests {
         assert!(
             f.to_string().starts_with("ValueNotConservedUTxO <raw-cbor"),
             "got: {f}"
+        );
+    }
+
+    #[test]
+    fn conway_utxo_pred_failure_ex_units_too_big_tag14() {
+        // outer [0x83, 0x0E, expected ExUnits, supplied ExUnits]
+        // (swapMismatch expected-first). Each ExUnits is [mem,
+        // steps]. expected=[10000, 5000000], supplied=[12000,
+        // 6000000].
+        let cbor = [
+            0x83_u8, 0x0E, // tag 14
+            0x82, 0x19, 0x27, 0x10, 0x1A, 0x00, 0x4C, 0x4B, 0x40, // expected
+            0x82, 0x19, 0x2E, 0xE0, 0x1A, 0x00, 0x5B, 0x8D, 0x80, // supplied
+        ];
+        let f = ConwayUtxoPredFailure::from_cbor(&cbor).expect("ExUnitsTooBigUTxO");
+        if let ConwayUtxoPredFailure::ExUnitsTooBigUTxO(mm) = &f {
+            assert_eq!(mm.relation, MismatchRelation::RelLTEQ);
+            assert_eq!(mm.supplied.mem, 12000);
+            assert_eq!(mm.supplied.steps, 6_000_000);
+            assert_eq!(mm.expected.mem, 10000);
+            assert_eq!(mm.expected.steps, 5_000_000);
+        } else {
+            panic!("expected ExUnitsTooBigUTxO, got {f:?}");
+        }
+        let s = f.to_string();
+        assert!(
+            s.contains(
+                "supplied: WrapExUnits {unWrapExUnits = ExUnits' {exUnitsMem' = 12000, exUnitsSteps' = 6000000}}"
+            ),
+            "got: {s}"
+        );
+        assert!(
+            s.starts_with("ExUnitsTooBigUTxO (Mismatch (RelLTEQ)"),
+            "got: {s}"
         );
     }
 

@@ -773,12 +773,15 @@ CBOR-list-encoded StrictMaybe SlotNo) and wired the variant to
 (2026-05-21) typed Conway UTXO tag 22
 (`BabbageNonDisjointRefInputs`) — added the `NonEmptyTxIn`
 (Vec-based, wire-order-preserving NonEmpty list) carrier and
-wired the variant. **18 of 23 Conway UTXO variants now carry
-typed payloads**; the 5 remaining (6 ValueNotConservedUTxO, 13
-ScriptsNotPaidUTxO, 14 ExUnitsTooBigUTxO, 15
+wired the variant. R637 (2026-05-21) typed Conway UTXO tag 14
+(`ExUnitsTooBigUTxO`) — added the `ExUnits` type (record of mem
++ steps) and wired the variant to `Mismatch<ExUnits>` (RelLTEQ,
+ToGroup-flattened expected-first). **19 of 23 Conway UTXO
+variants now carry typed payloads**; the 4 remaining (6
+ValueNotConservedUTxO, 13 ScriptsNotPaidUTxO, 15
 CollateralContainsNonADA, 21 BabbageOutputTooSmallUTxO) keep
-raw inner CBOR pending Value / NonEmptyMap / ExUnits /
-TxOut-Coin-pair decoders. R631
+raw inner CBOR pending Value / NonEmptyMap / TxOut-Coin-pair
+decoders. R631
 (2026-05-21) added the `ConwayUtxosPredFailure` 2-variant
 scaffold (the UTXOS Plutus-script-evaluation sub-rule) plus the
 `FailureDescription` and `TagMismatchDescription` helper types,
