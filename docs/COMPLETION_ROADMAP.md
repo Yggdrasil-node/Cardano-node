@@ -771,13 +771,15 @@ NoConfidence / UpdateCommittee / NewConstitution / InfoAction)
 and wired GOV tags 1 (`MalformedProposal`) and 15
 (`ZeroTreasuryWithdrawals`). R668 (2026-05-21) typed the
 `GovAction::HardForkInitiation` variant. R669 (2026-05-21)
-typed `GovAction::NoConfidence` — `{ prev: Option<GovActionId>
-}` (`StrictMaybe GovPurposeId` null-encoded). **3 of 7
-GovAction variants (InfoAction, HardForkInitiation,
-NoConfidence) are now fully typed**; the other 4
-(ParameterChange / TreasuryWithdrawals / UpdateCommittee /
+typed `GovAction::NoConfidence`. R670 (2026-05-21) typed
+`GovAction::TreasuryWithdrawals` — `{ withdrawals:
+Vec<(RewardAccount, Coin)>, guardrail: Option<ScriptHash> }`
+(`Map AccountAddress Coin` + null-encoded `StrictMaybe
+ScriptHash`). **4 of 7 GovAction variants (InfoAction,
+HardForkInitiation, NoConfidence, TreasuryWithdrawals) are now
+fully typed**; the other 3 (ParameterChange / UpdateCommittee /
 NewConstitution) keep raw payloads pending PParamsUpdate /
-TreasuryWithdrawals-map / committee / Constitution decoders. R653
+committee / Constitution decoders. R653
 (2026-05-21) added the `Anchor` and `ProposalProcedure` types
 (4-field record: deposit / return-addr / GovAction / Anchor)
 and wired GOV tags 8 (`InvalidPrevGovActionId`) and 12

@@ -3080,8 +3080,15 @@ pub enum GovAction {
         /// The proposed new protocol version.
         protver: ProtVer,
     },
-    /// Tag 2: treasury withdrawals proposal. Raw payload.
-    TreasuryWithdrawals(Vec<u8>),
+    /// Tag 2: treasury withdrawals proposal (R670 typed) —
+    /// `Map AccountAddress Coin` + a `StrictMaybe ScriptHash`
+    /// guardrail.
+    TreasuryWithdrawals {
+        /// The `(reward-account, amount)` withdrawal entries.
+        withdrawals: Vec<(yggdrasil_ledger::RewardAccount, u64)>,
+        /// The optional guardrails-script hash.
+        guardrail: Option<[u8; 28]>,
+    },
     /// Tag 3: no-confidence motion (R669 typed) — `StrictMaybe
     /// (GovPurposeId 'CommitteePurpose)`.
     NoConfidence {
@@ -3102,7 +3109,7 @@ impl GovAction {
         match self {
             Self::ParameterChange(_) => 0,
             Self::HardForkInitiation { .. } => 1,
-            Self::TreasuryWithdrawals(_) => 2,
+            Self::TreasuryWithdrawals { .. } => 2,
             Self::NoConfidence { .. } => 3,
             Self::UpdateCommittee(_) => 4,
             Self::NewConstitution(_) => 5,
@@ -3115,7 +3122,7 @@ impl GovAction {
         match self {
             Self::ParameterChange(_) => "ParameterChange",
             Self::HardForkInitiation { .. } => "HardForkInitiation",
-            Self::TreasuryWithdrawals(_) => "TreasuryWithdrawals",
+            Self::TreasuryWithdrawals { .. } => "TreasuryWithdrawals",
             Self::NoConfidence { .. } => "NoConfidence",
             Self::UpdateCommittee(_) => "UpdateCommittee",
             Self::NewConstitution(_) => "NewConstitution",
@@ -3178,6 +3185,54 @@ impl GovAction {
                 decode_null_strict_maybe(dec, "NoConfidence prev", GovActionId::from_decoder)?;
             return Ok(Self::NoConfidence { prev });
         }
+        if tag == 2 {
+            // TreasuryWithdrawals — `[2, Map AccountAddress
+            // Coin, decodeNullStrictMaybe ScriptHash]`.
+            if len != 3 {
+                return Err(DecoderError(format!(
+                    "TreasuryWithdrawals: expected 3-element envelope, got len {len}"
+                )));
+            }
+            let count = dec.map().map_err(|err| {
+                DecoderError(format!(
+                    "TreasuryWithdrawals: expected withdrawal map: {err:?}"
+                ))
+            })?;
+            let mut withdrawals = Vec::with_capacity(count as usize);
+            for _ in 0..count {
+                let acct_bytes = dec.bytes().map_err(|err| {
+                    DecoderError(format!(
+                        "TreasuryWithdrawals: expected AccountAddress bytes: {err:?}"
+                    ))
+                })?;
+                let account =
+                    yggdrasil_ledger::RewardAccount::from_bytes(acct_bytes).ok_or_else(|| {
+                        DecoderError(format!(
+                            "TreasuryWithdrawals: invalid reward-account ({} bytes)",
+                            acct_bytes.len()
+                        ))
+                    })?;
+                let amount = dec.unsigned().map_err(|err| {
+                    DecoderError(format!("TreasuryWithdrawals: expected Coin: {err:?}"))
+                })?;
+                withdrawals.push((account, amount));
+            }
+            let guardrail =
+                decode_null_strict_maybe(dec, "TreasuryWithdrawals guardrail", |dec| {
+                    let bytes = dec.bytes().map_err(|err| {
+                        DecoderError(format!(
+                            "TreasuryWithdrawals: expected ScriptHash bytes: {err:?}"
+                        ))
+                    })?;
+                    bytes.try_into().map_err(|_| {
+                        DecoderError("TreasuryWithdrawals: ScriptHash must be 28 bytes".to_string())
+                    })
+                })?;
+            return Ok(Self::TreasuryWithdrawals {
+                withdrawals,
+                guardrail,
+            });
+        }
         // Skip the remaining payload elements to advance the
         // decoder, then capture them raw by byte range.
         let payload_start = dec.position();
@@ -3192,7 +3247,6 @@ impl GovAction {
             .to_vec();
         match tag {
             0 => Ok(Self::ParameterChange(raw)),
-            2 => Ok(Self::TreasuryWithdrawals(raw)),
             4 => Ok(Self::UpdateCommittee(raw)),
             5 => Ok(Self::NewConstitution(raw)),
             other => Err(DecoderError(format!(
@@ -3227,10 +3281,31 @@ impl fmt::Display for GovAction {
                 };
                 write!(f, "NoConfidence ({prev_render})")
             }
-            Self::ParameterChange(b)
-            | Self::TreasuryWithdrawals(b)
-            | Self::UpdateCommittee(b)
-            | Self::NewConstitution(b) => {
+            Self::TreasuryWithdrawals {
+                withdrawals,
+                guardrail,
+            } => {
+                f.write_str("TreasuryWithdrawals (fromList [")?;
+                let mut first = true;
+                for (account, amount) in withdrawals {
+                    if !first {
+                        f.write_str(",")?;
+                    }
+                    first = false;
+                    write!(
+                        f,
+                        "({}, {})",
+                        show_reward_account(account),
+                        CoinShow(*amount)
+                    )?;
+                }
+                let guardrail_render = match guardrail {
+                    None => "SNothing".to_string(),
+                    Some(hash) => format!("SJust (ScriptHash \"{}\")", hex::encode(hash)),
+                };
+                write!(f, "]) ({guardrail_render})")
+            }
+            Self::ParameterChange(b) | Self::UpdateCommittee(b) | Self::NewConstitution(b) => {
                 write!(f, "{} <raw-cbor {} bytes>", self.constructor(), b.len())
             }
         }
@@ -11724,20 +11799,63 @@ mod tests {
     #[test]
     fn conway_gov_pred_failure_zero_treasury_withdrawals_tag15() {
         // outer [0x82, 0x0F, GovAction]. GovAction =
-        // TreasuryWithdrawals [0x83, 0x02, map(0), null] — tag 2,
-        // 2 payload elements.
+        // TreasuryWithdrawals [0x83, 0x02, map(0), null] — an
+        // empty withdrawal map + SNothing guardrail.
         let cbor = [0x82_u8, 0x0F, 0x83, 0x02, 0xA0, 0xF6];
         let f = ConwayGovPredFailure::from_cbor(&cbor).expect("ZeroTreasuryWithdrawals");
         if let ConwayGovPredFailure::ZeroTreasuryWithdrawals(action) = &f {
             assert_eq!(action.tag(), 2);
-            assert!(matches!(action, GovAction::TreasuryWithdrawals(_)));
+            if let GovAction::TreasuryWithdrawals {
+                withdrawals,
+                guardrail,
+            } = action
+            {
+                assert!(withdrawals.is_empty());
+                assert!(guardrail.is_none());
+            } else {
+                panic!("expected TreasuryWithdrawals, got {action:?}");
+            }
         } else {
             panic!("expected ZeroTreasuryWithdrawals, got {f:?}");
         }
+        assert_eq!(
+            f.to_string(),
+            "ZeroTreasuryWithdrawals (TreasuryWithdrawals (fromList []) (SNothing))"
+        );
+    }
+
+    #[test]
+    fn conway_gov_pred_failure_malformed_proposal_treasury_withdrawals() {
+        // MalformedProposal carrying a GovAction
+        // TreasuryWithdrawals with one withdrawal entry and a
+        // SJust guardrail script hash.
+        let mut cbor = vec![0x82_u8, 0x01, 0x83, 0x02, 0xA1];
+        // withdrawal map key: reward account bytes(29)
+        cbor.push(0x58);
+        cbor.push(29);
+        cbor.push(0xE1);
+        cbor.extend_from_slice(&[0x5C_u8; 28]);
+        cbor.extend_from_slice(&[0x1A, 0x00, 0x0F, 0x42, 0x40]); // amount 1_000_000
+        // guardrail: SJust ScriptHash bytes(28)
+        cbor.push(0x58);
+        cbor.push(28);
+        cbor.extend_from_slice(&[0x8E_u8; 28]);
+        let f = ConwayGovPredFailure::from_cbor(&cbor).expect("MalformedProposal");
+        if let ConwayGovPredFailure::MalformedProposal(GovAction::TreasuryWithdrawals {
+            withdrawals,
+            guardrail,
+        }) = &f
+        {
+            assert_eq!(withdrawals.len(), 1);
+            assert_eq!(withdrawals[0].1, 1_000_000);
+            assert_eq!(*guardrail, Some([0x8E_u8; 28]));
+        } else {
+            panic!("expected MalformedProposal TreasuryWithdrawals, got {f:?}");
+        }
+        let s = f.to_string();
         assert!(
-            f.to_string()
-                .starts_with("ZeroTreasuryWithdrawals (TreasuryWithdrawals <raw-cbor"),
-            "got: {f}"
+            s.contains(", Coin 1000000)]) (SJust (ScriptHash \"8e8e"),
+            "got: {s}"
         );
     }
 
