@@ -4645,6 +4645,83 @@ impl fmt::Display for NonEmptyTxOutCoinPair {
     }
 }
 
+/// Non-empty list of `(actualSize, maxValue, TxOut)` triples
+/// mirroring upstream `NonEmpty (Int, Int, TxOut era)` — the
+/// payload of `OutputTooBigUTxO`. CBOR wire format is a CBOR
+/// array of 3-element `[actualSize, maxValue, TxOut]` arrays;
+/// empty arrays reject at decode time.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NonEmptyOutputTooBig {
+    /// Decoded `(actual-size, max-value, output)` triples in
+    /// wire order. Guaranteed non-empty by `from_cbor`.
+    pub entries: Vec<(i64, i64, ShelleyTxOut)>,
+}
+
+impl NonEmptyOutputTooBig {
+    /// Decode a `NonEmpty (Int, Int, TxOut)` from canonical CBOR
+    /// bytes.
+    pub fn from_cbor(bytes: &[u8]) -> Result<Self, DecoderError> {
+        use yggdrasil_ledger::Decoder;
+        let mut dec = Decoder::new(bytes);
+        let count = dec.array().map_err(|err| {
+            DecoderError(format!(
+                "NonEmptyOutputTooBig: expected CBOR array: {err:?}"
+            ))
+        })?;
+        if count == 0 {
+            return Err(DecoderError(
+                "NonEmptyOutputTooBig: NonEmpty requires at least one entry".to_string(),
+            ));
+        }
+        let mut entries = Vec::with_capacity(count as usize);
+        for _ in 0..count {
+            let triple_len = dec.array().map_err(|err| {
+                DecoderError(format!(
+                    "NonEmptyOutputTooBig: expected 3-element triple: {err:?}"
+                ))
+            })?;
+            if triple_len != 3 {
+                return Err(DecoderError(format!(
+                    "NonEmptyOutputTooBig: expected 3-element triple, got len {triple_len}"
+                )));
+            }
+            let actual_size = dec.signed().map_err(|err| {
+                DecoderError(format!(
+                    "NonEmptyOutputTooBig: expected actualSize: {err:?}"
+                ))
+            })?;
+            let max_value = dec.signed().map_err(|err| {
+                DecoderError(format!("NonEmptyOutputTooBig: expected maxValue: {err:?}"))
+            })?;
+            let tx_out = ShelleyTxOut::from_decoder(&mut dec)?;
+            entries.push((actual_size, max_value, tx_out));
+        }
+        Ok(Self { entries })
+    }
+}
+
+impl fmt::Display for NonEmptyOutputTooBig {
+    /// Render upstream `Show (NonEmpty (Int, Int, TxOut))`:
+    /// `<head> :| [<tail>...]` where each entry is a Haskell
+    /// 3-tuple `(<size>, <max>, <TxOut>)`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let (head, tail) = self
+            .entries
+            .split_first()
+            .expect("NonEmptyOutputTooBig enforces ≥1 entry at decode time");
+        write!(f, "({}, {}, {}) :| [", head.0, head.1, head.2)?;
+        let mut first = true;
+        for (size, max, tx_out) in tail {
+            if !first {
+                f.write_str(",")?;
+            }
+            first = false;
+            write!(f, "({size}, {max}, {tx_out})")?;
+        }
+        f.write_str("]")
+    }
+}
+
 /// Non-empty map from transaction inputs to outputs mirroring
 /// upstream `NonEmptyMap TxIn (TxOut era)` (`newtype NonEmptyMap
 /// k v = NonEmptyMap (Map k v)`). CBOR wire format is a CBOR map
@@ -8811,8 +8888,8 @@ pub enum ConwayUtxoPredFailure {
     /// big — `NonEmpty (TxOut era)` (R620 typed).
     OutputBootAddrAttrsTooBig(NonEmptyTxOut),
     /// Tag 11: outputs too big — `NonEmpty (Int, Int, TxOut
-    /// era)`. Raw pending triple decoder.
-    OutputTooBigUTxO(Vec<u8>),
+    /// era)` (R687 typed).
+    OutputTooBigUTxO(NonEmptyOutputTooBig),
     /// Tag 12: insufficient collateral — `DeltaCoin + Coin`
     /// (R633 typed).
     InsufficientCollateral {
@@ -8942,14 +9019,6 @@ impl ConwayUtxoPredFailure {
         let payload_bytes = bytes.get(payload_offset..).ok_or_else(|| {
             DecoderError("ConwayUtxoPredFailure: payload offset out of bounds".to_string())
         })?;
-        let capture_raw = |label: &str, expected_len: u64| -> Result<Vec<u8>, DecoderError> {
-            if len != expected_len {
-                return Err(DecoderError(format!(
-                    "{label}: expected {expected_len}-element envelope, got len {len}"
-                )));
-            }
-            Ok(payload_bytes.to_vec())
-        };
         match tag {
             0 => {
                 if len != 2 {
@@ -9098,7 +9167,16 @@ impl ConwayUtxoPredFailure {
                     payload_bytes,
                 )?))
             }
-            11 => Ok(Self::OutputTooBigUTxO(capture_raw("OutputTooBigUTxO", 2)?)),
+            11 => {
+                if len != 2 {
+                    return Err(DecoderError(format!(
+                        "OutputTooBigUTxO: expected 2-element envelope, got len {len}"
+                    )));
+                }
+                Ok(Self::OutputTooBigUTxO(NonEmptyOutputTooBig::from_cbor(
+                    payload_bytes,
+                )?))
+            }
             12 => {
                 if len != 3 {
                     return Err(DecoderError(format!(
@@ -9252,8 +9330,8 @@ impl fmt::Display for ConwayUtxoPredFailure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::UtxosFailure(utxos) => write!(f, "UtxosFailure ({utxos})"),
-            Self::OutputTooBigUTxO(b) => {
-                write!(f, "OutputTooBigUTxO <raw-cbor {} bytes>", b.len())
+            Self::OutputTooBigUTxO(outs) => {
+                write!(f, "OutputTooBigUTxO ({outs})")
             }
             Self::ValueNotConservedUTxO(mm) => {
                 write!(f, "ValueNotConservedUTxO ({mm})")
@@ -13950,6 +14028,45 @@ mod tests {
                 "ValidityInterval {invalidBefore = SNothing, invalidHereafter = SNothing}"
             ),
             "got: {f}"
+        );
+    }
+
+    #[test]
+    fn conway_utxo_pred_failure_output_too_big_tag11() {
+        // outer [0x82, 0x0B, NonEmpty [(Int, Int, TxOut)]].
+        // NonEmpty array(1) of triple [actualSize, maxValue, TxOut].
+        let mut cbor = vec![0x82_u8, 0x0B, 0x81, 0x83];
+        cbor.extend_from_slice(&[0x19, 0x13, 0x88]); // actualSize 5000
+        cbor.extend_from_slice(&[0x19, 0x10, 0x00]); // maxValue 4096
+        // TxOut 2-array [bytes(29) addr, coin 700]
+        cbor.push(0x82);
+        cbor.push(0x58);
+        cbor.push(29);
+        cbor.push(0x61);
+        cbor.extend_from_slice(&[0x3D_u8; 28]);
+        cbor.extend_from_slice(&[0x19, 0x02, 0xBC]); // coin 700
+        let f = ConwayUtxoPredFailure::from_cbor(&cbor).expect("OutputTooBigUTxO");
+        if let ConwayUtxoPredFailure::OutputTooBigUTxO(outs) = &f {
+            assert_eq!(outs.entries.len(), 1);
+            assert_eq!(outs.entries[0].0, 5000);
+            assert_eq!(outs.entries[0].1, 4096);
+            assert_eq!(outs.entries[0].2.value.coin, 700);
+        } else {
+            panic!("expected OutputTooBigUTxO, got {f:?}");
+        }
+        let s = f.to_string();
+        assert!(s.starts_with("OutputTooBigUTxO ((5000, 4096, "), "got: {s}");
+        assert!(s.ends_with(":| [])"), "got: {s}");
+    }
+
+    #[test]
+    fn conway_utxo_pred_failure_output_too_big_rejects_empty() {
+        let cbor = [0x82_u8, 0x0B, 0x80];
+        let err = ConwayUtxoPredFailure::from_cbor(&cbor).expect_err("empty NonEmpty must reject");
+        assert!(
+            err.to_string()
+                .contains("NonEmpty requires at least one entry"),
+            "got: {err}"
         );
     }
 

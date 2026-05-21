@@ -914,6 +914,12 @@ added the `TxOutSource` and `BabbageContextError` 7-variant
 types and typed `ContextError` tag 8 (`BabbageContextError`).
 **All 8 `ContextError` variants now carry typed payloads — the
 `ContextError` tree is fully typed.**
+R687 (2026-05-21) typed Conway UTXO tag 11 (`OutputTooBigUTxO`)
+— added the `NonEmptyOutputTooBig` carrier (`NonEmpty (Int,
+Int, TxOut)` triples) and removed the last `Vec<u8>` raw
+payload from the `ConwayUtxoPredFailure` enum. **Every variant
+of all 23 Conway UTXO predicate failures now carries a fully
+typed payload.**
 **All four `CollectError` variants now carry typed payloads.**
 **Both Conway UTXOS variants now carry typed payloads — the
 Conway UTXOS sub-rule is fully typed.** The Conway LEDGER →
