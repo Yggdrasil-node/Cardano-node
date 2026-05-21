@@ -3097,8 +3097,15 @@ pub enum GovAction {
     },
     /// Tag 4: constitutional-committee update. Raw payload.
     UpdateCommittee(Vec<u8>),
-    /// Tag 5: new-constitution proposal. Raw payload.
-    NewConstitution(Vec<u8>),
+    /// Tag 5: new-constitution proposal (R671 typed) —
+    /// `StrictMaybe (GovPurposeId 'ConstitutionPurpose)` + the
+    /// proposed `Constitution`.
+    NewConstitution {
+        /// The previous constitution governance action, if any.
+        prev: Option<GovActionId>,
+        /// The proposed constitution.
+        constitution: Constitution,
+    },
     /// Tag 6: informational action — no payload.
     InfoAction,
 }
@@ -3112,7 +3119,7 @@ impl GovAction {
             Self::TreasuryWithdrawals { .. } => 2,
             Self::NoConfidence { .. } => 3,
             Self::UpdateCommittee(_) => 4,
-            Self::NewConstitution(_) => 5,
+            Self::NewConstitution { .. } => 5,
             Self::InfoAction => 6,
         }
     }
@@ -3125,7 +3132,7 @@ impl GovAction {
             Self::TreasuryWithdrawals { .. } => "TreasuryWithdrawals",
             Self::NoConfidence { .. } => "NoConfidence",
             Self::UpdateCommittee(_) => "UpdateCommittee",
-            Self::NewConstitution(_) => "NewConstitution",
+            Self::NewConstitution { .. } => "NewConstitution",
             Self::InfoAction => "InfoAction",
         }
     }
@@ -3233,6 +3240,19 @@ impl GovAction {
                 guardrail,
             });
         }
+        if tag == 5 {
+            // NewConstitution — `[5, decodeNullStrictMaybe
+            // GovPurposeId, Constitution]`.
+            if len != 3 {
+                return Err(DecoderError(format!(
+                    "NewConstitution: expected 3-element envelope, got len {len}"
+                )));
+            }
+            let prev =
+                decode_null_strict_maybe(dec, "NewConstitution prev", GovActionId::from_decoder)?;
+            let constitution = Constitution::from_decoder(dec)?;
+            return Ok(Self::NewConstitution { prev, constitution });
+        }
         // Skip the remaining payload elements to advance the
         // decoder, then capture them raw by byte range.
         let payload_start = dec.position();
@@ -3248,7 +3268,6 @@ impl GovAction {
         match tag {
             0 => Ok(Self::ParameterChange(raw)),
             4 => Ok(Self::UpdateCommittee(raw)),
-            5 => Ok(Self::NewConstitution(raw)),
             other => Err(DecoderError(format!(
                 "GovAction: unknown variant tag {other}"
             ))),
@@ -3305,7 +3324,16 @@ impl fmt::Display for GovAction {
                 };
                 write!(f, "]) ({guardrail_render})")
             }
-            Self::ParameterChange(b) | Self::UpdateCommittee(b) | Self::NewConstitution(b) => {
+            Self::NewConstitution { prev, constitution } => {
+                let prev_render = match prev {
+                    None => "SNothing".to_string(),
+                    Some(gaid) => {
+                        format!("SJust (GovPurposeId {{unGovPurposeId = {gaid}}})")
+                    }
+                };
+                write!(f, "NewConstitution ({prev_render}) ({constitution})")
+            }
+            Self::ParameterChange(b) | Self::UpdateCommittee(b) => {
                 write!(f, "{} <raw-cbor {} bytes>", self.constructor(), b.len())
             }
         }
@@ -3359,6 +3387,60 @@ impl fmt::Display for Anchor {
             "Anchor {{anchorUrl = Url {{urlToText = \"{}\"}}, anchorDataHash = SafeHash \"{}\"}}",
             self.url,
             hex::encode(self.data_hash)
+        )
+    }
+}
+
+/// Conway constitution mirroring upstream `data Constitution
+/// era = Constitution { constitutionAnchor :: Anchor,
+/// constitutionGuardrailsScriptHash :: StrictMaybe ScriptHash
+/// }`. CBOR wire format is a 2-element record `[Anchor,
+/// decodeNullStrictMaybe ScriptHash]`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Constitution {
+    /// The constitution's off-chain metadata anchor.
+    pub anchor: Anchor,
+    /// The optional guardrails-script hash.
+    pub guardrail: Option<[u8; 28]>,
+}
+
+impl Constitution {
+    /// Decode a `Constitution` from its 2-element CBOR record
+    /// `[Anchor, decodeNullStrictMaybe ScriptHash]`.
+    fn from_decoder(dec: &mut yggdrasil_ledger::Decoder<'_>) -> Result<Self, DecoderError> {
+        let len = dec
+            .array()
+            .map_err(|err| DecoderError(format!("Constitution: expected 2-array: {err:?}")))?;
+        if len != 2 {
+            return Err(DecoderError(format!(
+                "Constitution: expected 2-element record, got len {len}"
+            )));
+        }
+        let anchor = Anchor::from_decoder(dec)?;
+        let guardrail = decode_null_strict_maybe(dec, "Constitution guardrail", |dec| {
+            let bytes = dec.bytes().map_err(|err| {
+                DecoderError(format!("Constitution: expected ScriptHash bytes: {err:?}"))
+            })?;
+            bytes
+                .try_into()
+                .map_err(|_| DecoderError("Constitution: ScriptHash must be 28 bytes".to_string()))
+        })?;
+        Ok(Self { anchor, guardrail })
+    }
+}
+
+impl fmt::Display for Constitution {
+    /// Render upstream stock-derived record `Show (Constitution
+    /// era)`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let guardrail_render = match self.guardrail {
+            None => "SNothing".to_string(),
+            Some(hash) => format!("SJust (ScriptHash \"{}\")", hex::encode(hash)),
+        };
+        write!(
+            f,
+            "Constitution {{constitutionAnchor = {}, constitutionGuardrailsScriptHash = {guardrail_render}}}",
+            self.anchor
         )
     }
 }
@@ -11821,6 +11903,44 @@ mod tests {
         assert_eq!(
             f.to_string(),
             "ZeroTreasuryWithdrawals (TreasuryWithdrawals (fromList []) (SNothing))"
+        );
+    }
+
+    #[test]
+    fn conway_gov_pred_failure_malformed_proposal_new_constitution() {
+        // MalformedProposal carrying a GovAction NewConstitution
+        // — `[5, SNothing, Constitution [Anchor, SNothing]]`.
+        let mut cbor = vec![0x82_u8, 0x01, 0x83, 0x05, 0xF6, 0x82];
+        // Constitution.anchor = [url, hash32]
+        cbor.push(0x82);
+        cbor.push(0x68); // text(8)
+        cbor.extend_from_slice(b"ipfs://c");
+        cbor.push(0x58);
+        cbor.push(32);
+        cbor.extend_from_slice(&[0x9A_u8; 32]);
+        cbor.push(0xF6); // Constitution.guardrail = null → SNothing
+        let f = ConwayGovPredFailure::from_cbor(&cbor).expect("MalformedProposal");
+        if let ConwayGovPredFailure::MalformedProposal(GovAction::NewConstitution {
+            prev,
+            constitution,
+        }) = &f
+        {
+            assert!(prev.is_none());
+            assert_eq!(constitution.anchor.url, "ipfs://c");
+            assert!(constitution.guardrail.is_none());
+        } else {
+            panic!("expected MalformedProposal NewConstitution, got {f:?}");
+        }
+        let s = f.to_string();
+        assert!(
+            s.starts_with(
+                "MalformedProposal (NewConstitution (SNothing) (Constitution {constitutionAnchor = Anchor {anchorUrl = Url {urlToText = \"ipfs://c\"}"
+            ),
+            "got: {s}"
+        );
+        assert!(
+            s.ends_with("constitutionGuardrailsScriptHash = SNothing}))"),
+            "got: {s}"
         );
     }
 
