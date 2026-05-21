@@ -329,14 +329,20 @@ one extraction):
     genesis-reading half of `Block/Cardano.hs::mkProtocolInfo`. New
     workspace-internal dep `yggdrasil-node-genesis`. A test loads the
     real vendored `configuration/preview/` genesis bundle.
-  - **Slice 4 — load the genesis-seeded `LedgerState` in `run`.**
-    When `--config` is supplied, fold the `CardanoGenesisBundle`
-    through `yggdrasil_node_genesis::build_base_ledger_state` into
-    the initial `LedgerState` (the db-synthesizer
-    `build_initial_forge_state` wiring).
-  - **Slice 5 — thread it into the analysis runner.** The 6
-    ledger-applying analyses bootstrap from the genesis-seeded
-    `LedgerState` instead of `LedgerState::new()`.
+  - ✅ **Slice 4** (round 714) — `build_genesis_ledger_state`: folds
+    a `CardanoGenesisBundle` through
+    `yggdrasil_node_genesis::build_base_ledger_state` into the
+    genesis-seeded initial `LedgerState` (the db-analyser projection
+    of upstream `ProtocolInfo`'s `pInfoInitLedger`; the
+    db-synthesizer `build_initial_forge_state` wiring minus the
+    nonce / stake-snapshot fields a chain analyser does not need).
+    A pure tested function — wiring it into `run` + the runner is
+    slice 5.
+  - **Slice 5 — thread the genesis-seeded `LedgerState` through
+    `run` into the analysis runner.** `run` calls `make_protocol_info`
+    + `build_genesis_ledger_state` when `--config` is supplied; the 6
+    ledger-applying analyses bootstrap from it instead of
+    `LedgerState::new()`.
   **Validation gate:** a Conway genesis from
   `configuration/preview/` parses; `db-analyser --config
   <preview-config> --db <synthesized-chain>` runs the apply-loop

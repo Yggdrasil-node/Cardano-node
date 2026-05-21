@@ -34,12 +34,14 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
-use yggdrasil_ledger::Nonce;
-use yggdrasil_node_config::RequiresNetworkMagic;
+use yggdrasil_ledger::{LedgerState, Nonce};
+use yggdrasil_node_config::{MAINNET_NETWORK_MAGIC, RequiresNetworkMagic};
 use yggdrasil_node_genesis::{
-    AlonzoGenesis, ByronGenesisUtxoEntry, ConwayGenesis, GenesisLoadError, ShelleyGenesis,
-    compute_genesis_file_hash, load_alonzo_genesis, load_byron_genesis_utxo, load_conway_genesis,
-    load_shelley_genesis, shelley_genesis_hash_to_praos_nonce,
+    AlonzoGenesis, BaseLedgerStateInputs, ByronGenesisUtxoEntry, ConwayGenesis, GenesisLoadError,
+    ShelleyGenesis, build_base_ledger_state, build_genesis_enact_state, build_protocol_parameters,
+    build_shelley_genesis_bootstrap, compute_genesis_file_hash, load_alonzo_genesis,
+    load_byron_genesis_utxo, load_conway_genesis, load_shelley_genesis,
+    shelley_genesis_hash_to_praos_nonce,
 };
 
 /// Block-byte-count alias, used by [`HasAnalysis::block_tx_sizes`].
@@ -637,6 +639,58 @@ impl HasProtocolInfo for yggdrasil_ledger::Block {
             praos_nonce,
         })
     }
+}
+
+/// Fold a [`CardanoGenesisBundle`] into the genesis-seeded initial
+/// [`LedgerState`].
+///
+/// The db-analyser projection of upstream `ProtocolInfo`'s
+/// `pInfoInitLedger` (`Block/Cardano.hs::mkProtocolInfo` →
+/// `mkCardanoProtocolInfo` → `protocolInfoCardano`): the initial ledger
+/// state every ledger-applying analysis replays on top of. The wiring
+/// mirrors `db-synthesizer`'s `build_initial_forge_state` — the same
+/// `BaseLedgerStateInputs` fed to the shared
+/// `yggdrasil_node_genesis::build_base_ledger_state`, so db-analyser and
+/// db-synthesizer seed a byte-identical initial ledger state — minus the
+/// nonce / stake-snapshot fields, which a chain *analyser* does not need.
+///
+/// ## Naming parity
+///
+/// **Strict mirror:** none. db-analyser-scoped projection of upstream
+/// `mkProtocolInfo`'s genesis-seeded `pInfoInitLedger`.
+pub fn build_genesis_ledger_state(
+    bundle: &CardanoGenesisBundle,
+) -> Result<LedgerState, GenesisLoadError> {
+    let shelley_bootstrap = build_shelley_genesis_bootstrap(&bundle.shelley)?;
+    let inputs = BaseLedgerStateInputs {
+        // The node derives the network id from the mandatory
+        // `NodeConfigFile::network_magic`; db-analyser — like the
+        // synthesizer — falls back through the optional Shelley-genesis
+        // `networkMagic` (present in every vendored genesis).
+        expected_network_id: bundle
+            .shelley
+            .network_magic
+            .map(|m| u8::from(m == MAINNET_NETWORK_MAGIC))
+            .unwrap_or(0),
+        byron_entries: bundle.byron.clone(),
+        shelley_bootstrap: Some(shelley_bootstrap),
+        protocol_params: Some(build_protocol_parameters(
+            &bundle.shelley,
+            &bundle.alonzo,
+            Some(&bundle.conway),
+        )?),
+        enact_state: build_genesis_enact_state(Some(&bundle.conway))?,
+        // The Byron→Shelley boundary scalars are yggdrasil-internal node
+        // config keys, absent from every genesis file; the defaults
+        // (no boundary, the default Byron epoch length) match the
+        // synthesizer.
+        byron_to_shelley_slot: None,
+        first_shelley_epoch: None,
+        byron_epoch_length: 21_600,
+        active_slot_coeff: bundle.shelley.active_slots_coeff,
+        security_param_k: bundle.shelley.security_param,
+    };
+    Ok(build_base_ledger_state(inputs))
 }
 
 // ---------------------------------------------------------------------------
@@ -1327,6 +1381,39 @@ mod tests {
         assert!(matches!(bundle.praos_nonce, Nonce::Hash(_)));
         // Preview Shelley genesis epoch length is 86_400.
         assert_eq!(bundle.shelley.epoch_length, 86_400);
+    }
+
+    // ── build_genesis_ledger_state (genesis-bootstrap arc, slice 4) ────
+
+    #[test]
+    fn build_genesis_ledger_state_seeds_byron_rooted_state() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = write_cardano_config(tmp.path(), "shelley-genesis.json", None);
+        let args = CardanoBlockArgs {
+            config_file: config,
+            threshold: None,
+        };
+        let bundle = <Block as HasProtocolInfo>::make_protocol_info(args).expect("bundle");
+        let ledger = build_genesis_ledger_state(&bundle).expect("builds ledger state");
+        // `build_base_ledger_state` roots the state at the Byron era
+        // (the Shelley genesis UTxO is staged for lazy materialization).
+        assert_eq!(ledger.current_era(), Era::Byron);
+    }
+
+    #[test]
+    fn build_genesis_ledger_state_from_vendored_preview() {
+        // End-to-end: real preview genesis bundle → genesis-seeded
+        // `LedgerState`. Exercises `build_shelley_genesis_bootstrap`
+        // decoding the real preview `initialFunds` addresses.
+        let config = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../configuration/preview/config.json");
+        let args = CardanoBlockArgs {
+            config_file: config,
+            threshold: None,
+        };
+        let bundle = <Block as HasProtocolInfo>::make_protocol_info(args).expect("preview bundle");
+        let ledger = build_genesis_ledger_state(&bundle).expect("builds preview ledger state");
+        assert_eq!(ledger.current_era(), Era::Byron);
     }
 
     // ── HasAnalysis for yggdrasil_ledger::Block (R476) ─────────────────
