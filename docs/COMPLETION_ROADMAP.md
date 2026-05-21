@@ -905,9 +905,18 @@ variants now carry typed payloads — the Conway UTXOW sub-rule
 is fully typed.** Every Conway predicate-failure sub-rule
 (LEDGER 9/9, UTXOW 19/19, UTXO 23/23, UTXOS 2/2, CERT chain
 DELEG/POOL/GOVCERT, GOV 19/19) is now structurally typed
-end-to-end; only the deepest leaf payloads (TxCert,
-PParamsUpdate, Constitution, ContextError, PlutusPurpose
-NoRedeemer) remain raw within their carriers.
+end-to-end; only the deepest leaf payloads (PParamsUpdate,
+Constitution, ContextError, PlutusPurpose NoRedeemer, and the
+per-certificate bodies inside `TxCert`) remain raw within their
+carriers. R660 (2026-05-21) added the `TxCert` scaffold — the
+Conway certificate `Sum` (tags 0-18) is decoded into its
+upstream 3-way family split (`ConwayTxCertDeleg` /
+`ConwayTxCertPool` / `ConwayTxCertGov`) with the specific
+certificate constructor name surfaced (RegTxCert, RegPoolTxCert,
+RegDRepTxCert, …); the per-certificate payload stays raw
+pending the typed `ConwayDelegCert` / `PoolCert` /
+`ConwayGovCert` decoders. `ConwayPlutusPurposeItem::ConwayCertifying`
+now carries a typed `TxCert`.
 Phase-2.5+ remaining work: per-variant decoders for those 5 raw
 UTXO variants, `ShelleyDelegsPredFailure` (tag-1 of the LEDGER
 tree), wiring the typed `ShelleyUtxowPredFailure` decoder into

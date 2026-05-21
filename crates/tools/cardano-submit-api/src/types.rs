@@ -5864,25 +5864,149 @@ impl fmt::Display for ConwayPlutusPurposeIx {
     }
 }
 
+/// `TxCert` mirror — a Conway-era transaction certificate from
+/// `Cardano.Ledger.Conway.TxCert` (`data ConwayTxCert era =
+/// ConwayTxCertDeleg ConwayDelegCert | ConwayTxCertPool PoolCert
+/// | ConwayTxCertGov ConwayGovCert`).
+///
+/// The wire format is a flat CBOR `Sum` (`decodeRecordSum`,
+/// tags 0-18); R660 classifies the tag into its upstream
+/// certificate family and surfaces the specific certificate
+/// constructor name, keeping the per-certificate payload raw
+/// pending the typed `ConwayDelegCert` / `PoolCert` /
+/// `ConwayGovCert` decoders.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TxCert {
+    /// Delegation-family certificate (`ConwayTxCertDeleg`) —
+    /// upstream `Sum` tags 0-2 and 7-13.
+    ConwayTxCertDeleg {
+        /// The upstream `decodeRecordSum` tag.
+        cert_tag: u64,
+        /// The raw per-certificate payload (after the tag).
+        raw: Vec<u8>,
+    },
+    /// Stake-pool-family certificate (`ConwayTxCertPool`) —
+    /// upstream `Sum` tags 3-4.
+    ConwayTxCertPool {
+        /// The upstream `decodeRecordSum` tag.
+        cert_tag: u64,
+        /// The raw per-certificate payload (after the tag).
+        raw: Vec<u8>,
+    },
+    /// Governance-family certificate (`ConwayTxCertGov`) —
+    /// upstream `Sum` tags 14-18.
+    ConwayTxCertGov {
+        /// The upstream `decodeRecordSum` tag.
+        cert_tag: u64,
+        /// The raw per-certificate payload (after the tag).
+        raw: Vec<u8>,
+    },
+}
+
+impl TxCert {
+    /// The upstream `TxCert era` smart-constructor name for a
+    /// given `decodeRecordSum` tag.
+    fn cert_constructor(tag: u64) -> &'static str {
+        match tag {
+            0 => "RegTxCert",
+            1 => "UnRegTxCert",
+            2 => "DelegStakeTxCert",
+            3 => "RegPoolTxCert",
+            4 => "RetirePoolTxCert",
+            7 => "RegDepositTxCert",
+            8 => "UnRegDepositTxCert",
+            9 => "DelegVoteTxCert",
+            10 => "DelegStakeVoteTxCert",
+            11..=13 => "RegDepositDelegTxCert",
+            14 => "AuthCommitteeHotKeyTxCert",
+            15 => "ResignCommitteeColdTxCert",
+            16 => "RegDRepTxCert",
+            17 => "UnRegDRepTxCert",
+            18 => "UpdateDRepTxCert",
+            _ => "UnknownTxCert",
+        }
+    }
+
+    /// Decode a single `ConwayTxCert` from its flat CBOR `Sum`
+    /// envelope `[tag, ...payload]`.
+    fn from_decoder(
+        dec: &mut yggdrasil_ledger::Decoder<'_>,
+        source: &[u8],
+    ) -> Result<Self, DecoderError> {
+        let len = dec
+            .array()
+            .map_err(|err| DecoderError(format!("TxCert: expected Sum array: {err:?}")))?;
+        if len == 0 {
+            return Err(DecoderError(
+                "TxCert: expected non-empty Sum envelope".to_string(),
+            ));
+        }
+        let cert_tag = dec
+            .unsigned()
+            .map_err(|err| DecoderError(format!("TxCert: expected Word tag: {err:?}")))?;
+        if cert_tag == 5 || cert_tag == 6 {
+            return Err(DecoderError(format!(
+                "TxCert: tag {cert_tag} (genesis/MIR) is no longer supported"
+            )));
+        }
+        let payload_start = dec.position();
+        for _ in 1..len {
+            dec.skip()
+                .map_err(|err| DecoderError(format!("TxCert: payload skip: {err:?}")))?;
+        }
+        let payload_end = dec.position();
+        let raw = source
+            .get(payload_start..payload_end)
+            .ok_or_else(|| DecoderError("TxCert: payload byte range out of bounds".to_string()))?
+            .to_vec();
+        match cert_tag {
+            0..=2 | 7..=13 => Ok(Self::ConwayTxCertDeleg { cert_tag, raw }),
+            3 | 4 => Ok(Self::ConwayTxCertPool { cert_tag, raw }),
+            14..=18 => Ok(Self::ConwayTxCertGov { cert_tag, raw }),
+            other => Err(DecoderError(format!(
+                "TxCert: unknown certificate tag {other}"
+            ))),
+        }
+    }
+}
+
+impl fmt::Display for TxCert {
+    /// Render `<Family> (<CertificateConstructor> <raw-cbor N
+    /// bytes>)` — the family mirrors upstream's `ConwayTxCert`
+    /// 3-way split; the inner certificate constructor is named
+    /// from the wire tag.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let (family, cert_tag, raw) = match self {
+            Self::ConwayTxCertDeleg { cert_tag, raw } => ("ConwayTxCertDeleg", *cert_tag, raw),
+            Self::ConwayTxCertPool { cert_tag, raw } => ("ConwayTxCertPool", *cert_tag, raw),
+            Self::ConwayTxCertGov { cert_tag, raw } => ("ConwayTxCertGov", *cert_tag, raw),
+        };
+        write!(
+            f,
+            "{family} ({} <raw-cbor {} bytes>)",
+            Self::cert_constructor(cert_tag),
+            raw.len()
+        )
+    }
+}
+
 /// `ConwayPlutusPurpose AsItem` mirror — the item-carrying form
 /// of a Conway Plutus script purpose (`ConwayPlutusPurpose f
 /// era` with `f = AsItem`). Each variant carries the actual
 /// purpose item rather than a redeemer-pointer index.
 ///
 /// CBOR wire format is a 2-element `CBORGroup` `[word8-tag,
-/// item]` (tags 0-5). R655 ships typed payloads for the
-/// variants whose item types already have carriers; the
-/// `ConwayCertifying` item (a `TxCert`, a large per-era ADT)
-/// keeps raw inner CBOR.
+/// item]` (tags 0-5).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ConwayPlutusPurposeItem {
     /// Tag 0: spending a transaction input — `TxIn`.
     ConwaySpending(TxIn),
     /// Tag 1: minting under a policy — `PolicyID`.
     ConwayMinting(PolicyId),
-    /// Tag 2: certifying a tx certificate — `TxCert`. Raw
-    /// pending the per-era TxCert decoder.
-    ConwayCertifying(Vec<u8>),
+    /// Tag 2: certifying a tx certificate — `TxCert` (R660
+    /// scaffold: family + constructor name typed, per-certificate
+    /// payload raw).
+    ConwayCertifying(TxCert),
     /// Tag 3: rewarding a reward account — `AccountAddress`.
     ConwayRewarding(yggdrasil_ledger::RewardAccount),
     /// Tag 4: voting — `Voter`.
@@ -5924,22 +6048,7 @@ impl ConwayPlutusPurposeItem {
                 })?;
                 Ok(Self::ConwayMinting(PolicyId(arr)))
             }
-            2 => {
-                let payload_start = dec.position();
-                dec.skip().map_err(|err| {
-                    DecoderError(format!("ConwayCertifying: TxCert skip: {err:?}"))
-                })?;
-                let payload_end = dec.position();
-                let raw = source
-                    .get(payload_start..payload_end)
-                    .ok_or_else(|| {
-                        DecoderError(
-                            "ConwayCertifying: TxCert byte range out of bounds".to_string(),
-                        )
-                    })?
-                    .to_vec();
-                Ok(Self::ConwayCertifying(raw))
-            }
+            2 => Ok(Self::ConwayCertifying(TxCert::from_decoder(dec, source)?)),
             3 => {
                 let acct_bytes = dec.bytes().map_err(|err| {
                     DecoderError(format!(
@@ -5979,12 +6088,8 @@ impl fmt::Display for ConwayPlutusPurposeItem {
             Self::ConwayMinting(pid) => {
                 write!(f, "ConwayMinting (AsItem {{unAsItem = {pid}}})")
             }
-            Self::ConwayCertifying(b) => {
-                write!(
-                    f,
-                    "ConwayCertifying (AsItem {{unAsItem = <raw-cbor {} bytes>}})",
-                    b.len()
-                )
+            Self::ConwayCertifying(cert) => {
+                write!(f, "ConwayCertifying (AsItem {{unAsItem = {cert}}})")
             }
             Self::ConwayRewarding(account) => {
                 write!(
@@ -9847,6 +9952,49 @@ mod tests {
             err.to_string()
                 .contains("NonEmpty requires at least one entry"),
             "got: {err}"
+        );
+    }
+
+    #[test]
+    fn conway_utxow_pred_failure_missing_redeemers_certifying_txcert() {
+        // MissingRedeemers carrying a ConwayCertifying purpose
+        // whose item is a Conway TxCert (Sum tag 1 = UnRegTxCert,
+        // delegation family).
+        let mut cbor = vec![0x82_u8, 0x0A, 0x81, 0x82];
+        // PlutusPurpose AsItem [2, TxCert]
+        cbor.push(0x82);
+        cbor.push(0x02);
+        // TxCert Sum [tag=1, credential]
+        cbor.push(0x82);
+        cbor.push(0x01);
+        // credential [0, bytes(28)] (KeyHashObj)
+        cbor.push(0x82);
+        cbor.push(0x00);
+        cbor.push(0x58);
+        cbor.push(28);
+        cbor.extend_from_slice(&[0x3A_u8; 28]);
+        // pair's ScriptHash bytes(28)
+        cbor.push(0x58);
+        cbor.push(28);
+        cbor.extend_from_slice(&[0x4B_u8; 28]);
+        let f = ConwayUtxowPredFailure::from_cbor(&cbor).expect("MissingRedeemers");
+        if let ConwayUtxowPredFailure::MissingRedeemers(redeemers) = &f {
+            assert_eq!(redeemers.entries.len(), 1);
+            match &redeemers.entries[0].0 {
+                ConwayPlutusPurposeItem::ConwayCertifying(TxCert::ConwayTxCertDeleg {
+                    cert_tag,
+                    ..
+                }) => assert_eq!(*cert_tag, 1),
+                other => panic!("expected ConwayCertifying deleg, got {other:?}"),
+            }
+        } else {
+            panic!("expected MissingRedeemers, got {f:?}");
+        }
+        assert!(
+            f.to_string().contains(
+                "ConwayCertifying (AsItem {unAsItem = ConwayTxCertDeleg (UnRegTxCert <raw-cbor"
+            ),
+            "got: {f}"
         );
     }
 
