@@ -3057,6 +3057,133 @@ impl fmt::Display for StrictMaybeGovPurposeId {
     }
 }
 
+/// `GovAction` mirror — Conway-era governance action from
+/// `Cardano.Ledger.Conway.Governance.Procedures`. 7-variant sum
+/// encoded via CBOR `Sum` tags 0-6.
+///
+/// R652 ships the scaffold: the variant tag + constructor name
+/// are typed, but the per-variant payloads (PParamsUpdate,
+/// Constitution, UnitInterval, treasury-withdrawal maps, nested
+/// `decodeNullStrictMaybe` GovPurposeIds) keep raw inner CBOR
+/// pending their typed decoder ports. `InfoAction` (tag 6) is
+/// fully typed — it has no payload.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum GovAction {
+    /// Tag 0: protocol-parameter change proposal. Raw payload.
+    ParameterChange(Vec<u8>),
+    /// Tag 1: hard-fork initiation proposal. Raw payload.
+    HardForkInitiation(Vec<u8>),
+    /// Tag 2: treasury withdrawals proposal. Raw payload.
+    TreasuryWithdrawals(Vec<u8>),
+    /// Tag 3: no-confidence motion. Raw payload.
+    NoConfidence(Vec<u8>),
+    /// Tag 4: constitutional-committee update. Raw payload.
+    UpdateCommittee(Vec<u8>),
+    /// Tag 5: new-constitution proposal. Raw payload.
+    NewConstitution(Vec<u8>),
+    /// Tag 6: informational action — no payload.
+    InfoAction,
+}
+
+impl GovAction {
+    /// Upstream CBOR `Sum` tag for this variant.
+    pub fn tag(&self) -> u8 {
+        match self {
+            Self::ParameterChange(_) => 0,
+            Self::HardForkInitiation(_) => 1,
+            Self::TreasuryWithdrawals(_) => 2,
+            Self::NoConfidence(_) => 3,
+            Self::UpdateCommittee(_) => 4,
+            Self::NewConstitution(_) => 5,
+            Self::InfoAction => 6,
+        }
+    }
+
+    /// Upstream stock-derived `Show` constructor name.
+    pub fn constructor(&self) -> &'static str {
+        match self {
+            Self::ParameterChange(_) => "ParameterChange",
+            Self::HardForkInitiation(_) => "HardForkInitiation",
+            Self::TreasuryWithdrawals(_) => "TreasuryWithdrawals",
+            Self::NoConfidence(_) => "NoConfidence",
+            Self::UpdateCommittee(_) => "UpdateCommittee",
+            Self::NewConstitution(_) => "NewConstitution",
+            Self::InfoAction => "InfoAction",
+        }
+    }
+
+    /// Decode a `GovAction` from an in-progress decoder. The
+    /// variant tag is parsed; the per-variant payload is captured
+    /// raw (the array slice after the tag) pending typed
+    /// PParamsUpdate / Constitution / UnitInterval decoders.
+    fn from_decoder(
+        dec: &mut yggdrasil_ledger::Decoder<'_>,
+        source: &[u8],
+    ) -> Result<Self, DecoderError> {
+        let len = dec.array().map_err(|err| {
+            DecoderError(format!("GovAction: expected outer CBOR array: {err:?}"))
+        })?;
+        if !(1..=5).contains(&len) {
+            return Err(DecoderError(format!(
+                "GovAction: expected 1- to 5-element array, got len {len}"
+            )));
+        }
+        let tag = dec
+            .unsigned()
+            .map_err(|err| DecoderError(format!("GovAction: expected Word8 tag: {err:?}")))?;
+        if tag == 6 {
+            if len != 1 {
+                return Err(DecoderError(format!(
+                    "InfoAction: expected 1-element envelope, got len {len}"
+                )));
+            }
+            return Ok(Self::InfoAction);
+        }
+        // Skip the remaining payload elements to advance the
+        // decoder, then capture them raw by byte range.
+        let payload_start = dec.position();
+        for _ in 1..len {
+            dec.skip()
+                .map_err(|err| DecoderError(format!("GovAction: payload skip: {err:?}")))?;
+        }
+        let payload_end = dec.position();
+        let raw = source
+            .get(payload_start..payload_end)
+            .ok_or_else(|| DecoderError("GovAction: payload byte range out of bounds".to_string()))?
+            .to_vec();
+        match tag {
+            0 => Ok(Self::ParameterChange(raw)),
+            1 => Ok(Self::HardForkInitiation(raw)),
+            2 => Ok(Self::TreasuryWithdrawals(raw)),
+            3 => Ok(Self::NoConfidence(raw)),
+            4 => Ok(Self::UpdateCommittee(raw)),
+            5 => Ok(Self::NewConstitution(raw)),
+            other => Err(DecoderError(format!(
+                "GovAction: unknown variant tag {other}"
+            ))),
+        }
+    }
+}
+
+impl fmt::Display for GovAction {
+    /// Render `<Constructor>` for the no-payload `InfoAction`,
+    /// otherwise `<Constructor> <raw-cbor N bytes>` until the
+    /// per-variant typed payload decoders land.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InfoAction => f.write_str("InfoAction"),
+            Self::ParameterChange(b)
+            | Self::HardForkInitiation(b)
+            | Self::TreasuryWithdrawals(b)
+            | Self::NoConfidence(b)
+            | Self::UpdateCommittee(b)
+            | Self::NewConstitution(b) => {
+                write!(f, "{} <raw-cbor {} bytes>", self.constructor(), b.len())
+            }
+        }
+    }
+}
+
 /// PPUP voting period mirroring upstream
 /// `data VotingPeriod = VoteForThisEpoch | VoteForNextEpoch`.
 /// CBOR encoding: Word8 (0=VoteForThisEpoch, 1=VoteForNextEpoch).
@@ -7434,7 +7561,7 @@ pub enum ConwayGovPredFailure {
     GovActionsDoNotExist(NonEmptyGovActionId),
     /// Tag 1: proposal is malformed — `GovAction era`. Raw
     /// pending GovAction decoder.
-    MalformedProposal(Vec<u8>),
+    MalformedProposal(GovAction),
     /// Tag 2: proposal account address is on wrong network —
     /// `AccountAddress + Network` (R650 typed).
     ProposalProcedureNetworkIdMismatch {
@@ -7503,7 +7630,7 @@ pub enum ConwayGovPredFailure {
     VotersDoNotExist(NonEmptyVoter),
     /// Tag 15: treasury withdrawals sum to zero —
     /// `GovAction era`. Raw.
-    ZeroTreasuryWithdrawals(Vec<u8>),
+    ZeroTreasuryWithdrawals(GovAction),
     /// Tag 16: proposal return-account address does not exist —
     /// `AccountAddress` (R644 typed).
     ProposalReturnAccountDoesNotExist(yggdrasil_ledger::RewardAccount),
@@ -7640,11 +7767,17 @@ impl ConwayGovPredFailure {
                     payload_bytes,
                 )?))
             }
+            // Tag 1: GovAction payload (R652 typed scaffold).
+            1 => {
+                if len != 2 {
+                    return Err(DecoderError(format!(
+                        "MalformedProposal: expected 2-element envelope, got len {len}"
+                    )));
+                }
+                let gov_action = GovAction::from_decoder(&mut dec, bytes)?;
+                Ok(Self::MalformedProposal(gov_action))
+            }
             // Raw variants with various envelope lengths.
-            1 => Ok(Self::MalformedProposal(capture_raw(
-                "MalformedProposal",
-                2,
-            )?)),
             2 => {
                 if len != 3 {
                     return Err(DecoderError(format!(
@@ -7796,10 +7929,15 @@ impl ConwayGovPredFailure {
                     payload_bytes,
                 )?))
             }
-            15 => Ok(Self::ZeroTreasuryWithdrawals(capture_raw(
-                "ZeroTreasuryWithdrawals",
-                2,
-            )?)),
+            15 => {
+                if len != 2 {
+                    return Err(DecoderError(format!(
+                        "ZeroTreasuryWithdrawals: expected 2-element envelope, got len {len}"
+                    )));
+                }
+                let gov_action = GovAction::from_decoder(&mut dec, bytes)?;
+                Ok(Self::ZeroTreasuryWithdrawals(gov_action))
+            }
             16 => {
                 if len != 2 {
                     return Err(DecoderError(format!(
@@ -7872,11 +8010,14 @@ impl fmt::Display for ConwayGovPredFailure {
             Self::GovActionsDoNotExist(ids) => {
                 write!(f, "GovActionsDoNotExist ({ids})")
             }
-            Self::MalformedProposal(b)
-            | Self::InvalidPrevGovActionId(b)
-            | Self::DisallowedProposalDuringBootstrap(b)
-            | Self::ZeroTreasuryWithdrawals(b) => {
+            Self::InvalidPrevGovActionId(b) | Self::DisallowedProposalDuringBootstrap(b) => {
                 write!(f, "{} <raw-cbor {} bytes>", self.constructor(), b.len())
+            }
+            Self::MalformedProposal(action) => {
+                write!(f, "MalformedProposal ({action})")
+            }
+            Self::ZeroTreasuryWithdrawals(action) => {
+                write!(f, "ZeroTreasuryWithdrawals ({action})")
             }
             Self::ProposalCantFollow { prev, mismatch } => {
                 write!(f, "ProposalCantFollow ({prev}) ({mismatch})")
@@ -9408,6 +9549,41 @@ mod tests {
             "got: {s}"
         );
         assert!(s.ends_with(") Testnet"), "got: {s}");
+    }
+
+    #[test]
+    fn conway_gov_pred_failure_malformed_proposal_info_action_tag1() {
+        // outer [0x82, 0x01, GovAction]. GovAction = InfoAction
+        // [0x81, 0x06] (tag 6, no payload).
+        let cbor = [0x82_u8, 0x01, 0x81, 0x06];
+        let f = ConwayGovPredFailure::from_cbor(&cbor).expect("MalformedProposal");
+        if let ConwayGovPredFailure::MalformedProposal(action) = &f {
+            assert!(matches!(action, GovAction::InfoAction));
+            assert_eq!(action.tag(), 6);
+        } else {
+            panic!("expected MalformedProposal, got {f:?}");
+        }
+        assert_eq!(f.to_string(), "MalformedProposal (InfoAction)");
+    }
+
+    #[test]
+    fn conway_gov_pred_failure_zero_treasury_withdrawals_tag15() {
+        // outer [0x82, 0x0F, GovAction]. GovAction =
+        // TreasuryWithdrawals [0x83, 0x02, map(0), null] — tag 2,
+        // 2 payload elements.
+        let cbor = [0x82_u8, 0x0F, 0x83, 0x02, 0xA0, 0xF6];
+        let f = ConwayGovPredFailure::from_cbor(&cbor).expect("ZeroTreasuryWithdrawals");
+        if let ConwayGovPredFailure::ZeroTreasuryWithdrawals(action) = &f {
+            assert_eq!(action.tag(), 2);
+            assert!(matches!(action, GovAction::TreasuryWithdrawals(_)));
+        } else {
+            panic!("expected ZeroTreasuryWithdrawals, got {f:?}");
+        }
+        assert!(
+            f.to_string()
+                .starts_with("ZeroTreasuryWithdrawals (TreasuryWithdrawals <raw-cbor"),
+            "got: {f}"
+        );
     }
 
     #[test]

@@ -741,9 +741,15 @@ NonEmptySet AccountAddress + Network) to typed struct variants.
 R651 (2026-05-21) added the `StrictMaybeGovPurposeId` type and
 wired GOV tag 10 (`ProposalCantFollow` — `StrictMaybe
 GovPurposeId` + `Mismatch RelGT ProtVer` ToGroup-flattened).
-**15 of 19 Conway GOV variants now carry typed payloads**; the
-other 4 keep raw inner CBOR pending typed governance-specific
-decoders (GovAction tags 1/15, ProposalProcedure tags 8/12). **All 9 Conway LEDGER root variants now carry
+R652 (2026-05-21) added the `GovAction` 7-variant scaffold
+(ParameterChange / HardForkInitiation / TreasuryWithdrawals /
+NoConfidence / UpdateCommittee / NewConstitution / InfoAction;
+variant tag + constructor name typed, payloads raw pending
+PParamsUpdate / Constitution / UnitInterval decoders;
+`InfoAction` fully typed) and wired GOV tags 1
+(`MalformedProposal`) and 15 (`ZeroTreasuryWithdrawals`). **17
+of 19 Conway GOV variants now carry typed payloads**; the other
+2 (tags 8/12 — `ProposalProcedure era`) keep raw inner CBOR. **All 9 Conway LEDGER root variants now carry
 typed payloads at one level of nesting** — every LEDGER root tag
 has a structurally-typed Rust value (sub-rule payloads at one
 level deeper may still be raw within each sub-rule's variants).
