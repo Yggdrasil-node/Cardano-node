@@ -17,6 +17,7 @@
 //! | `src/DMQ/Configuration.hs::readConfigurationFile`         | `config_file.rs` (pending)   |
 //! | `src/DMQ/Configuration/Topology.hs`                       | `topology.rs` (pending)      |
 //! | `src/DMQ/NodeToNode.hs` + `NodeToClient.hs`               | `mux/{ntn,ntc}.rs` (pending; via crates/network) |
+//! | `src/DMQ/Protocol/*`                                      | `protocol/*.rs` (in progress) |
 //! | `src/DMQ/Diffusion/*`                                     | `diffusion/*.rs` (pending)   |
 //! | `src/DMQ/Tracer.hs`                                       | `tracer.rs` (pending)        |
 //! | `app/Main.hs`                                             | `main.rs`                    |
@@ -26,6 +27,7 @@ use std::process::ExitCode;
 
 pub mod configuration;
 pub mod parser;
+pub mod protocol;
 pub mod status;
 pub mod types;
 

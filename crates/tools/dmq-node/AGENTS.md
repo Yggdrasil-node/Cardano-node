@@ -30,6 +30,13 @@ Delegated Mempool Queue diffusion-layer node (sister project for Mithril). Phase
   host/port/local-socket/config-file/topology-file/cardano-socket/
   network-magic parsed + validated + merged with config-file
   contents (R369 layered).
+- 🟡 `protocol/sig_submission.rs` — DMQ `SigSubmission` mini-protocol
+  port (collapses upstream `DMQ/Protocol/SigSubmission/{Type,Codec,
+  Validate}.hs`, the `crates/network/src/protocols/` pattern). R717
+  shipped the `Type.hs` byte-wrapper newtypes (`SigHash`, `SigId`,
+  `SigBody`, `CborBytes`); the `SigRaw`/`Sig` payload types, the
+  `SigValidationError` tree, the codec, and the validator land in
+  subsequent dmq-node-arc rounds.
 - ❌ Diffusion / NodeKernel / PeerSelection wiring — returns
   `RunError::DiffusionWiringDeferred { host, local_socket,
   config_file, topology_file, cardano_socket, cardano_magic,
