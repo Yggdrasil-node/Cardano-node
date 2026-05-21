@@ -19,6 +19,7 @@
 use std::fmt;
 use std::time::Duration;
 
+use crate::diffusion::{PoolId, PoolValidationCtx};
 use yggdrasil_consensus::OpCert;
 use yggdrasil_crypto::{KesSignature, Signature, SumKesVerificationKey, VerificationKey};
 use yggdrasil_ledger::LedgerError;
@@ -622,6 +623,31 @@ pub fn validate_kes_period(
             start_period,
         });
     }
+    Ok(())
+}
+
+/// Verify the operational-certificate counter is monotonic for the
+/// issuing pool, recording the observed counter in the context's
+/// `ocert_map`.
+///
+/// Mirror of upstream `validateSig`'s ocert-counter check: an absent
+/// counter, or one not below the last seen value, is accepted and
+/// recorded; a counter below the last seen one fails with
+/// `InvalidOCertCounter`.
+pub fn validate_ocert_counter(
+    ctx: &mut PoolValidationCtx,
+    pool: &PoolId,
+    ocert_n: u64,
+) -> Result<(), SigValidationError> {
+    if let Some(prev) = ctx.ocert_map.get(pool).copied() {
+        if prev > ocert_n {
+            return Err(SigValidationError::InvalidOcertCounter {
+                last_seen: prev,
+                received: ocert_n,
+            });
+        }
+    }
+    ctx.ocert_map.insert(pool.clone(), ocert_n);
     Ok(())
 }
 
@@ -1413,6 +1439,38 @@ mod tests {
         ] {
             assert_eq!(state.byte_limit(), 0xffff);
         }
+    }
+
+    #[test]
+    fn validate_ocert_counter_accepts_and_records() {
+        use crate::diffusion::PoolId;
+        let pool = PoolId([0x07; 28]);
+        let mut ctx = PoolValidationCtx::default();
+        // First sighting of a pool — accepted and recorded.
+        assert!(validate_ocert_counter(&mut ctx, &pool, 5).is_ok());
+        assert_eq!(ctx.ocert_map.get(&pool).copied(), Some(5));
+        // A non-decreasing counter is accepted and updates the map.
+        assert!(validate_ocert_counter(&mut ctx, &pool, 5).is_ok());
+        assert!(validate_ocert_counter(&mut ctx, &pool, 9).is_ok());
+        assert_eq!(ctx.ocert_map.get(&pool).copied(), Some(9));
+    }
+
+    #[test]
+    fn validate_ocert_counter_rejects_a_regression() {
+        use crate::diffusion::PoolId;
+        let pool = PoolId([0x07; 28]);
+        let mut ctx = PoolValidationCtx::default();
+        validate_ocert_counter(&mut ctx, &pool, 9).expect("first");
+        let err = validate_ocert_counter(&mut ctx, &pool, 4).expect_err("regresses");
+        assert_eq!(
+            err,
+            SigValidationError::InvalidOcertCounter {
+                last_seen: 9,
+                received: 4,
+            }
+        );
+        // The rejected counter must not overwrite the recorded value.
+        assert_eq!(ctx.ocert_map.get(&pool).copied(), Some(9));
     }
 
     #[test]
