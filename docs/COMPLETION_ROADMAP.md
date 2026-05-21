@@ -667,7 +667,24 @@ render the typed shape `Addr <Net> (<payment>) (StakeRefPtr (Ptr
 matching upstream stock-derived Show. Malformed pointer tails
 report a `<malformed-ptr ...>` marker. Alonzo 3-array TxOut +
 Babbage map-form TxOut and the typed Byron bootstrap parse remain
-pending.
+pending. R623 (2026-05-21) opened **Conway-era LEDGER coverage**
+with the `ConwayLedgerPredFailure` 9-variant scaffold (tags 1-9;
+upstream skipped tag 0). Per-era LEDGER coverage status:
+**Shelley/Allegra/Mary/Alonzo/Babbage all reuse
+`ShelleyLedgerPredFailure`** per upstream's
+`type instance EraRuleFailure "LEDGER" <Era> =
+ShelleyLedgerPredFailure <Era>` — so the 5/6 era LEDGER tree is
+already fully typed. **Conway** has its own
+`ConwayLedgerPredFailure` (replaces DELEGS with CERTS, adds the
+new GOV sub-rule). R623's scaffold provides typed payloads for
+tags 4 (NonEmpty KeyHash via new `NonEmptyKeyHash` carrier), 5
+(Mismatch Coin RelEQ with `ToGroup` flattened expected-first
+encoding), 6 (Mismatch Word RelLTEQ), 7 (Text via CBOR
+text-string), 8 (reuses R596 Withdrawals), 9 (reuses R597
+IncompleteWithdrawals). Sub-rule variants 1/2/3 (UTXOW/CERTS/GOV)
+carry raw payloads pending Conway-specific UTXOW/CERTS/GOV
+decoder ports. New `show_haskell_bytestring_like` helper renders
+Text payloads matching upstream's `Show String` escape table.
 Phase-2.5+ remaining work: per-variant decoders for those 5 raw
 UTXO variants, `ShelleyDelegsPredFailure` (tag-1 of the LEDGER
 tree), wiring the typed `ShelleyUtxowPredFailure` decoder into

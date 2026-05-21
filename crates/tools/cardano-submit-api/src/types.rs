@@ -3642,6 +3642,369 @@ impl fmt::Display for ShelleyDelegPredFailure {
     }
 }
 
+/// Non-empty list of staking-role key hashes mirroring upstream
+/// `NonEmpty (KeyHash Staking)`. Wire format is a regular CBOR
+/// array with ≥ 1 entry; KeyHash items are 28-byte bytestrings.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NonEmptyKeyHash {
+    /// Decoded KeyHash entries. Guaranteed non-empty by `from_cbor`.
+    pub entries: Vec<KeyHash>,
+}
+
+impl NonEmptyKeyHash {
+    /// Decode from canonical CBOR bytes (regular array of bytes(28)).
+    pub fn from_cbor(bytes: &[u8]) -> Result<Self, DecoderError> {
+        use yggdrasil_ledger::Decoder;
+        let mut dec = Decoder::new(bytes);
+        Self::from_decoder(&mut dec)
+    }
+
+    /// Decode from an in-progress `Decoder`.
+    pub fn from_decoder(dec: &mut yggdrasil_ledger::Decoder<'_>) -> Result<Self, DecoderError> {
+        let count = dec.array().map_err(|err| {
+            DecoderError(format!("NonEmptyKeyHash: expected CBOR array: {err:?}"))
+        })?;
+        if count == 0 {
+            return Err(DecoderError(
+                "NonEmptyKeyHash: NonEmpty requires at least one entry".to_string(),
+            ));
+        }
+        let mut entries = Vec::with_capacity(count as usize);
+        for _ in 0..count {
+            let hash_bytes = dec.bytes().map_err(|err| {
+                DecoderError(format!("NonEmptyKeyHash: expected KeyHash bytes: {err:?}"))
+            })?;
+            let arr: [u8; 28] = hash_bytes.try_into().map_err(|_| {
+                DecoderError(format!(
+                    "NonEmptyKeyHash: KeyHash must be 28 bytes, got {}",
+                    hash_bytes.len()
+                ))
+            })?;
+            entries.push(KeyHash(arr));
+        }
+        Ok(Self { entries })
+    }
+}
+
+impl fmt::Display for NonEmptyKeyHash {
+    /// Render upstream `Show (NonEmpty a)`: `<head> :| [<tail>...]`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let (head, tail) = self
+            .entries
+            .split_first()
+            .expect("NonEmptyKeyHash enforces ≥1 entry at decode time");
+        write!(f, "{head} :| [")?;
+        let mut first = true;
+        for k in tail {
+            if !first {
+                f.write_str(",")?;
+            }
+            first = false;
+            write!(f, "{k}")?;
+        }
+        f.write_str("]")?;
+        Ok(())
+    }
+}
+
+/// `ConwayLedgerPredFailure` mirror — Conway-era LEDGER root
+/// predicate failure (replaces Shelley's
+/// `ShelleyLedgerPredFailure` for ConwayEra only;
+/// Shelley/Allegra/Mary/Alonzo/Babbage all reuse the Shelley type
+/// per `type instance EraRuleFailure "LEDGER" <Era> =
+/// ShelleyLedgerPredFailure <Era>`).
+///
+/// Upstream: `data ConwayLedgerPredFailure era` from
+/// `Cardano.Ledger.Conway.Rules.Ledger` with 9 variants encoded
+/// via CBOR `Sum` tags 1..9 (no tag 0). Conway swaps DELEGS for
+/// CERTS and adds the new GOV sub-rule for governance.
+///
+/// R623 ships the scaffold + typed payloads for the simple
+/// variants (4 NonEmptyKeyHash, 5/6 Mismatch via ToGroup, 7 Text,
+/// 8 Withdrawals, 9 IncompleteWithdrawals). The 3 sub-rule
+/// variants (UtxowFailure / CertsFailure / GovFailure) carry raw
+/// payloads pending the era-specific UTXOW / CERTS / GOV decoder
+/// ports.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ConwayLedgerPredFailure {
+    /// Tag 1: nested Conway UTXOW failure (raw, pending Conway
+    /// UTXOW sub-rule decoder).
+    ConwayUtxowFailure(Vec<u8>),
+    /// Tag 2: nested Conway CERTS failure (raw, pending Conway
+    /// CERTS sub-rule decoder). Replaces Shelley's DELEGS path.
+    ConwayCertsFailure(Vec<u8>),
+    /// Tag 3: nested Conway GOV failure (raw, pending GOV
+    /// sub-rule decoder). New in Conway for governance actions.
+    ConwayGovFailure(Vec<u8>),
+    /// Tag 4: withdrawal target was not delegated to a DRep —
+    /// `NonEmpty (KeyHash Staking)` (R623 typed).
+    ConwayWdrlNotDelegatedToDRep(NonEmptyKeyHash),
+    /// Tag 5: treasury value mismatch — `Mismatch RelEQ Coin`
+    /// (R623 typed). Encoded as ToGroup-flattened with
+    /// expected-first ordering per upstream.
+    ConwayTreasuryValueMismatch(Mismatch<u64>),
+    /// Tag 6: tx ref scripts total size too big —
+    /// `Mismatch RelLTEQ Int` (R623 typed). Encoded as
+    /// ToGroup-flattened.
+    ConwayTxRefScriptsSizeTooBig(Mismatch<u64>),
+    /// Tag 7: free-form mempool reject reason — `Text` (R623
+    /// typed).
+    ConwayMempoolFailure(String),
+    /// Tag 8: withdrawals reference unknown accounts —
+    /// `Withdrawals` (R596 typed; reused from Shelley path).
+    ConwayWithdrawalsMissingAccounts(Withdrawals),
+    /// Tag 9: incomplete withdrawals — `NonEmptyMap
+    /// AccountAddress (Mismatch RelEQ Coin)` (R597 typed; reused).
+    ConwayIncompleteWithdrawals(IncompleteWithdrawals),
+}
+
+impl ConwayLedgerPredFailure {
+    /// Upstream CBOR tag for this variant.
+    pub fn tag(&self) -> u8 {
+        match self {
+            Self::ConwayUtxowFailure(_) => 1,
+            Self::ConwayCertsFailure(_) => 2,
+            Self::ConwayGovFailure(_) => 3,
+            Self::ConwayWdrlNotDelegatedToDRep(_) => 4,
+            Self::ConwayTreasuryValueMismatch(_) => 5,
+            Self::ConwayTxRefScriptsSizeTooBig(_) => 6,
+            Self::ConwayMempoolFailure(_) => 7,
+            Self::ConwayWithdrawalsMissingAccounts(_) => 8,
+            Self::ConwayIncompleteWithdrawals(_) => 9,
+        }
+    }
+
+    /// Upstream stock-derived `Show` constructor name.
+    pub fn constructor(&self) -> &'static str {
+        match self {
+            Self::ConwayUtxowFailure(_) => "ConwayUtxowFailure",
+            Self::ConwayCertsFailure(_) => "ConwayCertsFailure",
+            Self::ConwayGovFailure(_) => "ConwayGovFailure",
+            Self::ConwayWdrlNotDelegatedToDRep(_) => "ConwayWdrlNotDelegatedToDRep",
+            Self::ConwayTreasuryValueMismatch(_) => "ConwayTreasuryValueMismatch",
+            Self::ConwayTxRefScriptsSizeTooBig(_) => "ConwayTxRefScriptsSizeTooBig",
+            Self::ConwayMempoolFailure(_) => "ConwayMempoolFailure",
+            Self::ConwayWithdrawalsMissingAccounts(_) => "ConwayWithdrawalsMissingAccounts",
+            Self::ConwayIncompleteWithdrawals(_) => "ConwayIncompleteWithdrawals",
+        }
+    }
+
+    /// Decode the full `ConwayLedgerPredFailure` outer envelope
+    /// from CBOR bytes. Upstream uses `Sum`-tag encoding starting
+    /// at tag 1 (no tag 0).
+    pub fn from_cbor(bytes: &[u8]) -> Result<Self, DecoderError> {
+        use yggdrasil_ledger::Decoder;
+        let mut dec = Decoder::new(bytes);
+        let len = dec.array().map_err(|err| {
+            DecoderError(format!(
+                "ConwayLedgerPredFailure: expected outer CBOR array: {err:?}"
+            ))
+        })?;
+        if !(2..=4).contains(&len) {
+            return Err(DecoderError(format!(
+                "ConwayLedgerPredFailure: expected 2- to 4-element array, got len {len}"
+            )));
+        }
+        let tag = dec.unsigned().map_err(|err| {
+            DecoderError(format!(
+                "ConwayLedgerPredFailure: expected Word8 tag: {err:?}"
+            ))
+        })?;
+        let payload_offset = dec.position();
+        match tag {
+            // Sub-rule variants: raw pending Conway-era decoders.
+            1..=3 => {
+                if len != 2 {
+                    return Err(DecoderError(format!(
+                        "ConwayLedgerPredFailure tag {tag}: expected 2-element envelope, got len {len}"
+                    )));
+                }
+                let raw = bytes
+                    .get(payload_offset..)
+                    .ok_or_else(|| {
+                        DecoderError(
+                            "ConwayLedgerPredFailure: payload offset out of bounds".to_string(),
+                        )
+                    })?
+                    .to_vec();
+                Ok(match tag {
+                    1 => Self::ConwayUtxowFailure(raw),
+                    2 => Self::ConwayCertsFailure(raw),
+                    3 => Self::ConwayGovFailure(raw),
+                    _ => unreachable!("tag range checked above"),
+                })
+            }
+            // Tag 4: NonEmpty (KeyHash Staking).
+            4 => {
+                if len != 2 {
+                    return Err(DecoderError(format!(
+                        "ConwayWdrlNotDelegatedToDRep: expected 2-element envelope, got len {len}"
+                    )));
+                }
+                let keys = NonEmptyKeyHash::from_decoder(&mut dec).map_err(|err| {
+                    DecoderError(format!("ConwayWdrlNotDelegatedToDRep: {}", err.0))
+                })?;
+                Ok(Self::ConwayWdrlNotDelegatedToDRep(keys))
+            }
+            // Tag 5: Mismatch RelEQ Coin (ToGroup, expected-first).
+            5 => {
+                if len != 3 {
+                    return Err(DecoderError(format!(
+                        "ConwayTreasuryValueMismatch: expected 3-element envelope, got len {len}"
+                    )));
+                }
+                let expected = dec.unsigned().map_err(|err| {
+                    DecoderError(format!("ConwayTreasuryValueMismatch: expected: {err:?}"))
+                })?;
+                let supplied = dec.unsigned().map_err(|err| {
+                    DecoderError(format!("ConwayTreasuryValueMismatch: supplied: {err:?}"))
+                })?;
+                Ok(Self::ConwayTreasuryValueMismatch(Mismatch {
+                    relation: MismatchRelation::RelEQ,
+                    supplied,
+                    expected,
+                }))
+            }
+            // Tag 6: Mismatch RelLTEQ Int (ToGroup, expected-first).
+            6 => {
+                if len != 3 {
+                    return Err(DecoderError(format!(
+                        "ConwayTxRefScriptsSizeTooBig: expected 3-element envelope, got len {len}"
+                    )));
+                }
+                let supplied = dec.unsigned().map_err(|err| {
+                    DecoderError(format!("ConwayTxRefScriptsSizeTooBig: supplied: {err:?}"))
+                })?;
+                let expected = dec.unsigned().map_err(|err| {
+                    DecoderError(format!("ConwayTxRefScriptsSizeTooBig: expected: {err:?}"))
+                })?;
+                Ok(Self::ConwayTxRefScriptsSizeTooBig(Mismatch {
+                    relation: MismatchRelation::RelLTEQ,
+                    supplied,
+                    expected,
+                }))
+            }
+            // Tag 7: Text mempool reject reason — CBOR text-string
+            // (major type 3) per upstream `encCBOR` on `Text`.
+            7 => {
+                if len != 2 {
+                    return Err(DecoderError(format!(
+                        "ConwayMempoolFailure: expected 2-element envelope, got len {len}"
+                    )));
+                }
+                let s = dec.text_owned().map_err(|err| {
+                    DecoderError(format!("ConwayMempoolFailure: expected text: {err:?}"))
+                })?;
+                Ok(Self::ConwayMempoolFailure(s))
+            }
+            // Tag 8: Withdrawals (R596 typed).
+            8 => {
+                if len != 2 {
+                    return Err(DecoderError(format!(
+                        "ConwayWithdrawalsMissingAccounts: expected 2-element envelope, got len {len}"
+                    )));
+                }
+                let payload_bytes = bytes.get(payload_offset..).ok_or_else(|| {
+                    DecoderError(
+                        "ConwayLedgerPredFailure: payload offset out of bounds".to_string(),
+                    )
+                })?;
+                let withdrawals = Withdrawals::from_cbor(payload_bytes).map_err(|err| {
+                    DecoderError(format!("ConwayWithdrawalsMissingAccounts: {}", err.0))
+                })?;
+                Ok(Self::ConwayWithdrawalsMissingAccounts(withdrawals))
+            }
+            // Tag 9: NonEmptyMap AccountAddress (Mismatch RelEQ
+            // Coin) (R597 typed).
+            9 => {
+                if len != 2 {
+                    return Err(DecoderError(format!(
+                        "ConwayIncompleteWithdrawals: expected 2-element envelope, got len {len}"
+                    )));
+                }
+                let payload_bytes = bytes.get(payload_offset..).ok_or_else(|| {
+                    DecoderError(
+                        "ConwayLedgerPredFailure: payload offset out of bounds".to_string(),
+                    )
+                })?;
+                let iw = IncompleteWithdrawals::from_cbor(payload_bytes).map_err(|err| {
+                    DecoderError(format!("ConwayIncompleteWithdrawals: {}", err.0))
+                })?;
+                Ok(Self::ConwayIncompleteWithdrawals(iw))
+            }
+            other => Err(DecoderError(format!(
+                "ConwayLedgerPredFailure: unknown variant tag {other}"
+            ))),
+        }
+    }
+}
+
+impl fmt::Display for ConwayLedgerPredFailure {
+    /// Render upstream stock-derived `Show
+    /// (ConwayLedgerPredFailure era)`: `<Constructor> <payload>`.
+    /// Sub-rule variants emit raw-cbor markers; typed variants
+    /// route through their typed inner Display.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ConwayUtxowFailure(b)
+            | Self::ConwayCertsFailure(b)
+            | Self::ConwayGovFailure(b) => {
+                write!(f, "{} <raw-cbor {} bytes>", self.constructor(), b.len())
+            }
+            Self::ConwayWdrlNotDelegatedToDRep(keys) => {
+                write!(f, "ConwayWdrlNotDelegatedToDRep ({keys})")
+            }
+            Self::ConwayTreasuryValueMismatch(mm) => {
+                let typed = Mismatch {
+                    relation: mm.relation,
+                    supplied: CoinShow(mm.supplied),
+                    expected: CoinShow(mm.expected),
+                };
+                write!(f, "ConwayTreasuryValueMismatch ({typed})")
+            }
+            Self::ConwayTxRefScriptsSizeTooBig(mm) => {
+                write!(f, "ConwayTxRefScriptsSizeTooBig ({mm})")
+            }
+            Self::ConwayMempoolFailure(s) => {
+                // Upstream Text Show wraps with quotes via Show
+                // String (which uses Haskell-style escaping). The
+                // GHC `Show (ByteString)` mnemonic escapes from R589
+                // are the closest analog.
+                let escaped = show_haskell_bytestring_like(s);
+                write!(f, "ConwayMempoolFailure {escaped}")
+            }
+            Self::ConwayWithdrawalsMissingAccounts(w) => {
+                write!(f, "ConwayWithdrawalsMissingAccounts ({w})")
+            }
+            Self::ConwayIncompleteWithdrawals(iw) => {
+                write!(f, "ConwayIncompleteWithdrawals (fromList [{iw}])")
+            }
+        }
+    }
+}
+
+/// Render a Rust string using Haskell `Show String` escapes.
+/// Simplified subset: only the common control chars + backslash +
+/// quote. Sufficient for typical mempool-reject messages which
+/// are ASCII operator-facing strings.
+fn show_haskell_bytestring_like(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for ch in s.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\{}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
 /// Typed payload for `ShelleyLedgerPredFailure::ShelleyWithdrawalsMissingAccounts`.
 ///
 /// Mirrors upstream `Withdrawals = Map AccountAddress Coin` from
@@ -4569,6 +4932,123 @@ mod tests {
         let err = ShelleyDelegPredFailure::from_cbor(&cbor).expect_err("tag 10 must reject");
         assert!(
             err.to_string().contains("unknown variant tag 10"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn conway_ledger_pred_failure_utxow_raw_routing_tag1() {
+        let cbor = [0x82_u8, 0x01, 0x40, 0x40];
+        let f = ConwayLedgerPredFailure::from_cbor(&cbor).expect("ConwayUtxowFailure");
+        assert!(matches!(f, ConwayLedgerPredFailure::ConwayUtxowFailure(_)));
+        assert_eq!(f.tag(), 1);
+        assert_eq!(f.constructor(), "ConwayUtxowFailure");
+        assert!(
+            f.to_string().starts_with("ConwayUtxowFailure <raw-cbor"),
+            "got: {f}"
+        );
+    }
+
+    #[test]
+    fn conway_ledger_pred_failure_wdrl_not_delegated_tag4() {
+        let mut cbor = vec![0x82_u8, 0x04, 0x81];
+        cbor.push(0x58);
+        cbor.push(28);
+        cbor.extend_from_slice(&[0xAB_u8; 28]);
+        let f = ConwayLedgerPredFailure::from_cbor(&cbor).expect("ConwayWdrlNotDelegatedToDRep");
+        if let ConwayLedgerPredFailure::ConwayWdrlNotDelegatedToDRep(keys) = &f {
+            assert_eq!(keys.entries.len(), 1);
+            assert_eq!(keys.entries[0].0, [0xAB_u8; 28]);
+        } else {
+            panic!("expected ConwayWdrlNotDelegatedToDRep, got {f:?}");
+        }
+        assert!(
+            f.to_string()
+                .starts_with("ConwayWdrlNotDelegatedToDRep (KeyHash {unKeyHash = \"abab"),
+            "got: {f}"
+        );
+    }
+
+    #[test]
+    fn conway_ledger_pred_failure_treasury_mismatch_tag5() {
+        let cbor = [0x83_u8, 0x05, 0x18, 200, 0x18, 100];
+        let f = ConwayLedgerPredFailure::from_cbor(&cbor).expect("ConwayTreasuryValueMismatch");
+        if let ConwayLedgerPredFailure::ConwayTreasuryValueMismatch(mm) = &f {
+            assert_eq!(mm.supplied, 100);
+            assert_eq!(mm.expected, 200);
+        } else {
+            panic!("expected ConwayTreasuryValueMismatch, got {f:?}");
+        }
+        assert_eq!(
+            f.to_string(),
+            "ConwayTreasuryValueMismatch (Mismatch (RelEQ) {supplied: Coin 100, expected: Coin 200})"
+        );
+    }
+
+    #[test]
+    fn conway_ledger_pred_failure_ref_scripts_too_big_tag6() {
+        let cbor = [0x83_u8, 0x06, 0x19, 0x02, 0x58, 0x19, 0x01, 0xF4];
+        let f = ConwayLedgerPredFailure::from_cbor(&cbor).expect("ConwayTxRefScriptsSizeTooBig");
+        if let ConwayLedgerPredFailure::ConwayTxRefScriptsSizeTooBig(mm) = &f {
+            assert_eq!(mm.supplied, 600);
+            assert_eq!(mm.expected, 500);
+        } else {
+            panic!("expected ConwayTxRefScriptsSizeTooBig, got {f:?}");
+        }
+        assert_eq!(
+            f.to_string(),
+            "ConwayTxRefScriptsSizeTooBig (Mismatch (RelLTEQ) {supplied: 600, expected: 500})"
+        );
+    }
+
+    #[test]
+    fn conway_ledger_pred_failure_mempool_failure_tag7() {
+        let mut cbor = vec![0x82_u8, 0x07];
+        cbor.push(0x66);
+        cbor.extend_from_slice(b"denied");
+        let f = ConwayLedgerPredFailure::from_cbor(&cbor).expect("ConwayMempoolFailure");
+        if let ConwayLedgerPredFailure::ConwayMempoolFailure(s) = &f {
+            assert_eq!(s, "denied");
+        } else {
+            panic!("expected ConwayMempoolFailure, got {f:?}");
+        }
+        assert_eq!(f.to_string(), "ConwayMempoolFailure \"denied\"");
+    }
+
+    #[test]
+    fn conway_ledger_pred_failure_withdrawals_missing_accounts_tag8() {
+        let cbor = [0x82_u8, 0x08, 0xa0];
+        let f =
+            ConwayLedgerPredFailure::from_cbor(&cbor).expect("ConwayWithdrawalsMissingAccounts");
+        if let ConwayLedgerPredFailure::ConwayWithdrawalsMissingAccounts(w) = &f {
+            assert!(w.entries.is_empty());
+        } else {
+            panic!("expected ConwayWithdrawalsMissingAccounts, got {f:?}");
+        }
+        assert_eq!(
+            f.to_string(),
+            "ConwayWithdrawalsMissingAccounts (Withdrawals {unWithdrawals = fromList []})"
+        );
+    }
+
+    #[test]
+    fn conway_ledger_pred_failure_unknown_tag_rejects() {
+        let cbor = vec![0x82_u8, 0x18, 99, 0x40];
+        let err = ConwayLedgerPredFailure::from_cbor(&cbor).expect_err("unknown tag must reject");
+        assert!(
+            err.to_string().contains("unknown variant tag 99"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn conway_ledger_pred_failure_tag0_rejects() {
+        // Tag 0 is deliberately not used by upstream (Conway tags
+        // start at 1).
+        let cbor = vec![0x82_u8, 0x00, 0x40];
+        let err = ConwayLedgerPredFailure::from_cbor(&cbor).expect_err("tag 0 must reject");
+        assert!(
+            err.to_string().contains("unknown variant tag 0"),
             "got: {err}"
         );
     }
