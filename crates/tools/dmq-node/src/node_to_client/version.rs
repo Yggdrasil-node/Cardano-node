@@ -4,13 +4,15 @@
 //!
 //! **Strict mirror:** deps/dmq-node/dmq-node/src/DMQ/NodeToClient/Version.hs.
 //!
-//! This slice ports `NodeToClientVersion` — the version enum, its
-//! CBOR-term codec (`nodeToClientVersionCodec`), and its JSON
-//! rendering. `NodeToClientVersionData`, `stdVersionDataNTC`, and the
-//! `Acceptable` / `Queryable` version-negotiation instances depend on
-//! the `ouroboros-network-api` `NetworkMagic` type and land with the
-//! diffusion sub-arc.
+//! Ports the full `NodeToClient/Version.hs` surface: `NodeToClientVersion`
+//! (the version enum, its `nodeToClientVersionCodec` CBOR-term codec,
+//! JSON rendering) and `NodeToClientVersionData` (the handshake version
+//! data, `stdVersionDataNTC` / `NodeToClientVersionData::standard`, the
+//! `Acceptable` negotiation `accept`, the `nodeToClientCodecCBORTerm`
+//! CBOR-term codec `encode_term` / `decode_term`, and the JSON
+//! rendering).
 
+use crate::types::NetworkMagic;
 use yggdrasil_ledger::LedgerError;
 use yggdrasil_ledger::cbor::{Decoder, Encoder};
 
@@ -90,6 +92,95 @@ impl NodeToClientVersion {
     }
 }
 
+/// Node-to-client version data exchanged during the handshake.
+///
+/// Upstream `data NodeToClientVersionData` (`NodeToClient/Version.hs`)
+/// — simpler than its node-to-node sibling: just the network magic
+/// and a query flag.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NodeToClientVersionData {
+    /// The network magic — must match between peers.
+    pub network_magic: NetworkMagic,
+    /// Whether this is a version query.
+    pub query: bool,
+}
+
+impl NodeToClientVersionData {
+    /// The standard version data for a network — `query` is `false`.
+    ///
+    /// Mirror of upstream `stdVersionDataNTC`.
+    pub fn standard(network_magic: NetworkMagic) -> NodeToClientVersionData {
+        NodeToClientVersionData {
+            network_magic,
+            query: false,
+        }
+    }
+
+    /// Negotiate version data with a remote peer.
+    ///
+    /// Mirror of upstream `instance Acceptable NodeToClientVersionData`:
+    /// the network magic must match (a mismatch refuses); `query` is
+    /// the OR of the two.
+    pub fn accept(
+        &self,
+        remote: &NodeToClientVersionData,
+    ) -> Result<NodeToClientVersionData, String> {
+        if self.network_magic != remote.network_magic {
+            return Err(format!(
+                "version data mismatch: network magic {} /= {}",
+                self.network_magic.0, remote.network_magic.0
+            ));
+        }
+        Ok(NodeToClientVersionData {
+            network_magic: self.network_magic,
+            query: self.query || remote.query,
+        })
+    }
+
+    /// Encode as a CBOR term — a 2-element array `[networkMagic,
+    /// query]`.
+    ///
+    /// Mirror of upstream `nodeToClientCodecCBORTerm`'s `encodeTerm`.
+    pub fn encode_term(&self, enc: &mut Encoder) {
+        enc.array(2)
+            .unsigned(u64::from(self.network_magic.0))
+            .bool(self.query);
+    }
+
+    /// Decode a CBOR-term-encoded version data.
+    ///
+    /// Mirror of upstream `nodeToClientCodecCBORTerm`'s `decodeTerm` —
+    /// rejects an out-of-range network magic.
+    pub fn decode_term(dec: &mut Decoder) -> Result<NodeToClientVersionData, LedgerError> {
+        let len = dec.array()?;
+        if len != 2 {
+            return Err(LedgerError::CborInvalidLength {
+                expected: 2,
+                actual: len as usize,
+            });
+        }
+        let magic = dec.unsigned()?;
+        if magic > u64::from(u32::MAX) {
+            return Err(LedgerError::CborDecodeError(format!(
+                "networkMagic out of bound: {magic}"
+            )));
+        }
+        let query = dec.bool()?;
+        Ok(NodeToClientVersionData {
+            network_magic: NetworkMagic(magic as u32),
+            query,
+        })
+    }
+
+    /// Render as JSON.
+    ///
+    /// Mirror of upstream `instance ToJSON NodeToClientVersionData` —
+    /// `{ "NetworkMagic": <magic>, "Query": <query> }`.
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({ "NetworkMagic": self.network_magic.0, "Query": self.query })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -142,5 +233,64 @@ mod tests {
     #[test]
     fn to_json_is_the_logical_tag() {
         assert_eq!(NodeToClientVersion::V1.to_json(), serde_json::json!(1));
+    }
+
+    #[test]
+    fn version_data_standard_has_query_false() {
+        let data = NodeToClientVersionData::standard(NetworkMagic(764));
+        assert_eq!(data.network_magic, NetworkMagic(764));
+        assert!(!data.query);
+    }
+
+    #[test]
+    fn version_data_accept_matches_magic_and_ors_query() {
+        let local = NodeToClientVersionData {
+            network_magic: NetworkMagic(7),
+            query: false,
+        };
+        let remote = NodeToClientVersionData {
+            network_magic: NetworkMagic(7),
+            query: true,
+        };
+        let agreed = local.accept(&remote).expect("magic matches");
+        assert!(agreed.query);
+        // A magic mismatch refuses.
+        let other = NodeToClientVersionData {
+            network_magic: NetworkMagic(9),
+            query: false,
+        };
+        assert!(local.accept(&other).is_err());
+    }
+
+    #[test]
+    fn version_data_codec_round_trips() {
+        for data in [
+            NodeToClientVersionData {
+                network_magic: NetworkMagic(764),
+                query: true,
+            },
+            NodeToClientVersionData::standard(NetworkMagic(1)),
+        ] {
+            let mut enc = Encoder::new();
+            data.encode_term(&mut enc);
+            let encoded = enc.into_bytes();
+            assert_eq!(encoded[0], 0x82, "a CBOR 2-element array");
+            let mut dec = Decoder::new(&encoded);
+            assert_eq!(
+                NodeToClientVersionData::decode_term(&mut dec).expect("decodes"),
+                data
+            );
+        }
+    }
+
+    #[test]
+    fn version_data_to_json_matches_upstream_shape() {
+        let json = NodeToClientVersionData {
+            network_magic: NetworkMagic(42),
+            query: true,
+        }
+        .to_json();
+        assert_eq!(json["NetworkMagic"], serde_json::json!(42));
+        assert_eq!(json["Query"], serde_json::json!(true));
     }
 }
