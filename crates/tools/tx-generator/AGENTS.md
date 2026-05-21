@@ -1,6 +1,6 @@
 # Guidance for the pure-Rust port of upstream `tx-generator`.
 
-**Status:** `partial` (post-R590 bootstrap-witness key-hash sort — DumpToFile Show output now byte-equivalent to upstream for every multi-witness ordering).
+**Status:** `partial` (post-R701 DumpToFile simple-field sweep — the `Show (Tx)` renderer now renders every scalar / hash / set / map tx-body field; only `certificates`, `update`, and `auxiliary_data` stay gated, the last blocked on forensic upstream `Show` reference data — see "Current Functional Surface").
 The old cardano-cli CLI-MVS prerequisite is closed; concrete work here is now
 the tx-generator Script / GeneratorTx / Submission implementation arc
 plus upstream comparison evidence. Scope band: **LARGE**.
@@ -30,6 +30,32 @@ approved synthesis area from the sister-tools plan.
 
 ## Current Functional Surface
 
+- Shipped R692-R701: `SubmitMode::DumpToFile` `Show (Tx)` renderer
+  simple-field sweep — the Alonzo/Babbage/Conway (and where
+  applicable Shelley/Allegra/Mary) tx-body renderers now render
+  `txNetworkId` (R692), `withdrawals` (R693), `reqSignerHashes`
+  (R694), `auxDataHash` (R695), `scriptIntegrityHash` (R696),
+  `collateral` inputs (R697), `referenceInputs` (R698),
+  `totalCollateral` (R699), `collateralReturn` (R700), and `mint`
+  (R701). Each was previously gated by an `ensure_absent` /
+  `ensure_empty_or_absent` rejection; all now render the typed
+  field value.
+- **DumpToFile remaining-work blocker:** three tx-body fields stay
+  on `ensure_absent` / `ensure_empty_or_absent` rejection —
+  `certificates`, `update`, and `auxiliary_data` (`stAuxData` /
+  `atAuxData`). `certificates` and `update` are never populated by
+  the tx-generator benchmark path, so their gates are defensive,
+  not gaps. `auxiliary_data` *can* be set (the `NtoM`
+  size-padding path emits `{ uint => TxMetaBytes }` metadata via
+  `mkMetadata`), so its gate is a real gap — but porting it needs
+  the exact upstream `Show` output for a memoized `ShelleyTxAuxData`
+  / `AlonzoTxAuxData` and for `Metadatum`, which are `MemoBytes`-
+  wrapped types whose stock-derived `Show` shape cannot be
+  guessed. **Blocked pending:** a forensic upstream reference —
+  either an upstream golden `Show (Tx)` for a Shelley tx carrying
+  metadata, or a vendored `cardano-ledger` test vector for
+  `Show (ShelleyTxAuxData)`. Do not port `auxiliary_data` on
+  assumption.
 - Shipped: `<binary> --help` byte-equivalent to upstream (golden test
   pinned in `tests/cli_help_golden.rs`).
 - Shipped: `<binary> --version` byte-equivalent to upstream.
