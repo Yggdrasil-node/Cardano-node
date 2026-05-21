@@ -9632,17 +9632,202 @@ impl fmt::Display for VotingProcedure {
     }
 }
 
+/// A tx-output location mirroring upstream `data TxOutSource =
+/// TxOutFromInput TxIn | TxOutFromOutput TxIx`. CBOR `Sum`:
+/// `[0, TxIn]` / `[1, TxIx]`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TxOutSource {
+    /// The output resolved from a transaction input.
+    TxOutFromInput(TxIn),
+    /// The output identified by its index in the current tx.
+    TxOutFromOutput(u16),
+}
+
+impl TxOutSource {
+    /// Decode a `TxOutSource` from its 2-element CBOR `Sum`
+    /// envelope.
+    fn from_decoder(dec: &mut yggdrasil_ledger::Decoder<'_>) -> Result<Self, DecoderError> {
+        let len = dec
+            .array()
+            .map_err(|err| DecoderError(format!("TxOutSource: expected 2-array: {err:?}")))?;
+        if len != 2 {
+            return Err(DecoderError(format!(
+                "TxOutSource: expected 2-element array, got len {len}"
+            )));
+        }
+        let tag = dec
+            .unsigned()
+            .map_err(|err| DecoderError(format!("TxOutSource: expected Word8 tag: {err:?}")))?;
+        match tag {
+            0 => Ok(Self::TxOutFromInput(TxIn::from_decoder(dec)?)),
+            1 => {
+                let raw = dec
+                    .unsigned()
+                    .map_err(|err| DecoderError(format!("TxOutSource: expected TxIx: {err:?}")))?;
+                let ix = u16::try_from(raw).map_err(|_| {
+                    DecoderError(format!("TxOutSource: TxIx {raw} does not fit Word16"))
+                })?;
+                Ok(Self::TxOutFromOutput(ix))
+            }
+            other => Err(DecoderError(format!(
+                "TxOutSource: unknown variant tag {other}"
+            ))),
+        }
+    }
+}
+
+impl fmt::Display for TxOutSource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::TxOutFromInput(tx_in) => write!(f, "TxOutFromInput ({tx_in})"),
+            Self::TxOutFromOutput(ix) => {
+                write!(f, "TxOutFromOutput (TxIx {{unTxIx = {ix}}})")
+            }
+        }
+    }
+}
+
+/// `BabbageContextError` mirror — an inherited Babbage-era
+/// Plutus script-context translation error (`data
+/// BabbageContextError era` from
+/// `Cardano.Ledger.Babbage.TxInfo`). CBOR `Sum` tags 0-7
+/// (tag 3 unused).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum BabbageContextError {
+    /// Tag 0: a Byron-era output appeared in the script context.
+    ByronTxOutInContext(TxOutSource),
+    /// Tag 1: the translation logic could not resolve an input.
+    TranslationLogicMissingInput(TxIn),
+    /// Tag 2: a redeemer pointer resolved to nothing —
+    /// `PlutusPurpose AsIx`.
+    RedeemerPointerPointsToNothing(ConwayPlutusPurposeIx),
+    /// Tag 4: inline datums are not supported in this context.
+    InlineDatumsNotSupported(TxOutSource),
+    /// Tag 5: reference scripts are not supported in this
+    /// context.
+    ReferenceScriptsNotSupported(TxOutSource),
+    /// Tag 6: reference inputs are not supported in this context
+    /// — a set of `TxIn`.
+    ReferenceInputsNotSupported(Vec<TxIn>),
+    /// Tag 7: time translation past the forecast horizon — a
+    /// free-form error string.
+    TimeTranslationPastHorizon(String),
+}
+
+impl BabbageContextError {
+    /// Decode a `BabbageContextError` from its 2-element CBOR
+    /// `Sum` envelope.
+    fn from_decoder(dec: &mut yggdrasil_ledger::Decoder<'_>) -> Result<Self, DecoderError> {
+        let len = dec.array().map_err(|err| {
+            DecoderError(format!("BabbageContextError: expected 2-array: {err:?}"))
+        })?;
+        if len != 2 {
+            return Err(DecoderError(format!(
+                "BabbageContextError: expected 2-element array, got len {len}"
+            )));
+        }
+        let tag = dec.unsigned().map_err(|err| {
+            DecoderError(format!("BabbageContextError: expected Word8 tag: {err:?}"))
+        })?;
+        match tag {
+            0 => Ok(Self::ByronTxOutInContext(TxOutSource::from_decoder(dec)?)),
+            1 => Ok(Self::TranslationLogicMissingInput(TxIn::from_decoder(dec)?)),
+            2 => Ok(Self::RedeemerPointerPointsToNothing(
+                ConwayPlutusPurposeIx::from_decoder(dec)?,
+            )),
+            4 => Ok(Self::InlineDatumsNotSupported(TxOutSource::from_decoder(
+                dec,
+            )?)),
+            5 => Ok(Self::ReferenceScriptsNotSupported(
+                TxOutSource::from_decoder(dec)?,
+            )),
+            6 => {
+                let major = dec.peek_major().map_err(|err| {
+                    DecoderError(format!("ReferenceInputsNotSupported: peek: {err:?}"))
+                })?;
+                if major == 6 {
+                    let set_tag = dec.tag().map_err(|err| {
+                        DecoderError(format!("ReferenceInputsNotSupported: tag: {err:?}"))
+                    })?;
+                    if set_tag != 258 {
+                        return Err(DecoderError(format!(
+                            "ReferenceInputsNotSupported: expected tag 258, got {set_tag}"
+                        )));
+                    }
+                }
+                let count = dec.array().map_err(|err| {
+                    DecoderError(format!(
+                        "ReferenceInputsNotSupported: expected array: {err:?}"
+                    ))
+                })?;
+                let mut inputs = Vec::with_capacity(count as usize);
+                for _ in 0..count {
+                    inputs.push(TxIn::from_decoder(dec)?);
+                }
+                Ok(Self::ReferenceInputsNotSupported(inputs))
+            }
+            7 => {
+                let text = dec.text_owned().map_err(|err| {
+                    DecoderError(format!(
+                        "TimeTranslationPastHorizon: expected text: {err:?}"
+                    ))
+                })?;
+                Ok(Self::TimeTranslationPastHorizon(text))
+            }
+            other => Err(DecoderError(format!(
+                "BabbageContextError: unknown variant tag {other}"
+            ))),
+        }
+    }
+}
+
+impl fmt::Display for BabbageContextError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ByronTxOutInContext(src) => {
+                write!(f, "ByronTxOutInContext ({src})")
+            }
+            Self::TranslationLogicMissingInput(tx_in) => {
+                write!(f, "TranslationLogicMissingInput ({tx_in})")
+            }
+            Self::RedeemerPointerPointsToNothing(purpose) => {
+                write!(f, "RedeemerPointerPointsToNothing ({purpose})")
+            }
+            Self::InlineDatumsNotSupported(src) => {
+                write!(f, "InlineDatumsNotSupported ({src})")
+            }
+            Self::ReferenceScriptsNotSupported(src) => {
+                write!(f, "ReferenceScriptsNotSupported ({src})")
+            }
+            Self::ReferenceInputsNotSupported(inputs) => {
+                f.write_str("ReferenceInputsNotSupported (fromList [")?;
+                let mut first = true;
+                for tx_in in inputs {
+                    if !first {
+                        f.write_str(",")?;
+                    }
+                    first = false;
+                    write!(f, "{tx_in}")?;
+                }
+                f.write_str("])")
+            }
+            Self::TimeTranslationPastHorizon(text) => {
+                write!(f, "TimeTranslationPastHorizon {text:?}")
+            }
+        }
+    }
+}
+
 /// `ContextError` mirror — a Conway-era Plutus script-context
 /// translation error (`data ConwayContextError era` from
 /// `Cardano.Ledger.Conway.TxInfo`). CBOR `Sum` tags 8-15.
 ///
-/// Tags 9-15 carry typed payloads (R681-R683); only tag 8
-/// (`BabbageContextError` — an inherited prior-era error tree)
-/// keeps raw inner CBOR.
+/// All eight variants carry typed payloads (R681-R686).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ContextError {
-    /// Tag 8: an inherited Babbage-era context error. Raw.
-    BabbageContextError(Vec<u8>),
+    /// Tag 8: an inherited Babbage-era context error — `BabbageContextError`
+    /// (R686 typed).
+    BabbageContextError(BabbageContextError),
     /// Tag 9: a certificate not supported in the script context
     /// — `TxCert` (R681 typed).
     CertificateNotSupported(TxCert),
@@ -9685,20 +9870,10 @@ impl ContextError {
         let tag = dec
             .unsigned()
             .map_err(|err| DecoderError(format!("ContextError: expected Word8 tag: {err:?}")))?;
-        // Capture the single payload element raw (for the
-        // not-yet-typed variants).
-        let capture_raw =
-            |dec: &mut yggdrasil_ledger::Decoder<'_>| -> Result<Vec<u8>, DecoderError> {
-                let start = dec.position();
-                dec.skip()
-                    .map_err(|err| DecoderError(format!("ContextError: payload skip: {err:?}")))?;
-                let end = dec.position();
-                source.get(start..end).map(<[u8]>::to_vec).ok_or_else(|| {
-                    DecoderError("ContextError: payload byte range out of bounds".to_string())
-                })
-            };
         match tag {
-            8 => Ok(Self::BabbageContextError(capture_raw(dec)?)),
+            8 => Ok(Self::BabbageContextError(
+                BabbageContextError::from_decoder(dec)?,
+            )),
             9 => Ok(Self::CertificateNotSupported(TxCert::from_decoder(dec)?)),
             10 => Ok(Self::PlutusPurposeNotSupported(
                 ConwayPlutusPurposeItem::from_decoder(dec, source)?,
@@ -9792,8 +9967,8 @@ impl ContextError {
 impl fmt::Display for ContextError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::BabbageContextError(b) => {
-                write!(f, "BabbageContextError <raw-cbor {} bytes>", b.len())
+            Self::BabbageContextError(err) => {
+                write!(f, "BabbageContextError ({err})")
             }
             Self::CertificateNotSupported(cert) => {
                 write!(f, "CertificateNotSupported ({cert})")
@@ -14094,6 +14269,37 @@ mod tests {
         assert_eq!(
             f.to_string(),
             "ValidationTagMismatch (IsValid False) (FailedUnexpectedly (PlutusFailure \"boom\" <bytestring 3 bytes> :| []))"
+        );
+    }
+
+    #[test]
+    fn context_error_decodes_babbage_context_error() {
+        // ContextError tag 8 (BabbageContextError) whose inner
+        // error is tag 1 (TranslationLogicMissingInput — a TxIn).
+        let mut cbor = vec![0x82_u8, 0x08]; // ContextError [8, ...]
+        cbor.push(0x82); // BabbageContextError [1, TxIn]
+        cbor.push(0x01);
+        // TxIn [txid32, ix=3]
+        cbor.push(0x82);
+        cbor.push(0x58);
+        cbor.push(32);
+        cbor.extend_from_slice(&[0x6F_u8; 32]);
+        cbor.push(0x03);
+        use yggdrasil_ledger::Decoder;
+        let mut dec = Decoder::new(&cbor);
+        let ctx = ContextError::from_decoder(&mut dec, &cbor).expect("ContextError");
+        if let ContextError::BabbageContextError(
+            BabbageContextError::TranslationLogicMissingInput(tx_in),
+        ) = &ctx
+        {
+            assert_eq!(tx_in.tx_ix.0, 3);
+        } else {
+            panic!("expected BabbageContextError TranslationLogicMissingInput, got {ctx:?}");
+        }
+        assert!(
+            ctx.to_string()
+                .starts_with("BabbageContextError (TranslationLogicMissingInput (TxIn (TxId"),
+            "got: {ctx}"
         );
     }
 
