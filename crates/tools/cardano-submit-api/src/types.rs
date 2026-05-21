@@ -3511,6 +3511,56 @@ impl fmt::Display for Addr {
     }
 }
 
+/// Decode and render the Byron `Attributes AddrAttributes` CBOR
+/// map. Upstream the attributes are a `Map Word8 ByteString`:
+/// key 1 = the (encrypted) HD derivation path
+/// (`Maybe HDAddressPayload`), key 2 = the `NetworkMagic`
+/// Word32; absent key 2 means `NetworkMainOrStage`. Any other
+/// key lands in upstream's `attrRemain` (`UnparsedFields`).
+///
+/// Returns the typed `AddrAttributes {aaVKDerivationPath = ...,
+/// aaNetworkMagic = ...}` render, or `None` on a malformed map.
+fn decode_byron_addr_attributes(dec: &mut yggdrasil_ledger::Decoder<'_>) -> Option<String> {
+    let count = dec.map().ok()?;
+    let mut derivation_path: Option<String> = None;
+    let mut network_magic = "NetworkMainOrStage".to_string();
+    let mut unparsed = 0u64;
+    for _ in 0..count {
+        let key = dec.unsigned().ok()?;
+        let value = dec.bytes().ok()?.to_vec();
+        match key {
+            1 => {
+                // Value is CBOR-serialised HDAddressPayload (a
+                // bytestring wrapping the encrypted path).
+                let mut vd = yggdrasil_ledger::Decoder::new(&value);
+                let payload = vd.bytes().ok()?;
+                derivation_path = Some(format!(
+                    "Just (HDAddressPayload \"{}\")",
+                    hex::encode(payload)
+                ));
+            }
+            2 => {
+                // Value is the CBOR-serialised NetworkMagic Word32.
+                let mut vd = yggdrasil_ledger::Decoder::new(&value);
+                let magic = vd.unsigned().ok()?;
+                network_magic = format!("NetworkTestnet {magic}");
+            }
+            _ => unparsed += 1,
+        }
+    }
+    let derivation_render = derivation_path.unwrap_or_else(|| "Nothing".to_string());
+    let remain = if unparsed == 0 {
+        "fromList []".to_string()
+    } else {
+        format!("fromList <{unparsed} unparsed fields>")
+    };
+    Some(format!(
+        "Attributes {{attrData = AddrAttributes {{aaVKDerivationPath = \
+         {derivation_render}, aaNetworkMagic = {network_magic}}}, \
+         attrRemain = UnparsedFields ({remain})}}"
+    ))
+}
+
 /// Render a Byron bootstrap address as a typed `AddrBootstrap`
 /// shape, parsing the upstream `Address` CBOR structure.
 ///
@@ -3522,8 +3572,7 @@ impl fmt::Display for Addr {
 ///
 /// Returns the typed render on success; `None` (caller falls
 /// back to the hex marker) when any structural expectation
-/// fails. The `Attributes AddrAttributes` map is surfaced as a
-/// byte-count marker rather than fully decoded.
+/// fails.
 fn render_byron_bootstrap(bytes: &[u8]) -> Option<String> {
     use yggdrasil_ledger::Decoder;
     let mut dec = Decoder::new(bytes);
@@ -3548,10 +3597,7 @@ fn render_byron_bootstrap(bytes: &[u8]) -> Option<String> {
         return None;
     }
     let root_hex = hex::encode(root);
-    let attr_start = inner.position();
-    inner.skip().ok()?;
-    let attr_end = inner.position();
-    let attr_len = attr_end.saturating_sub(attr_start);
+    let attributes = decode_byron_addr_attributes(&mut inner)?;
     let addr_type = inner.unsigned().ok()?;
     let addr_type_render = match addr_type {
         0 => "ATVerKey".to_string(),
@@ -3561,7 +3607,7 @@ fn render_byron_bootstrap(bytes: &[u8]) -> Option<String> {
     Some(format!(
         "AddrBootstrap (BootstrapAddress {{unBootstrapAddress = \
          Address {{addrRoot = AbstractHash \"{root_hex}\", \
-         addrAttributes = <Attributes {attr_len} bytes>, \
+         addrAttributes = {attributes}, \
          addrType = {addr_type_render}}}}}) <crc32 {crc}>"
     ))
 }
@@ -12052,8 +12098,43 @@ mod tests {
             ),
             "got: {s}"
         );
+        // Empty attributes map → Nothing path + NetworkMainOrStage.
+        assert!(
+            s.contains(
+                "addrAttributes = Attributes {attrData = AddrAttributes {aaVKDerivationPath = Nothing, aaNetworkMagic = NetworkMainOrStage}"
+            ),
+            "got: {s}"
+        );
         assert!(s.contains("addrType = ATVerKey"), "got: {s}");
         assert!(s.ends_with("<crc32 305419896>"), "got: {s}");
+    }
+
+    #[test]
+    fn addr_typed_display_byron_bootstrap_with_attributes() {
+        // Byron Address whose attributes map carries both a
+        // derivation path (key 1) and a network magic (key 2).
+        // key 1 value: CBOR bytes(4) wrapping a 2-byte payload.
+        // key 2 value: CBOR bytes(3) wrapping CBOR uint 42.
+        let mut inner = vec![0x83_u8, 0x58, 0x1C];
+        inner.extend_from_slice(&[0xCD_u8; 28]);
+        // attributes map(2)
+        inner.push(0xA2);
+        inner.push(0x01); // key 1
+        inner.extend_from_slice(&[0x43, 0x42, 0xBE, 0xEF]); // bytes(3): CBOR bytes(2) BE EF
+        inner.push(0x02); // key 2
+        inner.extend_from_slice(&[0x42, 0x18, 0x2A]); // bytes(2): CBOR uint 42
+        inner.push(0x00); // addrType = ATVerKey
+        let mut addr = vec![0x82_u8, 0xD8, 0x18];
+        addr.push(0x58);
+        addr.push(inner.len() as u8);
+        addr.extend_from_slice(&inner);
+        addr.extend_from_slice(&[0x00]); // crc32 = 0
+        let s = Addr(addr).to_string();
+        assert!(
+            s.contains("aaVKDerivationPath = Just (HDAddressPayload \"beef\")"),
+            "got: {s}"
+        );
+        assert!(s.contains("aaNetworkMagic = NetworkTestnet 42"), "got: {s}");
     }
 
     #[test]

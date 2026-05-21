@@ -672,9 +672,16 @@ which parses the CRC-protected Byron `Address` CBOR (`[#6.24(inner),
 crc32]`, inner = `[addrRoot 28-byte hash, addrAttributes, addrType]`)
 and renders the typed `AddrBootstrap (BootstrapAddress
 {unBootstrapAddress = Address {addrRoot, addrAttributes, addrType}})`
-shape; malformed Byron input falls back to a hex marker. The
-`Attributes AddrAttributes` map is surfaced as a byte-count marker.
-R623 (2026-05-21) opened **Conway-era LEDGER coverage**
+shape; malformed Byron input falls back to a hex marker. R657
+(2026-05-21) closed the typed `Attributes AddrAttributes` decode
+— `decode_byron_addr_attributes` parses the attribute CBOR map
+(key 1 = `Maybe HDAddressPayload` derivation path, key 2 =
+`NetworkMagic` Word32; absent key 2 = `NetworkMainOrStage`) and
+renders the typed `Attributes {attrData = AddrAttributes
+{aaVKDerivationPath, aaNetworkMagic}, attrRemain =
+UnparsedFields (...)}` shape — so the Byron bootstrap address
+now renders fully typed end-to-end. R623 (2026-05-21) opened
+**Conway-era LEDGER coverage**
 with the `ConwayLedgerPredFailure` 9-variant scaffold (tags 1-9;
 upstream skipped tag 0). Per-era LEDGER coverage status:
 **Shelley/Allegra/Mary/Alonzo/Babbage all reuse
