@@ -579,6 +579,51 @@ pub fn decode_sig(input: &[u8]) -> Result<Sig, LedgerError> {
     })
 }
 
+// ---------------------------------------------------------------------------
+// Signature validation (upstream `SigSubmission/Validate.hs`)
+// ---------------------------------------------------------------------------
+
+/// Maximum tolerated clock skew, in seconds, for a signature's
+/// pool-eligibility window check.
+///
+/// Mirror of upstream `c_MAX_CLOCK_SKEW_SEC :: NominalDiffTime = 5`
+/// (`SigSubmission/Validate.hs`).
+pub const MAX_CLOCK_SKEW_SEC: u64 = 5;
+
+/// Verify a signature's KES period lies within its operational
+/// certificate's validity window `[ocert_kes_period, ocert_kes_period
+/// + total_kes_periods)`.
+///
+/// Mirror of upstream `validateSig`'s KES-period checks —
+/// `sigKESPeriod < endKESPeriod ?! KESAfterEndOCERT …` then
+/// `sigKESPeriod >= startKESPeriod ?! KESBeforeStartOCERT …`, where
+/// `startKESPeriod = ocertKESPeriod` and `endKESPeriod` is
+/// `startKESPeriod` plus `totalPeriodsKES`. `total_kes_periods` is the
+/// KES algorithm's total period count (upstream's `totalPeriodsKES`),
+/// supplied by the caller.
+pub fn validate_kes_period(
+    sig_kes_period: u64,
+    ocert_kes_period: u64,
+    total_kes_periods: u64,
+) -> Result<(), SigValidationError> {
+    let start_period = ocert_kes_period;
+    let end_period = ocert_kes_period.saturating_add(total_kes_periods);
+    // After-end check first, mirroring upstream's check order.
+    if sig_kes_period >= end_period {
+        return Err(SigValidationError::KesAfterEndOcert {
+            kes_period: sig_kes_period,
+            end_period,
+        });
+    }
+    if sig_kes_period < start_period {
+        return Err(SigValidationError::KesBeforeStartOcert {
+            kes_period: sig_kes_period,
+            start_period,
+        });
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -841,6 +886,41 @@ mod tests {
         encode_sig(&sig, &mut enc);
         // CBOR byte string of length 3 → 0x43, then the cached bytes.
         assert_eq!(enc.into_bytes(), vec![0x43, 0x01, 0x02, 0x03]);
+    }
+
+    #[test]
+    fn validate_kes_period_accepts_in_window() {
+        // Window [5, 69): 5 (start, inclusive), 10, 68 (end-1) all pass.
+        assert!(validate_kes_period(5, 5, 64).is_ok());
+        assert!(validate_kes_period(10, 5, 64).is_ok());
+        assert!(validate_kes_period(68, 5, 64).is_ok());
+    }
+
+    #[test]
+    fn validate_kes_period_rejects_before_start_and_after_end() {
+        // Before the opcert's start period.
+        assert_eq!(
+            validate_kes_period(3, 5, 64),
+            Err(SigValidationError::KesBeforeStartOcert {
+                kes_period: 3,
+                start_period: 5,
+            })
+        );
+        // At/after the window end (5 + 64 = 69, exclusive).
+        assert_eq!(
+            validate_kes_period(69, 5, 64),
+            Err(SigValidationError::KesAfterEndOcert {
+                kes_period: 69,
+                end_period: 69,
+            })
+        );
+        assert_eq!(
+            validate_kes_period(70, 5, 64),
+            Err(SigValidationError::KesAfterEndOcert {
+                kes_period: 70,
+                end_period: 69,
+            })
+        );
     }
 
     #[test]
