@@ -346,6 +346,47 @@ impl EraApplyTxError {
     pub fn rendered(&self) -> &str {
         &self.rendered
     }
+
+    /// Decode the Conway-era `ApplyTxError` payload into the typed
+    /// predicate-failure tree.
+    ///
+    /// `ApplyTxError ConwayEra = ConwayApplyTxError (NonEmpty
+    /// (ConwayLedgerPredFailure ConwayEra))`; the raw CBOR is a
+    /// non-empty array of `ConwayLedgerPredFailure` envelopes.
+    /// Returns each failure decoded through the
+    /// `ConwayLedgerPredFailure` typed tree built across R623-R683.
+    pub fn decode_conway_failures(&self) -> Result<Vec<ConwayLedgerPredFailure>, DecoderError> {
+        use yggdrasil_ledger::Decoder;
+        if self.raw_cbor.is_empty() {
+            return Err(DecoderError(
+                "EraApplyTxError: no raw CBOR to decode".to_string(),
+            ));
+        }
+        let mut dec = Decoder::new(&self.raw_cbor);
+        let count = dec.array().map_err(|err| {
+            DecoderError(format!(
+                "ConwayApplyTxError: expected NonEmpty CBOR array: {err:?}"
+            ))
+        })?;
+        if count == 0 {
+            return Err(DecoderError(
+                "ConwayApplyTxError: NonEmpty requires at least one failure".to_string(),
+            ));
+        }
+        let mut failures = Vec::with_capacity(count as usize);
+        for _ in 0..count {
+            let start = dec.position();
+            dec.skip().map_err(|err| {
+                DecoderError(format!("ConwayApplyTxError: failure skip: {err:?}"))
+            })?;
+            let end = dec.position();
+            let slice = self.raw_cbor.get(start..end).ok_or_else(|| {
+                DecoderError("ConwayApplyTxError: failure byte range out of bounds".to_string())
+            })?;
+            failures.push(ConwayLedgerPredFailure::from_cbor(slice)?);
+        }
+        Ok(failures)
+    }
 }
 
 impl fmt::Display for EraApplyTxError {
@@ -415,6 +456,20 @@ impl TxValidationErrorInCardanoMode {
             | Self::Alonzo(p)
             | Self::Babbage(p)
             | Self::Conway(p) => p,
+        }
+    }
+
+    /// Decode the typed Conway predicate-failure tree when this
+    /// rejection is Conway-era. Returns `None` for the other
+    /// eras (their `ShelleyLedgerPredFailure` payload is not yet
+    /// CBOR-decodable); `Some(Err(_))` on a malformed Conway
+    /// payload.
+    pub fn typed_conway_failures(
+        &self,
+    ) -> Option<Result<Vec<ConwayLedgerPredFailure>, DecoderError>> {
+        match self {
+            Self::Conway(payload) => Some(payload.decode_conway_failures()),
+            _ => None,
         }
     }
 }
@@ -10903,6 +10958,32 @@ mod tests {
             TxValidationErrorInCardanoMode::from_raw(TxValidationEra::Conway, payload.clone());
         assert_eq!(err.era(), TxValidationEra::Conway);
         assert_eq!(err.payload(), &payload);
+    }
+
+    #[test]
+    fn tx_validation_error_typed_conway_failures_decodes() {
+        // Conway ApplyTxError raw CBOR: a NonEmpty array(1) of a
+        // ConwayLedgerPredFailure (ConwayWdrlNotDelegatedToDRep).
+        let mut raw = vec![0x81_u8]; // NonEmpty array(1)
+        raw.extend_from_slice(&[0x82, 0x04, 0x81, 0x58, 0x1C]);
+        raw.extend_from_slice(&[0xAB_u8; 28]);
+        let payload = EraApplyTxError::new(raw, "wdrl not delegated");
+        let err = TxValidationErrorInCardanoMode::from_raw(TxValidationEra::Conway, payload);
+        let failures = err
+            .typed_conway_failures()
+            .expect("Conway era")
+            .expect("decodes");
+        assert_eq!(failures.len(), 1);
+        assert!(matches!(
+            failures[0],
+            ConwayLedgerPredFailure::ConwayWdrlNotDelegatedToDRep(_)
+        ));
+        // Non-Conway eras yield None.
+        let babbage = TxValidationErrorInCardanoMode::from_raw(
+            TxValidationEra::Babbage,
+            EraApplyTxError::new(vec![], "x"),
+        );
+        assert!(babbage.typed_conway_failures().is_none());
     }
 
     #[test]

@@ -917,6 +917,15 @@ keeps raw inner CBOR.
 **Both Conway UTXOS variants now carry typed payloads — the
 Conway UTXOS sub-rule is fully typed.** The Conway LEDGER →
 UTXOW → UTXO → UTXOS chain renders typed end-to-end.
+R684 (2026-05-21) wired the top-level rejection wrapper to the
+typed tree — `EraApplyTxError::decode_conway_failures` decodes
+the Conway `ApplyTxError` payload (`NonEmpty
+(ConwayLedgerPredFailure)`) into the typed predicate-failure
+tree, and `TxValidationErrorInCardanoMode::typed_conway_failures`
+exposes it for Conway-era rejections. The A5 cardano-submit-api
+rejection enum now connects the era-tagged wrapper end-to-end
+to the typed Conway predicate-failure tree built across
+R623-R683.
 R632 (2026-05-21) typed Conway UTXOW tags 11
 (`MissingRequiredDatums`) and 12
 (`NotAllowedSupplementalDatums`) — added the `DataHash`
