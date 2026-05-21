@@ -624,6 +624,112 @@ pub fn validate_kes_period(
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// SigSubmission mini-protocol
+// (upstream `SigSubmission crypto = TxSubmission2 SigId (Sig crypto)`)
+// ---------------------------------------------------------------------------
+
+/// States of the `SigSubmission` mini-protocol state machine.
+///
+/// Upstream `SigSubmission crypto = TxSubmission2 SigId (Sig crypto)` —
+/// the protocol *is* `TxSubmission2`, so the states are
+/// `TxSubmission2`'s. This mirrors `crates/network`'s
+/// `TxSubmissionState`; dmq-node carries its own copy because
+/// `crates/network`'s `TxSubmission2` is concrete over the ledger
+/// `TxId` and not generic over the id / tx types (R731 / R732
+/// decision).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SigSubmissionState {
+    /// Client agency — must send `MsgInit`.
+    StInit,
+    /// Server agency — may send `MsgRequestTxIds` or `MsgRequestTxs`.
+    StIdle,
+    /// Client agency — must reply with `MsgReplyTxIds` (or, if
+    /// blocking, `MsgDone`).
+    StTxIds {
+        /// Whether this is a blocking request.
+        blocking: bool,
+    },
+    /// Client agency — must reply with `MsgReplyTxs`.
+    StTxs,
+    /// Terminal state — no further messages.
+    StDone,
+}
+
+/// A [`SigId`] paired with the serialized size of its [`Sig`].
+///
+/// Mirror of `crates/network`'s `TxIdAndSize` with a DMQ `SigId` —
+/// the `(txid, SizeInBytes)` pair of the `TxSubmission2` protocol.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SigIdAndSize {
+    /// The signature identifier.
+    pub sig_id: SigId,
+    /// Size of the serialized `Sig` in bytes.
+    pub size: u32,
+}
+
+/// Messages of the `SigSubmission` mini-protocol.
+///
+/// Upstream `SigSubmission = TxSubmission2 SigId (Sig crypto)`, so the
+/// messages are `TxSubmission2`'s `Message` constructors with `SigId`
+/// identifiers and `Sig` payloads (the variant names keep upstream's
+/// `Tx` spelling — the protocol *is* `TxSubmission2`). The CBOR
+/// message-envelope tags (`6`/`0`/`1`/`2`/`3`/`4`) are byte-identical
+/// to `crates/network`'s `TxSubmissionMessage` — the wire-equivalence
+/// guarantee for the dmq-node-local protocol.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SigSubmissionMessage {
+    /// `[6]` — client sends the initial message. `StInit → StIdle`.
+    MsgInit,
+    /// `[0, blocking, ack, req]` — server requests signature
+    /// identifiers. `StIdle → StTxIds(blocking)`.
+    MsgRequestTxIds {
+        /// `true` blocking (a non-empty reply is required), `false`
+        /// non-blocking (an empty reply is permitted).
+        blocking: bool,
+        /// Number of outstanding identifiers to acknowledge.
+        ack: u16,
+        /// Maximum number of new identifiers to request.
+        req: u16,
+    },
+    /// `[1, [*[sigId, size]]]` — client replies with signature
+    /// identifiers. `StTxIds → StIdle`.
+    MsgReplyTxIds {
+        /// The signature identifiers and their sizes.
+        sig_ids: Vec<SigIdAndSize>,
+    },
+    /// `[2, [*sigId]]` — server requests specific signatures by id.
+    /// `StIdle → StTxs`.
+    MsgRequestTxs {
+        /// Signature identifiers to fetch.
+        sig_ids: Vec<SigId>,
+    },
+    /// `[3, [*sig]]` — client replies with the requested signatures.
+    /// `StTxs → StIdle`.
+    MsgReplyTxs {
+        /// The requested signatures (an invalid one may be omitted).
+        sigs: Vec<Sig>,
+    },
+    /// `[4]` — client terminates the protocol (only from a blocking
+    /// `StTxIds`). `StTxIds(blocking) → StDone`.
+    MsgDone,
+}
+
+impl SigSubmissionMessage {
+    /// The CBOR message-envelope tag — byte-identical to
+    /// `crates/network`'s `TxSubmissionMessage::wire_tag`.
+    pub fn wire_tag(&self) -> u8 {
+        match self {
+            SigSubmissionMessage::MsgRequestTxIds { .. } => 0,
+            SigSubmissionMessage::MsgReplyTxIds { .. } => 1,
+            SigSubmissionMessage::MsgRequestTxs { .. } => 2,
+            SigSubmissionMessage::MsgReplyTxs { .. } => 3,
+            SigSubmissionMessage::MsgDone => 4,
+            SigSubmissionMessage::MsgInit => 6,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -886,6 +992,57 @@ mod tests {
         encode_sig(&sig, &mut enc);
         // CBOR byte string of length 3 → 0x43, then the cached bytes.
         assert_eq!(enc.into_bytes(), vec![0x43, 0x01, 0x02, 0x03]);
+    }
+
+    #[test]
+    fn sig_submission_message_wire_tags_match_tx_submission2() {
+        // The envelope tags must equal crates/network's
+        // TxSubmissionMessage tags (6/0/1/2/3/4).
+        assert_eq!(SigSubmissionMessage::MsgInit.wire_tag(), 6);
+        assert_eq!(
+            SigSubmissionMessage::MsgRequestTxIds {
+                blocking: true,
+                ack: 0,
+                req: 1,
+            }
+            .wire_tag(),
+            0
+        );
+        assert_eq!(
+            SigSubmissionMessage::MsgReplyTxIds { sig_ids: vec![] }.wire_tag(),
+            1
+        );
+        assert_eq!(
+            SigSubmissionMessage::MsgRequestTxs { sig_ids: vec![] }.wire_tag(),
+            2
+        );
+        assert_eq!(
+            SigSubmissionMessage::MsgReplyTxs { sigs: vec![] }.wire_tag(),
+            3
+        );
+        assert_eq!(SigSubmissionMessage::MsgDone.wire_tag(), 4);
+    }
+
+    #[test]
+    fn sig_submission_state_and_message_construct() {
+        assert_eq!(
+            SigSubmissionState::StTxIds { blocking: true },
+            SigSubmissionState::StTxIds { blocking: true }
+        );
+        assert_ne!(SigSubmissionState::StIdle, SigSubmissionState::StDone);
+        let reply = SigSubmissionMessage::MsgReplyTxIds {
+            sig_ids: vec![SigIdAndSize {
+                sig_id: SigId(SigHash(vec![0x01])),
+                size: 42,
+            }],
+        };
+        match reply {
+            SigSubmissionMessage::MsgReplyTxIds { sig_ids } => {
+                assert_eq!(sig_ids.len(), 1);
+                assert_eq!(sig_ids[0].size, 42);
+            }
+            _ => panic!("wrong variant"),
+        }
     }
 
     #[test]
