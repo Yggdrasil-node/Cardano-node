@@ -685,6 +685,22 @@ IncompleteWithdrawals). Sub-rule variants 1/2/3 (UTXOW/CERTS/GOV)
 carry raw payloads pending Conway-specific UTXOW/CERTS/GOV
 decoder ports. New `show_haskell_bytestring_like` helper renders
 Text payloads matching upstream's `Show String` escape table.
+R624 (2026-05-21) added the `ConwayUtxowPredFailure` 19-variant
+scaffold (the largest sub-rule under Conway LEDGER) and wired
+`ConwayLedgerPredFailure::ConwayUtxowFailure(Vec<u8>)` →
+`ConwayUtxowFailure(ConwayUtxowPredFailure)`. **12 of 19 Conway
+UTXOW variants carry typed payloads** — reuses
+NonEmptySetScriptHash (R599), NonEmptySetKeyHash (R600),
+NonEmptyVKey (R601), TxAuxDataHash (R598), NonEmptySetTxIn
+(R603), plus a new `Mismatch<TxAuxDataHash>` ToGroup-flattened
+variant for tag 7. The 7 remaining variants (0 nested UTXO, 10
+MissingRedeemers, 11 MissingRequiredDatums, 12
+NotAllowedSupplementalDatums, 13 PPViewHashesDontMatch, 15
+ExtraRedeemers, 18 ScriptIntegrityHashMismatch) carry raw inner
+CBOR pending Conway UTXO + PlutusPurpose + DataHash +
+ScriptIntegrityHash + StrictMaybe decoders. Conway CERTS / GOV
+sub-rule variants (LEDGER tags 2/3) remain raw pending their own
+decoder scaffolds.
 Phase-2.5+ remaining work: per-variant decoders for those 5 raw
 UTXO variants, `ShelleyDelegsPredFailure` (tag-1 of the LEDGER
 tree), wiring the typed `ShelleyUtxowPredFailure` decoder into

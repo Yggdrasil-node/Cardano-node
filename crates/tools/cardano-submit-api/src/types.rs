@@ -3727,9 +3727,9 @@ impl fmt::Display for NonEmptyKeyHash {
 /// ports.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ConwayLedgerPredFailure {
-    /// Tag 1: nested Conway UTXOW failure (raw, pending Conway
-    /// UTXOW sub-rule decoder).
-    ConwayUtxowFailure(Vec<u8>),
+    /// Tag 1: nested Conway UTXOW failure (R624 wired to the
+    /// typed `ConwayUtxowPredFailure` 19-variant scaffold).
+    ConwayUtxowFailure(ConwayUtxowPredFailure),
     /// Tag 2: nested Conway CERTS failure (raw, pending Conway
     /// CERTS sub-rule decoder). Replaces Shelley's DELEGS path.
     ConwayCertsFailure(Vec<u8>),
@@ -3812,8 +3812,24 @@ impl ConwayLedgerPredFailure {
         })?;
         let payload_offset = dec.position();
         match tag {
-            // Sub-rule variants: raw pending Conway-era decoders.
-            1..=3 => {
+            // Tag 1: typed Conway UTXOW sub-rule (R624).
+            1 => {
+                if len != 2 {
+                    return Err(DecoderError(format!(
+                        "ConwayUtxowFailure: expected 2-element envelope, got len {len}"
+                    )));
+                }
+                let payload_bytes = bytes.get(payload_offset..).ok_or_else(|| {
+                    DecoderError(
+                        "ConwayLedgerPredFailure: payload offset out of bounds".to_string(),
+                    )
+                })?;
+                let utxow = ConwayUtxowPredFailure::from_cbor(payload_bytes)?;
+                Ok(Self::ConwayUtxowFailure(utxow))
+            }
+            // Tags 2/3: CERTS/GOV sub-rules raw pending typed
+            // decoders.
+            2..=3 => {
                 if len != 2 {
                     return Err(DecoderError(format!(
                         "ConwayLedgerPredFailure tag {tag}: expected 2-element envelope, got len {len}"
@@ -3828,7 +3844,6 @@ impl ConwayLedgerPredFailure {
                     })?
                     .to_vec();
                 Ok(match tag {
-                    1 => Self::ConwayUtxowFailure(raw),
                     2 => Self::ConwayCertsFailure(raw),
                     3 => Self::ConwayGovFailure(raw),
                     _ => unreachable!("tag range checked above"),
@@ -3946,9 +3961,10 @@ impl fmt::Display for ConwayLedgerPredFailure {
     /// route through their typed inner Display.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::ConwayUtxowFailure(b)
-            | Self::ConwayCertsFailure(b)
-            | Self::ConwayGovFailure(b) => {
+            Self::ConwayUtxowFailure(utxow) => {
+                write!(f, "ConwayUtxowFailure ({utxow})")
+            }
+            Self::ConwayCertsFailure(b) | Self::ConwayGovFailure(b) => {
                 write!(f, "{} <raw-cbor {} bytes>", self.constructor(), b.len())
             }
             Self::ConwayWdrlNotDelegatedToDRep(keys) => {
@@ -4003,6 +4019,366 @@ fn show_haskell_bytestring_like(s: &str) -> String {
     }
     out.push('"');
     out
+}
+
+/// `ConwayUtxowPredFailure` mirror — Conway-era UTXOW sub-rule
+/// failure (under `ConwayLedgerPredFailure::ConwayUtxowFailure`).
+///
+/// Upstream: `data ConwayUtxowPredFailure era` from
+/// `Cardano.Ledger.Conway.Rules.Utxow` with 19 variants encoded
+/// via CBOR `Sum` tags 0-18. The Conway variant set extends the
+/// Babbage/Alonzo UTXOW set with Plutus-V3 + governance-related
+/// failure modes (MissingRedeemers, MissingRequiredDatums, etc.).
+///
+/// R624 ships the scaffold with typed payloads for 12 of the 19
+/// variants (reusing existing carriers from the Shelley path).
+/// The remaining 7 variants (0/10/11/12/13/15/18) keep raw inner
+/// CBOR pending nested-rule / Plutus-purpose / DataHash /
+/// ScriptIntegrityHash decoders.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ConwayUtxowPredFailure {
+    /// Tag 0: nested Conway UTXO failure — raw pending Conway
+    /// UTXO sub-rule decoder.
+    UtxoFailure(Vec<u8>),
+    /// Tag 1: witnesses that failed verification —
+    /// `NonEmpty (VKey Witness)` (R601 typed).
+    InvalidWitnessesUTXOW(NonEmptyVKey),
+    /// Tag 2: vkey witnesses needed but not supplied —
+    /// `NonEmptySet (KeyHash Witness)` (R600 typed).
+    MissingVKeyWitnessesUTXOW(NonEmptySetKeyHash),
+    /// Tag 3: missing scripts — `NonEmptySet ScriptHash` (R599
+    /// typed).
+    MissingScriptWitnessesUTXOW(NonEmptySetScriptHash),
+    /// Tag 4: failed scripts — `NonEmptySet ScriptHash` (R599
+    /// typed).
+    ScriptWitnessNotValidatingUTXOW(NonEmptySetScriptHash),
+    /// Tag 5: tx body claims metadata but metadata-hash field
+    /// missing — `TxAuxDataHash` (R598 typed).
+    MissingTxBodyMetadataHash(TxAuxDataHash),
+    /// Tag 6: metadata-hash present but the metadata itself was
+    /// not supplied — `TxAuxDataHash` (R598 typed).
+    MissingTxMetadata(TxAuxDataHash),
+    /// Tag 7: metadata-hash mismatch — `Mismatch RelEQ
+    /// TxAuxDataHash`. ToGroup-flattened wire encoding (supplied
+    /// then expected). (R624 typed.)
+    ConflictingMetadataHash(Mismatch<TxAuxDataHash>),
+    /// Tag 8: invalid metadata — no payload.
+    InvalidMetadata,
+    /// Tag 9: extraneous scripts supplied beyond what the tx
+    /// required — `NonEmptySet ScriptHash` (R599 typed).
+    ExtraneousScriptWitnessesUTXOW(NonEmptySetScriptHash),
+    /// Tag 10: missing redeemers — `NonEmpty (PlutusPurpose
+    /// AsItem era, ScriptHash)`. Raw pending PlutusPurpose
+    /// decoder.
+    MissingRedeemers(Vec<u8>),
+    /// Tag 11: missing required datums — `NonEmptySet DataHash
+    /// + Set DataHash`. Raw pending DataHash decoder.
+    MissingRequiredDatums(Vec<u8>),
+    /// Tag 12: not-allowed supplemental datums — same shape as
+    /// tag 11. Raw pending.
+    NotAllowedSupplementalDatums(Vec<u8>),
+    /// Tag 13: protocol-params-view hash mismatch —
+    /// `Mismatch RelEQ (StrictMaybe ScriptIntegrityHash)`. Raw
+    /// pending StrictMaybe ScriptIntegrityHash decoder.
+    PPViewHashesDontMatch(Vec<u8>),
+    /// Tag 14: TxIns missing required DataHash —
+    /// `NonEmptySet TxIn` (R603 typed).
+    UnspendableUTxONoDatumHash(NonEmptySetTxIn),
+    /// Tag 15: extra redeemers — `NonEmpty (PlutusPurpose AsIx
+    /// era)`. Raw pending PlutusPurpose decoder.
+    ExtraRedeemers(Vec<u8>),
+    /// Tag 16: malformed script witnesses —
+    /// `NonEmptySet ScriptHash` (R599 typed).
+    MalformedScriptWitnesses(NonEmptySetScriptHash),
+    /// Tag 17: malformed reference scripts —
+    /// `NonEmptySet ScriptHash` (R599 typed).
+    MalformedReferenceScripts(NonEmptySetScriptHash),
+    /// Tag 18: script integrity hash mismatch — `Mismatch RelEQ
+    /// (StrictMaybe ScriptIntegrityHash) + StrictMaybe
+    /// ByteString`. Raw pending.
+    ScriptIntegrityHashMismatch(Vec<u8>),
+}
+
+impl ConwayUtxowPredFailure {
+    /// Upstream CBOR tag for this variant.
+    pub fn tag(&self) -> u8 {
+        match self {
+            Self::UtxoFailure(_) => 0,
+            Self::InvalidWitnessesUTXOW(_) => 1,
+            Self::MissingVKeyWitnessesUTXOW(_) => 2,
+            Self::MissingScriptWitnessesUTXOW(_) => 3,
+            Self::ScriptWitnessNotValidatingUTXOW(_) => 4,
+            Self::MissingTxBodyMetadataHash(_) => 5,
+            Self::MissingTxMetadata(_) => 6,
+            Self::ConflictingMetadataHash(_) => 7,
+            Self::InvalidMetadata => 8,
+            Self::ExtraneousScriptWitnessesUTXOW(_) => 9,
+            Self::MissingRedeemers(_) => 10,
+            Self::MissingRequiredDatums(_) => 11,
+            Self::NotAllowedSupplementalDatums(_) => 12,
+            Self::PPViewHashesDontMatch(_) => 13,
+            Self::UnspendableUTxONoDatumHash(_) => 14,
+            Self::ExtraRedeemers(_) => 15,
+            Self::MalformedScriptWitnesses(_) => 16,
+            Self::MalformedReferenceScripts(_) => 17,
+            Self::ScriptIntegrityHashMismatch(_) => 18,
+        }
+    }
+
+    /// Upstream stock-derived `Show` constructor name.
+    pub fn constructor(&self) -> &'static str {
+        match self {
+            Self::UtxoFailure(_) => "UtxoFailure",
+            Self::InvalidWitnessesUTXOW(_) => "InvalidWitnessesUTXOW",
+            Self::MissingVKeyWitnessesUTXOW(_) => "MissingVKeyWitnessesUTXOW",
+            Self::MissingScriptWitnessesUTXOW(_) => "MissingScriptWitnessesUTXOW",
+            Self::ScriptWitnessNotValidatingUTXOW(_) => "ScriptWitnessNotValidatingUTXOW",
+            Self::MissingTxBodyMetadataHash(_) => "MissingTxBodyMetadataHash",
+            Self::MissingTxMetadata(_) => "MissingTxMetadata",
+            Self::ConflictingMetadataHash(_) => "ConflictingMetadataHash",
+            Self::InvalidMetadata => "InvalidMetadata",
+            Self::ExtraneousScriptWitnessesUTXOW(_) => "ExtraneousScriptWitnessesUTXOW",
+            Self::MissingRedeemers(_) => "MissingRedeemers",
+            Self::MissingRequiredDatums(_) => "MissingRequiredDatums",
+            Self::NotAllowedSupplementalDatums(_) => "NotAllowedSupplementalDatums",
+            Self::PPViewHashesDontMatch(_) => "PPViewHashesDontMatch",
+            Self::UnspendableUTxONoDatumHash(_) => "UnspendableUTxONoDatumHash",
+            Self::ExtraRedeemers(_) => "ExtraRedeemers",
+            Self::MalformedScriptWitnesses(_) => "MalformedScriptWitnesses",
+            Self::MalformedReferenceScripts(_) => "MalformedReferenceScripts",
+            Self::ScriptIntegrityHashMismatch(_) => "ScriptIntegrityHashMismatch",
+        }
+    }
+
+    /// Decode the full `ConwayUtxowPredFailure` outer envelope.
+    /// Length varies: 1 (tag 8 no-payload) / 2 (most tags) / 3
+    /// (tags 7/11/12/13 multi-arg or ToGroup-flattened) / 4 (tag
+    /// 18 + tag 11/12 with NonEmptySet+Set).
+    pub fn from_cbor(bytes: &[u8]) -> Result<Self, DecoderError> {
+        use yggdrasil_ledger::Decoder;
+        let mut dec = Decoder::new(bytes);
+        let len = dec.array().map_err(|err| {
+            DecoderError(format!(
+                "ConwayUtxowPredFailure: expected outer CBOR array: {err:?}"
+            ))
+        })?;
+        if !(1..=4).contains(&len) {
+            return Err(DecoderError(format!(
+                "ConwayUtxowPredFailure: expected 1- to 4-element array, got len {len}"
+            )));
+        }
+        let tag = dec.unsigned().map_err(|err| {
+            DecoderError(format!(
+                "ConwayUtxowPredFailure: expected Word8 tag: {err:?}"
+            ))
+        })?;
+        let payload_offset = dec.position();
+        // Helper: capture remaining bytes as raw payload for the
+        // not-yet-typed variants.
+        let capture_raw = |label: &str, expected_len: u64| -> Result<Vec<u8>, DecoderError> {
+            if len != expected_len {
+                return Err(DecoderError(format!(
+                    "{label}: expected {expected_len}-element envelope, got len {len}"
+                )));
+            }
+            bytes
+                .get(payload_offset..)
+                .map(<[u8]>::to_vec)
+                .ok_or_else(|| {
+                    DecoderError("ConwayUtxowPredFailure: payload offset out of bounds".to_string())
+                })
+        };
+        match tag {
+            0 => Ok(Self::UtxoFailure(capture_raw("UtxoFailure", 2)?)),
+            1 => {
+                if len != 2 {
+                    return Err(DecoderError(format!(
+                        "InvalidWitnessesUTXOW: expected 2-element envelope, got len {len}"
+                    )));
+                }
+                let payload_bytes = bytes.get(payload_offset..).ok_or_else(|| {
+                    DecoderError("ConwayUtxowPredFailure: payload offset out of bounds".to_string())
+                })?;
+                Ok(Self::InvalidWitnessesUTXOW(NonEmptyVKey::from_cbor(
+                    payload_bytes,
+                )?))
+            }
+            2 => {
+                if len != 2 {
+                    return Err(DecoderError(format!(
+                        "MissingVKeyWitnessesUTXOW: expected 2-element envelope, got len {len}"
+                    )));
+                }
+                let payload_bytes = bytes.get(payload_offset..).ok_or_else(|| {
+                    DecoderError("ConwayUtxowPredFailure: payload offset out of bounds".to_string())
+                })?;
+                Ok(Self::MissingVKeyWitnessesUTXOW(
+                    NonEmptySetKeyHash::from_cbor(payload_bytes)?,
+                ))
+            }
+            3 | 4 | 9 | 16 | 17 => {
+                if len != 2 {
+                    return Err(DecoderError(format!(
+                        "ConwayUtxowPredFailure tag {tag}: expected 2-element envelope, got len {len}"
+                    )));
+                }
+                let payload_bytes = bytes.get(payload_offset..).ok_or_else(|| {
+                    DecoderError("ConwayUtxowPredFailure: payload offset out of bounds".to_string())
+                })?;
+                let set = NonEmptySetScriptHash::from_cbor(payload_bytes)?;
+                Ok(match tag {
+                    3 => Self::MissingScriptWitnessesUTXOW(set),
+                    4 => Self::ScriptWitnessNotValidatingUTXOW(set),
+                    9 => Self::ExtraneousScriptWitnessesUTXOW(set),
+                    16 => Self::MalformedScriptWitnesses(set),
+                    17 => Self::MalformedReferenceScripts(set),
+                    _ => unreachable!("tag set above"),
+                })
+            }
+            5 | 6 => {
+                if len != 2 {
+                    return Err(DecoderError(format!(
+                        "ConwayUtxowPredFailure tag {tag}: expected 2-element envelope, got len {len}"
+                    )));
+                }
+                let hash_bytes = dec.bytes().map_err(|err| {
+                    DecoderError(format!(
+                        "ConwayUtxowPredFailure tag {tag}: expected TxAuxDataHash: {err:?}"
+                    ))
+                })?;
+                let arr: [u8; 32] = hash_bytes.try_into().map_err(|_| {
+                    DecoderError(format!(
+                        "ConwayUtxowPredFailure tag {tag}: TxAuxDataHash must be 32 bytes, got {}",
+                        hash_bytes.len()
+                    ))
+                })?;
+                Ok(match tag {
+                    5 => Self::MissingTxBodyMetadataHash(TxAuxDataHash(arr)),
+                    6 => Self::MissingTxMetadata(TxAuxDataHash(arr)),
+                    _ => unreachable!("tag set above"),
+                })
+            }
+            7 => {
+                if len != 3 {
+                    return Err(DecoderError(format!(
+                        "ConflictingMetadataHash: expected 3-element envelope, got len {len}"
+                    )));
+                }
+                let supplied = dec.bytes().map_err(|err| {
+                    DecoderError(format!("ConflictingMetadataHash: supplied hash: {err:?}"))
+                })?;
+                let s_arr: [u8; 32] = supplied.try_into().map_err(|_| {
+                    DecoderError("ConflictingMetadataHash: supplied not 32 bytes".to_string())
+                })?;
+                let expected = dec.bytes().map_err(|err| {
+                    DecoderError(format!("ConflictingMetadataHash: expected hash: {err:?}"))
+                })?;
+                let e_arr: [u8; 32] = expected.try_into().map_err(|_| {
+                    DecoderError("ConflictingMetadataHash: expected not 32 bytes".to_string())
+                })?;
+                Ok(Self::ConflictingMetadataHash(Mismatch {
+                    relation: MismatchRelation::RelEQ,
+                    supplied: TxAuxDataHash(s_arr),
+                    expected: TxAuxDataHash(e_arr),
+                }))
+            }
+            8 => {
+                if len != 1 {
+                    return Err(DecoderError(format!(
+                        "InvalidMetadata: expected 1-element envelope, got len {len}"
+                    )));
+                }
+                Ok(Self::InvalidMetadata)
+            }
+            14 => {
+                if len != 2 {
+                    return Err(DecoderError(format!(
+                        "UnspendableUTxONoDatumHash: expected 2-element envelope, got len {len}"
+                    )));
+                }
+                let payload_bytes = bytes.get(payload_offset..).ok_or_else(|| {
+                    DecoderError("ConwayUtxowPredFailure: payload offset out of bounds".to_string())
+                })?;
+                Ok(Self::UnspendableUTxONoDatumHash(
+                    NonEmptySetTxIn::from_cbor(payload_bytes)?,
+                ))
+            }
+            // Pending typed decoders: capture raw bytes.
+            10 => Ok(Self::MissingRedeemers(capture_raw("MissingRedeemers", 2)?)),
+            11 => Ok(Self::MissingRequiredDatums(capture_raw(
+                "MissingRequiredDatums",
+                3,
+            )?)),
+            12 => Ok(Self::NotAllowedSupplementalDatums(capture_raw(
+                "NotAllowedSupplementalDatums",
+                3,
+            )?)),
+            13 => Ok(Self::PPViewHashesDontMatch(capture_raw(
+                "PPViewHashesDontMatch",
+                3,
+            )?)),
+            15 => Ok(Self::ExtraRedeemers(capture_raw("ExtraRedeemers", 2)?)),
+            18 => Ok(Self::ScriptIntegrityHashMismatch(capture_raw(
+                "ScriptIntegrityHashMismatch",
+                3,
+            )?)),
+            other => Err(DecoderError(format!(
+                "ConwayUtxowPredFailure: unknown variant tag {other}"
+            ))),
+        }
+    }
+}
+
+impl fmt::Display for ConwayUtxowPredFailure {
+    /// Render upstream stock-derived `Show
+    /// (ConwayUtxowPredFailure era)`: `<Constructor> <payload>`.
+    /// Typed variants route through their typed Display; raw
+    /// variants emit a `<raw-cbor N bytes>` marker.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UtxoFailure(b)
+            | Self::MissingRedeemers(b)
+            | Self::MissingRequiredDatums(b)
+            | Self::NotAllowedSupplementalDatums(b)
+            | Self::PPViewHashesDontMatch(b)
+            | Self::ExtraRedeemers(b)
+            | Self::ScriptIntegrityHashMismatch(b) => {
+                write!(f, "{} <raw-cbor {} bytes>", self.constructor(), b.len())
+            }
+            Self::InvalidWitnessesUTXOW(keys) => {
+                write!(f, "InvalidWitnessesUTXOW ({keys})")
+            }
+            Self::MissingVKeyWitnessesUTXOW(set) => {
+                write!(f, "MissingVKeyWitnessesUTXOW ({set})")
+            }
+            Self::MissingScriptWitnessesUTXOW(set) => {
+                write!(f, "MissingScriptWitnessesUTXOW ({set})")
+            }
+            Self::ScriptWitnessNotValidatingUTXOW(set) => {
+                write!(f, "ScriptWitnessNotValidatingUTXOW ({set})")
+            }
+            Self::ExtraneousScriptWitnessesUTXOW(set) => {
+                write!(f, "ExtraneousScriptWitnessesUTXOW ({set})")
+            }
+            Self::MalformedScriptWitnesses(set) => {
+                write!(f, "MalformedScriptWitnesses ({set})")
+            }
+            Self::MalformedReferenceScripts(set) => {
+                write!(f, "MalformedReferenceScripts ({set})")
+            }
+            Self::MissingTxBodyMetadataHash(h) => {
+                write!(f, "MissingTxBodyMetadataHash ({h})")
+            }
+            Self::MissingTxMetadata(h) => write!(f, "MissingTxMetadata ({h})"),
+            Self::ConflictingMetadataHash(mm) => {
+                write!(f, "ConflictingMetadataHash ({mm})")
+            }
+            Self::InvalidMetadata => f.write_str("InvalidMetadata"),
+            Self::UnspendableUTxONoDatumHash(set) => {
+                write!(f, "UnspendableUTxONoDatumHash ({set})")
+            }
+        }
+    }
 }
 
 /// Typed payload for `ShelleyLedgerPredFailure::ShelleyWithdrawalsMissingAccounts`.
@@ -4937,15 +5313,120 @@ mod tests {
     }
 
     #[test]
-    fn conway_ledger_pred_failure_utxow_raw_routing_tag1() {
-        let cbor = [0x82_u8, 0x01, 0x40, 0x40];
+    fn conway_ledger_pred_failure_utxow_typed_routing_tag1() {
+        // R624 wires LEDGER tag 1 to typed UTXOW. Inner payload
+        // here is UTXOW tag 8 (InvalidMetadata — no payload).
+        // Outer LEDGER [0x82, 0x01, [0x81, 0x08]].
+        let cbor = [0x82_u8, 0x01, 0x81, 0x08];
         let f = ConwayLedgerPredFailure::from_cbor(&cbor).expect("ConwayUtxowFailure");
-        assert!(matches!(f, ConwayLedgerPredFailure::ConwayUtxowFailure(_)));
+        if let ConwayLedgerPredFailure::ConwayUtxowFailure(utxow) = &f {
+            assert_eq!(utxow.tag(), 8);
+            assert!(matches!(utxow, ConwayUtxowPredFailure::InvalidMetadata));
+        } else {
+            panic!("expected ConwayUtxowFailure(_), got {f:?}");
+        }
         assert_eq!(f.tag(), 1);
         assert_eq!(f.constructor(), "ConwayUtxowFailure");
+        assert_eq!(f.to_string(), "ConwayUtxowFailure (InvalidMetadata)");
+    }
+
+    #[test]
+    fn conway_utxow_pred_failure_invalid_metadata_decodes_tag8() {
+        let cbor = [0x81_u8, 0x08];
+        let f = ConwayUtxowPredFailure::from_cbor(&cbor).expect("InvalidMetadata");
+        assert!(matches!(f, ConwayUtxowPredFailure::InvalidMetadata));
+        assert_eq!(f.tag(), 8);
+        assert_eq!(f.constructor(), "InvalidMetadata");
+        assert_eq!(f.to_string(), "InvalidMetadata");
+    }
+
+    #[test]
+    fn conway_utxow_pred_failure_missing_tx_body_metadata_hash_decodes_tag5() {
+        // outer [0x82, 0x05, bytes(32)] (TxAuxDataHash)
+        let mut cbor = vec![0x82_u8, 0x05];
+        cbor.push(0x58);
+        cbor.push(32);
+        cbor.extend_from_slice(&[0xCC_u8; 32]);
+        let f = ConwayUtxowPredFailure::from_cbor(&cbor).expect("MissingTxBodyMetadataHash");
+        if let ConwayUtxowPredFailure::MissingTxBodyMetadataHash(hash) = &f {
+            assert_eq!(hash.0, [0xCC_u8; 32]);
+        } else {
+            panic!("expected MissingTxBodyMetadataHash, got {f:?}");
+        }
         assert!(
-            f.to_string().starts_with("ConwayUtxowFailure <raw-cbor"),
+            f.to_string().starts_with(
+                "MissingTxBodyMetadataHash (TxAuxDataHash {unTxAuxDataHash = SafeHash"
+            ),
             "got: {f}"
+        );
+    }
+
+    #[test]
+    fn conway_utxow_pred_failure_conflicting_metadata_hash_decodes_tag7() {
+        // Tag 7 ToGroup-flattened: [0x83, 0x07, supplied_hash,
+        // expected_hash]
+        let mut cbor = vec![0x83_u8, 0x07];
+        cbor.push(0x58);
+        cbor.push(32);
+        cbor.extend_from_slice(&[0xAA_u8; 32]);
+        cbor.push(0x58);
+        cbor.push(32);
+        cbor.extend_from_slice(&[0xBB_u8; 32]);
+        let f = ConwayUtxowPredFailure::from_cbor(&cbor).expect("ConflictingMetadataHash");
+        if let ConwayUtxowPredFailure::ConflictingMetadataHash(mm) = &f {
+            assert_eq!(mm.relation, MismatchRelation::RelEQ);
+            assert_eq!(mm.supplied.0, [0xAA_u8; 32]);
+            assert_eq!(mm.expected.0, [0xBB_u8; 32]);
+        } else {
+            panic!("expected ConflictingMetadataHash, got {f:?}");
+        }
+        assert!(
+            f.to_string()
+                .starts_with("ConflictingMetadataHash (Mismatch (RelEQ)"),
+            "got: {f}"
+        );
+    }
+
+    #[test]
+    fn conway_utxow_pred_failure_missing_script_witnesses_decodes_tag3() {
+        // outer [0x82, 0x03, tag-258 array(1) bytes(28)]
+        let mut cbor = vec![0x82_u8, 0x03, 0xD9, 0x01, 0x02, 0x81];
+        cbor.push(0x58);
+        cbor.push(28);
+        cbor.extend_from_slice(&[0xEE_u8; 28]);
+        let f = ConwayUtxowPredFailure::from_cbor(&cbor).expect("MissingScriptWitnessesUTXOW");
+        if let ConwayUtxowPredFailure::MissingScriptWitnessesUTXOW(set) = &f {
+            assert_eq!(set.entries.len(), 1);
+        } else {
+            panic!("expected MissingScriptWitnessesUTXOW, got {f:?}");
+        }
+        assert!(
+            f.to_string()
+                .starts_with("MissingScriptWitnessesUTXOW (NonEmptySet (fromList [ScriptHash"),
+            "got: {f}"
+        );
+    }
+
+    #[test]
+    fn conway_utxow_pred_failure_routes_pending_to_raw_tag10() {
+        // tag 10 (MissingRedeemers) — payload pending PlutusPurpose
+        let cbor = [0x82_u8, 0x0A, 0x80];
+        let f = ConwayUtxowPredFailure::from_cbor(&cbor).expect("MissingRedeemers");
+        assert_eq!(f.tag(), 10);
+        assert_eq!(f.constructor(), "MissingRedeemers");
+        assert!(
+            f.to_string().starts_with("MissingRedeemers <raw-cbor"),
+            "got: {f}"
+        );
+    }
+
+    #[test]
+    fn conway_utxow_pred_failure_unknown_tag_rejects() {
+        let cbor = vec![0x82_u8, 0x18, 99, 0x40];
+        let err = ConwayUtxowPredFailure::from_cbor(&cbor).expect_err("unknown tag must reject");
+        assert!(
+            err.to_string().contains("unknown variant tag 99"),
+            "got: {err}"
         );
     }
 
