@@ -724,10 +724,12 @@ wired GOV tag 11 (`InvalidGuardrailsScriptHash` — a `{ got,
 expected }` pair of StrictMaybe ScriptHash). R646 (2026-05-21)
 added the `NonEmptyMapCredentialEpoch` carrier and wired GOV
 tag 7 (`ExpirationEpochTooSmall` — `NonEmptyMap (Credential
-ColdCommitteeRole) EpochNo`). **6 of 19 Conway GOV variants now
-carry typed payloads**; the other 13 keep raw inner CBOR
-pending typed governance-specific decoders (GovAction, Voter,
-ProposalProcedure, ProtVer). **All 9 Conway LEDGER root variants now carry
+ColdCommitteeRole) EpochNo`). R647 (2026-05-21) added the
+`NonEmptySetCredential` carrier (tag-258-tolerant set of
+Credential) and wired GOV tag 6 (`ConflictingCommitteeUpdate`).
+**7 of 19 Conway GOV variants now carry typed payloads**; the
+other 12 keep raw inner CBOR pending typed governance-specific
+decoders (GovAction, Voter, ProposalProcedure, ProtVer). **All 9 Conway LEDGER root variants now carry
 typed payloads at one level of nesting** — every LEDGER root tag
 has a structurally-typed Rust value (sub-rule payloads at one
 level deeper may still be raw within each sub-rule's variants).

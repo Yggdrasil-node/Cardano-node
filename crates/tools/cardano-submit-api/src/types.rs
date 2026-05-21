@@ -3366,6 +3366,72 @@ impl fmt::Display for NonEmptyMapCredentialEpoch {
     }
 }
 
+/// Non-empty set of credentials mirroring upstream `NonEmptySet
+/// (Credential r)`. CBOR wire format is an optional CBOR tag 258
+/// followed by an array of `Credential` 2-element items. Entries
+/// are kept in wire order (the wire is canonically sorted for
+/// sets); empty arrays are rejected at decode time.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NonEmptySetCredential {
+    /// Decoded entries in wire order. Guaranteed non-empty by
+    /// `from_cbor`.
+    pub entries: Vec<Credential>,
+}
+
+impl NonEmptySetCredential {
+    /// Decode a `NonEmptySet (Credential r)` from canonical CBOR
+    /// bytes. Accepts the bare-list or tag-258 wrapped form.
+    pub fn from_cbor(bytes: &[u8]) -> Result<Self, DecoderError> {
+        use yggdrasil_ledger::Decoder;
+        let mut dec = Decoder::new(bytes);
+        let major = dec
+            .peek_major()
+            .map_err(|err| DecoderError(format!("NonEmptySetCredential: peek: {err:?}")))?;
+        if major == 6 {
+            let tag = dec
+                .tag()
+                .map_err(|err| DecoderError(format!("NonEmptySetCredential: tag: {err:?}")))?;
+            if tag != 258 {
+                return Err(DecoderError(format!(
+                    "NonEmptySetCredential: expected tag 258, got {tag}"
+                )));
+            }
+        }
+        let count = dec.array().map_err(|err| {
+            DecoderError(format!(
+                "NonEmptySetCredential: expected CBOR array: {err:?}"
+            ))
+        })?;
+        if count == 0 {
+            return Err(DecoderError(
+                "NonEmptySetCredential: NonEmptySet requires at least one entry".to_string(),
+            ));
+        }
+        let mut entries = Vec::with_capacity(count as usize);
+        for _ in 0..count {
+            entries.push(Credential::from_decoder(&mut dec)?);
+        }
+        Ok(Self { entries })
+    }
+}
+
+impl fmt::Display for NonEmptySetCredential {
+    /// Render upstream `Show (NonEmptySet a)`:
+    /// `NonEmptySet (fromList [<Credential>, ...])`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("NonEmptySet (fromList [")?;
+        let mut first = true;
+        for cred in &self.entries {
+            if !first {
+                f.write_str(",")?;
+            }
+            first = false;
+            write!(f, "{cred}")?;
+        }
+        f.write_str("])")
+    }
+}
+
 /// Non-empty list of transaction outputs mirroring upstream
 /// `NonEmpty (TxOut era)`. CBOR wire format is a regular CBOR
 /// array with ≥1 entry. NonEmpty invariant enforced at decode time.
@@ -7102,8 +7168,9 @@ pub enum ConwayGovPredFailure {
     /// `NonEmpty (Voter, GovActionId)`. Raw.
     DisallowedVoters(Vec<u8>),
     /// Tag 6: cold-committee credentials both removed and added
-    /// — `NonEmptySet (Credential ColdCommitteeRole)`. Raw.
-    ConflictingCommitteeUpdate(Vec<u8>),
+    /// — `NonEmptySet (Credential ColdCommitteeRole)` (R647
+    /// typed).
+    ConflictingCommitteeUpdate(NonEmptySetCredential),
     /// Tag 7: committee expiration epoch too small —
     /// `NonEmptyMap (Credential ColdCommitteeRole) EpochNo`
     /// (R646 typed).
@@ -7288,10 +7355,19 @@ impl ConwayGovPredFailure {
                 3,
             )?)),
             5 => Ok(Self::DisallowedVoters(capture_raw("DisallowedVoters", 2)?)),
-            6 => Ok(Self::ConflictingCommitteeUpdate(capture_raw(
-                "ConflictingCommitteeUpdate",
-                2,
-            )?)),
+            6 => {
+                if len != 2 {
+                    return Err(DecoderError(format!(
+                        "ConflictingCommitteeUpdate: expected 2-element envelope, got len {len}"
+                    )));
+                }
+                let payload_bytes = bytes.get(payload_offset..).ok_or_else(|| {
+                    DecoderError("ConwayGovPredFailure: payload offset out of bounds".to_string())
+                })?;
+                Ok(Self::ConflictingCommitteeUpdate(
+                    NonEmptySetCredential::from_cbor(payload_bytes)?,
+                ))
+            }
             7 => {
                 if len != 2 {
                     return Err(DecoderError(format!(
@@ -7407,7 +7483,6 @@ impl fmt::Display for ConwayGovPredFailure {
             | Self::ProposalProcedureNetworkIdMismatch(b)
             | Self::TreasuryWithdrawalsNetworkIdMismatch(b)
             | Self::DisallowedVoters(b)
-            | Self::ConflictingCommitteeUpdate(b)
             | Self::InvalidPrevGovActionId(b)
             | Self::VotingOnExpiredGovAction(b)
             | Self::ProposalCantFollow(b)
@@ -7433,6 +7508,9 @@ impl fmt::Display for ConwayGovPredFailure {
             }
             Self::ExpirationEpochTooSmall(map) => {
                 write!(f, "ExpirationEpochTooSmall ({map})")
+            }
+            Self::ConflictingCommitteeUpdate(set) => {
+                write!(f, "ConflictingCommitteeUpdate ({set})")
             }
         }
     }
@@ -8724,6 +8802,41 @@ mod tests {
         assert!(
             err.to_string()
                 .contains("NonEmpty requires at least one entry"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn conway_gov_pred_failure_conflicting_committee_update_tag6() {
+        // outer [0x82, 0x06, tag-258 array(1) of Credential].
+        // Credential = [1, bytes(28)] (ScriptHashObj).
+        let mut cbor = vec![0x82_u8, 0x06, 0xD9, 0x01, 0x02, 0x81, 0x82, 0x01];
+        cbor.push(0x58);
+        cbor.push(28);
+        cbor.extend_from_slice(&[0x71_u8; 28]);
+        let f = ConwayGovPredFailure::from_cbor(&cbor).expect("ConflictingCommitteeUpdate");
+        if let ConwayGovPredFailure::ConflictingCommitteeUpdate(set) = &f {
+            assert_eq!(set.entries.len(), 1);
+            assert!(matches!(set.entries[0], Credential::ScriptHashObj(_)));
+        } else {
+            panic!("expected ConflictingCommitteeUpdate, got {f:?}");
+        }
+        assert!(
+            f.to_string().starts_with(
+                "ConflictingCommitteeUpdate (NonEmptySet (fromList [ScriptHashObj (ScriptHash \"7171"
+            ),
+            "got: {f}"
+        );
+    }
+
+    #[test]
+    fn conway_gov_pred_failure_conflicting_committee_update_rejects_empty() {
+        let cbor = [0x82_u8, 0x06, 0x80];
+        let err =
+            ConwayGovPredFailure::from_cbor(&cbor).expect_err("empty NonEmptySet must reject");
+        assert!(
+            err.to_string()
+                .contains("NonEmptySet requires at least one entry"),
             "got: {err}"
         );
     }
