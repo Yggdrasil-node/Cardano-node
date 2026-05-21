@@ -1066,7 +1066,7 @@ fn show_shelley_tx_for_dump(
     tx: &ShelleyCompatibleSubmittedTx<ShelleyTxBody>,
 ) -> Result<String, Error> {
     ensure_empty_or_absent(tx.body.certificates.as_deref(), "Shelley", "stbrCerts")?;
-    ensure_empty_or_absent_btree(tx.body.withdrawals.as_ref(), "Shelley", "stbrWithdrawals")?;
+    let withdrawals = show_withdrawals(tx.body.withdrawals.as_ref())?;
     ensure_absent(tx.body.update.as_ref(), "Shelley", "stbrUpdate")?;
     ensure_absent(
         tx.body.auxiliary_data_hash.as_ref(),
@@ -1081,7 +1081,7 @@ fn show_shelley_tx_for_dump(
     let witnesses = show_shelley_witness_set(&tx.witness_set, "Shelley")?;
 
     Ok(format!(
-        "\nShelleyTx ShelleyBasedEraShelley (ShelleyTx {{stBody = MkShelleyTxBody ShelleyTxBodyRaw {{stbrInputs = fromList [{inputs}], stbrOutputs = StrictSeq {{fromStrict = fromList [{outputs}]}}, stbrCerts = StrictSeq {{fromStrict = fromList []}}, stbrWithdrawals = Withdrawals {{unWithdrawals = fromList []}}, stbrFee = Coin {}, stbrTtl = SlotNo {}, stbrUpdate = SNothing, stbrAuxDataHash = SNothing}} (blake2b_256: SafeHash \"{body_hash}\"), stWits = {witnesses}, stAuxData = SNothing}})",
+        "\nShelleyTx ShelleyBasedEraShelley (ShelleyTx {{stBody = MkShelleyTxBody ShelleyTxBodyRaw {{stbrInputs = fromList [{inputs}], stbrOutputs = StrictSeq {{fromStrict = fromList [{outputs}]}}, stbrCerts = StrictSeq {{fromStrict = fromList []}}, stbrWithdrawals = {withdrawals}, stbrFee = Coin {}, stbrTtl = SlotNo {}, stbrUpdate = SNothing, stbrAuxDataHash = SNothing}} (blake2b_256: SafeHash \"{body_hash}\"), stWits = {witnesses}, stAuxData = SNothing}})",
         tx.body.fee, tx.body.ttl,
     ))
 }
@@ -1090,7 +1090,7 @@ fn show_allegra_tx_for_dump(
     tx: &ShelleyCompatibleSubmittedTx<AllegraTxBody>,
 ) -> Result<String, Error> {
     ensure_empty_or_absent(tx.body.certificates.as_deref(), "Allegra", "atbrCerts")?;
-    ensure_empty_or_absent_btree(tx.body.withdrawals.as_ref(), "Allegra", "atbrWithdrawals")?;
+    let withdrawals = show_withdrawals(tx.body.withdrawals.as_ref())?;
     ensure_absent(tx.body.update.as_ref(), "Allegra", "atbrUpdate")?;
     ensure_absent(
         tx.body.auxiliary_data_hash.as_ref(),
@@ -1105,7 +1105,7 @@ fn show_allegra_tx_for_dump(
     let witnesses = show_shelley_witness_set(&tx.witness_set, "Allegra")?;
 
     Ok(format!(
-        "\nShelleyTx ShelleyBasedEraAllegra (ShelleyTx {{stBody = MkAllegraTxBody AllegraTxBodyRaw {{atbrInputs = fromList [{inputs}], atbrOutputs = StrictSeq {{fromStrict = fromList [{outputs}]}}, atbrCerts = StrictSeq {{fromStrict = fromList []}}, atbrWithdrawals = Withdrawals {{unWithdrawals = fromList []}}, atbrFee = Coin {}, atbrValidityInterval = ValidityInterval {{invalidBefore = {}, invalidHereafter = {}}}, atbrUpdate = SNothing, atbrAuxDataHash = SNothing, atbrMint = ()}} (blake2b_256: SafeHash \"{body_hash}\"), stWits = {witnesses}, stAuxData = SNothing}})",
+        "\nShelleyTx ShelleyBasedEraAllegra (ShelleyTx {{stBody = MkAllegraTxBody AllegraTxBodyRaw {{atbrInputs = fromList [{inputs}], atbrOutputs = StrictSeq {{fromStrict = fromList [{outputs}]}}, atbrCerts = StrictSeq {{fromStrict = fromList []}}, atbrWithdrawals = {withdrawals}, atbrFee = Coin {}, atbrValidityInterval = ValidityInterval {{invalidBefore = {}, invalidHereafter = {}}}, atbrUpdate = SNothing, atbrAuxDataHash = SNothing, atbrMint = ()}} (blake2b_256: SafeHash \"{body_hash}\"), stWits = {witnesses}, stAuxData = SNothing}})",
         tx.body.fee,
         show_strict_maybe_slot(tx.body.validity_interval_start),
         show_strict_maybe_slot(tx.body.ttl),
@@ -1114,7 +1114,7 @@ fn show_allegra_tx_for_dump(
 
 fn show_mary_tx_for_dump(tx: &ShelleyCompatibleSubmittedTx<MaryTxBody>) -> Result<String, Error> {
     ensure_empty_or_absent(tx.body.certificates.as_deref(), "Mary", "atbrCerts")?;
-    ensure_empty_or_absent_btree(tx.body.withdrawals.as_ref(), "Mary", "atbrWithdrawals")?;
+    let withdrawals = show_withdrawals(tx.body.withdrawals.as_ref())?;
     ensure_absent(tx.body.update.as_ref(), "Mary", "atbrUpdate")?;
     ensure_absent(
         tx.body.auxiliary_data_hash.as_ref(),
@@ -1130,7 +1130,7 @@ fn show_mary_tx_for_dump(tx: &ShelleyCompatibleSubmittedTx<MaryTxBody>) -> Resul
     let witnesses = show_shelley_witness_set(&tx.witness_set, "Mary")?;
 
     Ok(format!(
-        "\nShelleyTx ShelleyBasedEraMary (ShelleyTx {{stBody = MkMaryTxBody AllegraTxBodyRaw {{atbrInputs = fromList [{inputs}], atbrOutputs = StrictSeq {{fromStrict = fromList [{outputs}]}}, atbrCerts = StrictSeq {{fromStrict = fromList []}}, atbrWithdrawals = Withdrawals {{unWithdrawals = fromList []}}, atbrFee = Coin {}, atbrValidityInterval = ValidityInterval {{invalidBefore = {}, invalidHereafter = {}}}, atbrUpdate = SNothing, atbrAuxDataHash = SNothing, atbrMint = MultiAsset (fromList [])}} (blake2b_256: SafeHash \"{body_hash}\"), stWits = {witnesses}, stAuxData = SNothing}})",
+        "\nShelleyTx ShelleyBasedEraMary (ShelleyTx {{stBody = MkMaryTxBody AllegraTxBodyRaw {{atbrInputs = fromList [{inputs}], atbrOutputs = StrictSeq {{fromStrict = fromList [{outputs}]}}, atbrCerts = StrictSeq {{fromStrict = fromList []}}, atbrWithdrawals = {withdrawals}, atbrFee = Coin {}, atbrValidityInterval = ValidityInterval {{invalidBefore = {}, invalidHereafter = {}}}, atbrUpdate = SNothing, atbrAuxDataHash = SNothing, atbrMint = MultiAsset (fromList [])}} (blake2b_256: SafeHash \"{body_hash}\"), stWits = {witnesses}, stAuxData = SNothing}})",
         tx.body.fee,
         show_strict_maybe_slot(tx.body.validity_interval_start),
         show_strict_maybe_slot(tx.body.ttl),
@@ -1141,7 +1141,7 @@ fn show_alonzo_tx_for_dump(
     tx: &AlonzoCompatibleSubmittedTx<AlonzoTxBody>,
 ) -> Result<String, Error> {
     ensure_empty_or_absent(tx.body.certificates.as_deref(), "Alonzo", "atbrCerts")?;
-    ensure_empty_or_absent_btree(tx.body.withdrawals.as_ref(), "Alonzo", "atbrWithdrawals")?;
+    let withdrawals = show_withdrawals(tx.body.withdrawals.as_ref())?;
     ensure_absent(tx.body.update.as_ref(), "Alonzo", "atbrUpdate")?;
     ensure_absent(
         tx.body.auxiliary_data_hash.as_ref(),
@@ -1170,7 +1170,7 @@ fn show_alonzo_tx_for_dump(
     let network_id = show_strict_maybe_network(tx.body.network_id)?;
 
     Ok(format!(
-        "\nShelleyTx ShelleyBasedEraAlonzo (AlonzoTx {{atBody = MkAlonzoTxBody AlonzoTxBodyRaw {{atbrInputs = fromList [{inputs}], atbrCollateral = fromList [], atbrOutputs = StrictSeq {{fromStrict = fromList [{outputs}]}}, atbrCerts = StrictSeq {{fromStrict = fromList []}}, atbrWithdrawals = Withdrawals {{unWithdrawals = fromList []}}, atbrTxFee = Coin {}, atbrValidityInterval = ValidityInterval {{invalidBefore = {}, invalidHereafter = {}}}, atbrUpdate = SNothing, atbrReqSignerHashes = fromList [], atbrMint = MultiAsset (fromList []), atbrScriptIntegrityHash = SNothing, atbrAuxDataHash = SNothing, atbrTxNetworkId = {network_id}}} (blake2b_256: SafeHash \"{body_hash}\"), atWits = {witnesses}, atIsValid = IsValid {is_valid}, atAuxData = SNothing}})",
+        "\nShelleyTx ShelleyBasedEraAlonzo (AlonzoTx {{atBody = MkAlonzoTxBody AlonzoTxBodyRaw {{atbrInputs = fromList [{inputs}], atbrCollateral = fromList [], atbrOutputs = StrictSeq {{fromStrict = fromList [{outputs}]}}, atbrCerts = StrictSeq {{fromStrict = fromList []}}, atbrWithdrawals = {withdrawals}, atbrTxFee = Coin {}, atbrValidityInterval = ValidityInterval {{invalidBefore = {}, invalidHereafter = {}}}, atbrUpdate = SNothing, atbrReqSignerHashes = fromList [], atbrMint = MultiAsset (fromList []), atbrScriptIntegrityHash = SNothing, atbrAuxDataHash = SNothing, atbrTxNetworkId = {network_id}}} (blake2b_256: SafeHash \"{body_hash}\"), atWits = {witnesses}, atIsValid = IsValid {is_valid}, atAuxData = SNothing}})",
         tx.body.fee,
         show_strict_maybe_slot(tx.body.validity_interval_start),
         show_strict_maybe_slot(tx.body.ttl),
@@ -1181,7 +1181,7 @@ fn show_babbage_tx_for_dump(
     tx: &AlonzoCompatibleSubmittedTx<BabbageTxBody>,
 ) -> Result<String, Error> {
     ensure_empty_or_absent(tx.body.certificates.as_deref(), "Babbage", "btbrCerts")?;
-    ensure_empty_or_absent_btree(tx.body.withdrawals.as_ref(), "Babbage", "btbrWithdrawals")?;
+    let withdrawals = show_withdrawals(tx.body.withdrawals.as_ref())?;
     ensure_absent(tx.body.update.as_ref(), "Babbage", "btbrUpdate")?;
     ensure_absent(
         tx.body.auxiliary_data_hash.as_ref(),
@@ -1229,7 +1229,7 @@ fn show_babbage_tx_for_dump(
     let network_id = show_strict_maybe_network(tx.body.network_id)?;
 
     Ok(format!(
-        "\nShelleyTx ShelleyBasedEraBabbage (AlonzoTx {{atBody = MkBabbageTxBody BabbageTxBodyRaw {{btbrInputs = fromList [{inputs}], btbrCollateralInputs = fromList [], btbrReferenceInputs = fromList [], btbrOutputs = StrictSeq {{fromStrict = fromList [{outputs}]}}, btbrCollateralReturn = SNothing, btbrTotalCollateral = SNothing, btbrCerts = StrictSeq {{fromStrict = fromList []}}, btbrWithdrawals = Withdrawals {{unWithdrawals = fromList []}}, btbrFee = Coin {}, btbrValidityInterval = ValidityInterval {{invalidBefore = {}, invalidHereafter = {}}}, btbrUpdate = SNothing, btbrReqSignerHashes = fromList [], btbrMint = MultiAsset (fromList []), btbrScriptIntegrityHash = SNothing, btbrAuxDataHash = SNothing, btbrNetworkId = {network_id}}} (blake2b_256: SafeHash \"{body_hash}\"), atWits = {witnesses}, atIsValid = IsValid {is_valid}, atAuxData = SNothing}})",
+        "\nShelleyTx ShelleyBasedEraBabbage (AlonzoTx {{atBody = MkBabbageTxBody BabbageTxBodyRaw {{btbrInputs = fromList [{inputs}], btbrCollateralInputs = fromList [], btbrReferenceInputs = fromList [], btbrOutputs = StrictSeq {{fromStrict = fromList [{outputs}]}}, btbrCollateralReturn = SNothing, btbrTotalCollateral = SNothing, btbrCerts = StrictSeq {{fromStrict = fromList []}}, btbrWithdrawals = {withdrawals}, btbrFee = Coin {}, btbrValidityInterval = ValidityInterval {{invalidBefore = {}, invalidHereafter = {}}}, btbrUpdate = SNothing, btbrReqSignerHashes = fromList [], btbrMint = MultiAsset (fromList []), btbrScriptIntegrityHash = SNothing, btbrAuxDataHash = SNothing, btbrNetworkId = {network_id}}} (blake2b_256: SafeHash \"{body_hash}\"), atWits = {witnesses}, atIsValid = IsValid {is_valid}, atAuxData = SNothing}})",
         tx.body.fee,
         show_strict_maybe_slot(tx.body.validity_interval_start),
         show_strict_maybe_slot(tx.body.ttl),
@@ -1240,7 +1240,7 @@ fn show_conway_tx_for_dump(
     tx: &AlonzoCompatibleSubmittedTx<ConwayTxBody>,
 ) -> Result<String, Error> {
     ensure_empty_or_absent(tx.body.certificates.as_deref(), "Conway", "ctbrCerts")?;
-    ensure_empty_or_absent_btree(tx.body.withdrawals.as_ref(), "Conway", "ctbrWithdrawals")?;
+    let withdrawals = show_withdrawals(tx.body.withdrawals.as_ref())?;
     ensure_absent(
         tx.body.auxiliary_data_hash.as_ref(),
         "Conway",
@@ -1292,7 +1292,7 @@ fn show_conway_tx_for_dump(
     let network_id = show_strict_maybe_network(tx.body.network_id)?;
 
     Ok(format!(
-        "\nShelleyTx ShelleyBasedEraConway (AlonzoTx {{atBody = MkConwayTxBody ConwayTxBodyRaw {{ctbrSpendInputs = fromList [{inputs}], ctbrCollateralInputs = fromList [], ctbrReferenceInputs = fromList [], ctbrOutputs = StrictSeq {{fromStrict = fromList [{outputs}]}}, ctbrCollateralReturn = SNothing, ctbrTotalCollateral = SNothing, ctbrCerts = OSet {{osSSeq = StrictSeq {{fromStrict = fromList []}}, osSet = fromList []}}, ctbrWithdrawals = Withdrawals {{unWithdrawals = fromList []}}, ctbrFee = Coin {}, ctbrVldt = ValidityInterval {{invalidBefore = {}, invalidHereafter = {}}}, ctbrReqSignerHashes = fromList [], ctbrMint = MultiAsset (fromList []), ctbrScriptIntegrityHash = SNothing, ctbrAuxDataHash = SNothing, ctbrNetworkId = {network_id}, ctbrVotingProcedures = {voting_procedures}, ctbrProposalProcedures = {proposal_procedures}, ctbrCurrentTreasuryValue = {current_treasury_value}, ctbrTreasuryDonation = {treasury_donation}}} (blake2b_256: SafeHash \"{body_hash}\"), atWits = {witnesses}, atIsValid = IsValid {is_valid}, atAuxData = SNothing}})",
+        "\nShelleyTx ShelleyBasedEraConway (AlonzoTx {{atBody = MkConwayTxBody ConwayTxBodyRaw {{ctbrSpendInputs = fromList [{inputs}], ctbrCollateralInputs = fromList [], ctbrReferenceInputs = fromList [], ctbrOutputs = StrictSeq {{fromStrict = fromList [{outputs}]}}, ctbrCollateralReturn = SNothing, ctbrTotalCollateral = SNothing, ctbrCerts = OSet {{osSSeq = StrictSeq {{fromStrict = fromList []}}, osSet = fromList []}}, ctbrWithdrawals = {withdrawals}, ctbrFee = Coin {}, ctbrVldt = ValidityInterval {{invalidBefore = {}, invalidHereafter = {}}}, ctbrReqSignerHashes = fromList [], ctbrMint = MultiAsset (fromList []), ctbrScriptIntegrityHash = SNothing, ctbrAuxDataHash = SNothing, ctbrNetworkId = {network_id}, ctbrVotingProcedures = {voting_procedures}, ctbrProposalProcedures = {proposal_procedures}, ctbrCurrentTreasuryValue = {current_treasury_value}, ctbrTreasuryDonation = {treasury_donation}}} (blake2b_256: SafeHash \"{body_hash}\"), atWits = {witnesses}, atIsValid = IsValid {is_valid}, atAuxData = SNothing}})",
         tx.body.fee,
         show_strict_maybe_slot(tx.body.validity_interval_start),
         show_strict_maybe_slot(tx.body.ttl),
@@ -1943,19 +1943,6 @@ fn ensure_empty_or_absent<T>(value: Option<&[T]>, era: &str, field: &str) -> Res
     Ok(())
 }
 
-fn ensure_empty_or_absent_btree<K, V>(
-    value: Option<&BTreeMap<K, V>>,
-    era: &str,
-    field: &str,
-) -> Result<(), Error> {
-    if value.is_some_and(|items| !items.is_empty()) {
-        return Err(lift_tx_gen_error(format!(
-            "DumpToFile: {era} Show(Tx) renderer does not yet support non-empty {field}"
-        )));
-    }
-    Ok(())
-}
-
 fn ensure_empty_mint(
     value: Option<&yggdrasil_ledger::MintAsset>,
     era: &str,
@@ -2288,6 +2275,28 @@ fn show_strict_maybe_network(network_id: Option<u8>) -> Result<String, Error> {
         None => Ok("SNothing".to_string()),
         Some(n) => Ok(format!("SJust {}", show_network(n)?)),
     }
+}
+
+/// Render a tx-body `Withdrawals` field — upstream `newtype
+/// Withdrawals = Withdrawals { unWithdrawals :: Map AccountAddress
+/// Coin }` with stock-derived record `Show`. Entries are sorted by
+/// `AccountAddress` (the `BTreeMap` key order matches upstream
+/// `Data.Map` Show).
+fn show_withdrawals(
+    withdrawals: Option<&BTreeMap<yggdrasil_ledger::RewardAccount, u64>>,
+) -> Result<String, Error> {
+    let body = match withdrawals {
+        None => String::new(),
+        Some(map) => map
+            .iter()
+            .map(|(account, coin)| {
+                let addr = show_account_address_from_record(account)?;
+                Ok(format!("({addr},{})", show_coin(*coin)))
+            })
+            .collect::<Result<Vec<_>, Error>>()?
+            .join(","),
+    };
+    Ok(format!("Withdrawals {{unWithdrawals = fromList [{body}]}}"))
 }
 
 fn show_payment_credential(credential: &StakeCredential) -> String {
@@ -3992,6 +4001,32 @@ mod tests {
             show_plutus_data(&outer),
             "Map [(I 0,Constr 0 [I 7,List [B \"a\"]])]"
         );
+    }
+
+    #[test]
+    fn dumptofile_withdrawals_render() {
+        // Empty / absent withdrawals render as an empty fromList.
+        assert_eq!(
+            show_withdrawals(None).expect("none"),
+            "Withdrawals {unWithdrawals = fromList []}"
+        );
+        // A one-entry map renders the AccountAddress key + Coin value.
+        let mut map: BTreeMap<yggdrasil_ledger::RewardAccount, u64> = BTreeMap::new();
+        map.insert(
+            yggdrasil_ledger::RewardAccount {
+                network: 0,
+                credential: StakeCredential::AddrKeyHash([0x4B_u8; 28]),
+            },
+            2_500_000,
+        );
+        let rendered = show_withdrawals(Some(&map)).expect("one entry");
+        assert!(
+            rendered.starts_with(
+                "Withdrawals {unWithdrawals = fromList [(AccountAddress {aaNetworkId = Testnet,"
+            ),
+            "got: {rendered}"
+        );
+        assert!(rendered.ends_with(",Coin 2500000)]}"), "got: {rendered}");
     }
 
     #[test]
