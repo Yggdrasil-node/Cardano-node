@@ -312,8 +312,10 @@ impl TxValidationEra {
     }
 }
 
-/// Era-specific `ApplyTxError` payload — currently raw CBOR + rendered
-/// text, with per-variant CBOR decoders layered in follow-on rounds.
+/// Era-specific `ApplyTxError` payload — carries the raw CBOR +
+/// a rendered string, and decodes into the typed per-era
+/// predicate-failure tree via `decode_conway_failures` /
+/// `decode_shelley_failures`.
 ///
 /// Mirrors upstream `newtype ApplyTxError <era> = <Era>ApplyTxError
 /// (NonEmpty (<Era>LedgerPredFailure <era>))` — yggdrasil collapses the
@@ -561,9 +563,9 @@ impl fmt::Display for TxValidationErrorInCardanoMode {
 ///   | ShelleyIncompleteWithdrawals (NonEmptyMap AccountAddress (Mismatch RelEQ Coin))
 /// ```
 ///
-/// Each variant currently carries raw CBOR bytes; per-rule typed
-/// payloads (UTXOW + DELEGS sub-trees, Withdrawals map decoding,
-/// NonEmptyMap of Mismatch values) land in follow-on rounds.
+/// Every variant carries a fully typed payload — the UTXOW and
+/// DELEGS sub-trees, the `Withdrawals` map, and the
+/// `IncompleteWithdrawals` NonEmptyMap-of-Mismatch.
 ///
 /// The variant discriminator matches upstream's CBOR encoding tag
 /// (Word8 0/1/2/3) at index 0 of the outer 2-element array.
@@ -575,9 +577,8 @@ pub enum ShelleyLedgerPredFailure {
     /// — R611 wired to the typed enum.
     UtxowFailure(ShelleyUtxowPredFailure),
     /// DELEGS sub-rule failure (CBOR tag 1). Payload is a
-    /// `ShelleyDelegsPredFailure era` newtype wrapping a DELPL
-    /// failure (R612 wired to the typed scaffold; inner DELPL
-    /// decoder still pending).
+    /// `ShelleyDelegsPredFailure era` newtype wrapping a fully
+    /// typed DELPL → POOL/DELEG failure.
     DelegsFailure(ShelleyDelegsPredFailure),
     /// Withdrawals refer to accounts that are not in the reward map
     /// (CBOR tag 2). Payload is `Withdrawals = Map AccountAddress
@@ -5187,10 +5188,9 @@ impl fmt::Display for ShelleyPpupPredFailure {
 /// `Cardano.Ledger.Shelley.Rules.Delegs`. CBOR wire format wraps the
 /// single variant in a 2-element array `[1, DELPL-failure]`.
 ///
-/// R612 ships the scaffold with the single variant carrying raw
-/// inner CBOR. The nested DELPL sub-rule decoder
-/// (`ShelleyDelplPredFailure` — itself dispatching into
-/// POOL/DELEG) lands in a follow-on round.
+/// The single variant carries the fully typed
+/// `ShelleyDelplPredFailure` (itself dispatching into the typed
+/// POOL / DELEG sub-rules).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ShelleyDelegsPredFailure {
     /// Tag 1: nested DELPL sub-rule failure (R613 wired to the
@@ -5278,9 +5278,8 @@ impl fmt::Display for ShelleyDelegsPredFailure {
 /// CBOR wire format wraps each variant in a 2-element array
 /// `[tag, payload]`: tag 0 = PoolFailure, tag 1 = DelegFailure.
 ///
-/// R613 ships the scaffold with both variants carrying raw inner
-/// CBOR. The POOL/DELEG sub-rule decoders land in follow-on
-/// rounds.
+/// Both variants carry fully typed payloads — the POOL and DELEG
+/// sub-rule predicate-failure trees.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ShelleyDelplPredFailure {
     /// Tag 0: nested POOL sub-rule failure (R614 wired to typed
@@ -5353,9 +5352,9 @@ impl ShelleyDelplPredFailure {
 
 impl fmt::Display for ShelleyDelplPredFailure {
     /// Render upstream stock-derived `Show
-    /// (ShelleyDelplPredFailure era)`: `<Constructor> <payload>`.
-    /// PoolFailure routes through the typed POOL Display (R614);
-    /// DelegFailure emits a raw-cbor marker pending its decoder.
+    /// (ShelleyDelplPredFailure era)`: `<Constructor> (<payload>)`.
+    /// Both variants route through their typed POOL / DELEG
+    /// Display.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::PoolFailure(pool) => write!(f, "PoolFailure ({pool})"),
@@ -6292,12 +6291,11 @@ impl fmt::Display for NonEmptyKeyHash {
 /// via CBOR `Sum` tags 1..9 (no tag 0). Conway swaps DELEGS for
 /// CERTS and adds the new GOV sub-rule for governance.
 ///
-/// R623 ships the scaffold + typed payloads for the simple
-/// variants (4 NonEmptyKeyHash, 5/6 Mismatch via ToGroup, 7 Text,
-/// 8 Withdrawals, 9 IncompleteWithdrawals). The 3 sub-rule
-/// variants (UtxowFailure / CertsFailure / GovFailure) carry raw
-/// payloads pending the era-specific UTXOW / CERTS / GOV decoder
-/// ports.
+/// All 9 variants carry fully typed payloads — the scalar
+/// variants (4 NonEmptyKeyHash, 5/6 Mismatch, 7 Text, 8/9
+/// withdrawals) and the three nested sub-rules (`UtxowFailure`
+/// / `CertsFailure` / `GovFailure`), which dispatch into the
+/// typed Conway UTXOW / CERTS / GOV predicate-failure trees.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ConwayLedgerPredFailure {
     /// Tag 1: nested Conway UTXOW failure (R624 wired to the
@@ -7793,11 +7791,10 @@ impl fmt::Display for NonEmptyPlutusPurposeIx {
 /// Babbage/Alonzo UTXOW set with Plutus-V3 + governance-related
 /// failure modes (MissingRedeemers, MissingRequiredDatums, etc.).
 ///
-/// R624 ships the scaffold with typed payloads for 12 of the 19
-/// variants (reusing existing carriers from the Shelley path).
-/// The remaining 7 variants (0/10/11/12/13/15/18) keep raw inner
-/// CBOR pending nested-rule / Plutus-purpose / DataHash /
-/// ScriptIntegrityHash decoders.
+/// All 19 variants carry fully typed payloads — the nested
+/// Conway UTXO sub-rule, the Plutus-purpose / DataHash /
+/// ScriptIntegrityHash carriers, and the witness-set carriers
+/// reused from the Shelley path.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ConwayUtxowPredFailure {
     /// Tag 0: nested Conway UTXO failure (R630 wired to typed
@@ -8831,11 +8828,10 @@ impl fmt::Display for ConwayGovCertPredFailure {
 /// the full UTxO acceptance check (inputs, outputs, fee, value
 /// conservation, collateral, network IDs).
 ///
-/// R630 ships the scaffold with typed payloads for the 12
-/// variants that reuse existing carriers; the 11 remaining
-/// variants (0/2/6/11/12/13/14/15/20/21/22) keep raw inner CBOR
-/// pending UTXOS / ValidityInterval / Value / ExUnits /
-/// DeltaCoin / NonEmptyMap decoders.
+/// All 23 variants carry fully typed payloads — the nested
+/// UTXOS sub-rule plus the `ValidityInterval` / `MaryValue` /
+/// `ExUnits` / `DeltaCoin` / `NonEmptyMap` / TxOut-triple
+/// carriers.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ConwayUtxoPredFailure {
     /// Tag 0: nested UTXOS sub-rule failure (R631 wired to typed
