@@ -4,12 +4,12 @@
 //!
 //! **Strict mirror:** deps/dmq-node/dmq-node/src/DMQ/NodeToNode/Version.hs.
 //!
-//! Ports `NodeToNodeVersion` (the version enum, its CBOR-term codec
-//! `nodeToNodeVersionCodec`, and its JSON rendering) and
-//! `NodeToNodeVersionData` with the `Acceptable` version-negotiation
-//! instance (`NodeToNodeVersionData::accept`). The
-//! `NodeToNodeVersionData` CBOR-term codec (`nodeToNodeCodecCBORTerm`)
-//! lands with a subsequent dmq-node-arc round.
+//! Ports the full `NodeToNode/Version.hs` surface: `NodeToNodeVersion`
+//! (the version enum, its `nodeToNodeVersionCodec` CBOR-term codec,
+//! JSON rendering) and `NodeToNodeVersionData` (the handshake version
+//! data, the `Acceptable` negotiation instance
+//! `NodeToNodeVersionData::accept`, and the `nodeToNodeCodecCBORTerm`
+//! CBOR-term codec `encode_term` / `decode_term`).
 
 use crate::types::NetworkMagic;
 use yggdrasil_ledger::LedgerError;
@@ -154,6 +154,65 @@ impl NodeToNodeVersionData {
             query: self.query || remote.query,
         })
     }
+
+    /// Encode as a CBOR term — the handshake version-data encoding.
+    ///
+    /// Mirror of upstream `nodeToNodeCodecCBORTerm`'s `encodeTerm`: a
+    /// 4-element array `[networkMagic, diffusionMode, peerSharing,
+    /// query]`, where `diffusionMode` is the boolean `true` for
+    /// `InitiatorOnly` and `peerSharing` is the integer `0` / `1`.
+    pub fn encode_term(&self, enc: &mut Encoder) {
+        enc.array(4)
+            .unsigned(u64::from(self.network_magic.0))
+            .bool(self.diffusion_mode == DiffusionMode::InitiatorOnly)
+            .unsigned(match self.peer_sharing {
+                PeerSharing::Disabled => 0,
+                PeerSharing::Enabled => 1,
+            })
+            .bool(self.query);
+    }
+
+    /// Decode a CBOR-term-encoded version data.
+    ///
+    /// Mirror of upstream `nodeToNodeCodecCBORTerm`'s `decodeTerm` —
+    /// rejects an out-of-range network magic or an unknown
+    /// peer-sharing tag.
+    pub fn decode_term(dec: &mut Decoder) -> Result<NodeToNodeVersionData, LedgerError> {
+        let len = dec.array()?;
+        if len != 4 {
+            return Err(LedgerError::CborInvalidLength {
+                expected: 4,
+                actual: len as usize,
+            });
+        }
+        let magic = dec.unsigned()?;
+        if magic > u64::from(u32::MAX) {
+            return Err(LedgerError::CborDecodeError(format!(
+                "networkMagic out of bound: {magic}"
+            )));
+        }
+        let diffusion_mode = if dec.bool()? {
+            DiffusionMode::InitiatorOnly
+        } else {
+            DiffusionMode::InitiatorAndResponder
+        };
+        let peer_sharing = match dec.unsigned()? {
+            0 => PeerSharing::Disabled,
+            1 => PeerSharing::Enabled,
+            other => {
+                return Err(LedgerError::CborDecodeError(format!(
+                    "peerSharing is out of bound: {other}"
+                )));
+            }
+        };
+        let query = dec.bool()?;
+        Ok(NodeToNodeVersionData {
+            network_magic: NetworkMagic(magic as u32),
+            diffusion_mode,
+            peer_sharing,
+            query,
+        })
+    }
 }
 
 #[cfg(test)]
@@ -288,5 +347,48 @@ mod tests {
         };
         assert!(mk(false).accept(&mk(true)).unwrap().query);
         assert!(!mk(false).accept(&mk(false)).unwrap().query);
+    }
+
+    #[test]
+    fn version_data_codec_round_trips() {
+        for data in [
+            version_data(
+                764,
+                DiffusionMode::InitiatorAndResponder,
+                PeerSharing::Enabled,
+                true,
+            ),
+            version_data(
+                1,
+                DiffusionMode::InitiatorOnly,
+                PeerSharing::Disabled,
+                false,
+            ),
+        ] {
+            let mut enc = Encoder::new();
+            data.encode_term(&mut enc);
+            let encoded = enc.into_bytes();
+            // A CBOR definite-length array of 4 elements.
+            assert_eq!(encoded[0], 0x84);
+            let mut dec = Decoder::new(&encoded);
+            assert_eq!(
+                NodeToNodeVersionData::decode_term(&mut dec).expect("decodes"),
+                data
+            );
+        }
+    }
+
+    #[test]
+    fn version_data_decode_rejects_out_of_range_peer_sharing() {
+        // [magic, diffusion, peerSharing=2 (invalid), query].
+        let mut enc = Encoder::new();
+        enc.array(4).unsigned(7).bool(false).unsigned(2).bool(false);
+        let bytes = enc.into_bytes();
+        let mut dec = Decoder::new(&bytes);
+        let err = NodeToNodeVersionData::decode_term(&mut dec).expect_err("rejects");
+        assert!(
+            matches!(&err, LedgerError::CborDecodeError(m) if m.contains("peerSharing")),
+            "unexpected error: {err:?}"
+        );
     }
 }
