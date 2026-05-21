@@ -21,7 +21,9 @@ use std::time::Duration;
 
 use crate::diffusion::{PoolId, PoolValidationCtx};
 use yggdrasil_consensus::OpCert;
-use yggdrasil_crypto::{Signature, SumKesSignature, SumKesVerificationKey, VerificationKey};
+use yggdrasil_crypto::{
+    Signature, SumKesSignature, SumKesVerificationKey, VerificationKey, verify_sum_kes,
+};
 use yggdrasil_ledger::LedgerError;
 use yggdrasil_ledger::cbor::{Decoder, Encoder, vec_with_strict_capacity};
 
@@ -721,6 +723,50 @@ pub fn validate_pool_eligibility(
         // ZeroSetSnapshot — the pool is unregistered / ineligible.
         Err(SigValidationError::SigExpired)
     }
+}
+
+/// Verify the operational certificate's cold-key signature.
+///
+/// Mirror of upstream `validateSig`'s `validateOCert coldKey
+/// ocertVkHot ocert` check — delegates to the consensus
+/// [`OpCert::verify`] (the Ed25519 signature over the certificate's
+/// signable representation). A failure maps to `InvalidSignatureOCERT`.
+pub fn validate_ocert_signature(
+    cold_key: &SigColdKey,
+    cert: &SigOpCertificate,
+    sig_kes_period: u64,
+) -> Result<(), SigValidationError> {
+    cert.get()
+        .verify(cold_key.get())
+        .map_err(|err| SigValidationError::InvalidSignatureOcert {
+            ocert_counter: cert.get().sequence_number,
+            ocert_kes_period: sig_kes_period,
+            reason: format!("{err:?}"),
+        })
+}
+
+/// Verify the KES signature over the signed payload bytes.
+///
+/// Mirror of upstream `validateSig`'s `verifyKES () ocertVkHot
+/// (sigKESPeriod - startKESPeriod) signedBytes kesSig` check — the
+/// evolution is the signature's KES period minus the operational
+/// certificate's. Delegates to [`verify_sum_kes`]; a failure maps to
+/// `InvalidKESSignature`.
+pub fn validate_kes_signature(
+    hot_vkey: &SumKesVerificationKey,
+    kes_sig: &SigKesSignature,
+    signed_bytes: &[u8],
+    ocert_kes_period: u64,
+    sig_kes_period: u64,
+) -> Result<(), SigValidationError> {
+    let evolution = sig_kes_period.saturating_sub(ocert_kes_period) as u32;
+    verify_sum_kes(hot_vkey, evolution, signed_bytes, &kes_sig.0).map_err(|err| {
+        SigValidationError::InvalidKesSignature {
+            current_period: sig_kes_period,
+            opcert_period: ocert_kes_period,
+            reason: format!("{err:?}"),
+        }
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -1656,6 +1702,41 @@ mod tests {
         assert_eq!(
             validate_pool_eligibility(&with(0, 0), &pool, 1_000),
             Err(SigValidationError::SigExpired)
+        );
+    }
+
+    #[test]
+    fn validate_ocert_signature_rejects_a_bad_signature() {
+        // `sample_sig_raw`'s operational certificate carries a garbage
+        // cold-key signature, so verification must fail.
+        let raw = sample_sig_raw();
+        let err = validate_ocert_signature(
+            &raw.sig_raw_cold_key,
+            &raw.sig_raw_op_certificate,
+            raw.sig_raw_kes_period,
+        )
+        .expect_err("garbage opcert signature must be rejected");
+        assert!(
+            matches!(err, SigValidationError::InvalidSignatureOcert { .. }),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn validate_kes_signature_rejects_a_bad_signature() {
+        // `sample_sig_raw`'s KES signature is a garbage Sum6 signature.
+        let raw = sample_sig_raw();
+        let err = validate_kes_signature(
+            &raw.sig_raw_op_certificate.0.hot_vkey,
+            &raw.sig_raw_kes_signature,
+            &[0xAB, 0xCD],
+            raw.sig_raw_op_certificate.0.kes_period,
+            raw.sig_raw_kes_period,
+        )
+        .expect_err("garbage KES signature must be rejected");
+        assert!(
+            matches!(err, SigValidationError::InvalidKesSignature { .. }),
+            "unexpected error: {err:?}"
         );
     }
 
