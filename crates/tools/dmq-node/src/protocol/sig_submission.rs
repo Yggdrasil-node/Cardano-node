@@ -651,6 +651,60 @@ pub fn validate_ocert_counter(
     Ok(())
 }
 
+/// Verify the signature's issuing pool is registered and eligible to
+/// mint, given the validation context and the current POSIX time
+/// (seconds).
+///
+/// Mirror of upstream `validateSig`'s pool-eligibility check
+/// (`Validate.hs`): the `vctxStakeMap` lookup, then the
+/// `NotZeroSetSnapshot` / `NotZeroMarkSnapshot` / `ZeroSetSnapshot`
+/// stake-snapshot branching with the `MAX_CLOCK_SKEW_SEC` window
+/// around the next epoch boundary (`vctxEpoch`).
+pub fn validate_pool_eligibility(
+    ctx: &PoolValidationCtx,
+    pool: &PoolId,
+    now: u64,
+) -> Result<(), SigValidationError> {
+    let Some(snapshot) = ctx.stake_map.get(pool) else {
+        // An unknown pool: `NotInitialized` if the context has not
+        // been populated yet (no epoch), otherwise `UnrecognizedPool`.
+        return Err(if ctx.epoch.is_none() {
+            SigValidationError::NotInitialized
+        } else {
+            SigValidationError::UnrecognizedPool
+        });
+    };
+    // Upstream `fromJust vctxEpoch` is safe because the epoch and the
+    // stake map are populated together; `now` is a benign fallback.
+    let next_epoch = ctx.epoch.unwrap_or(now);
+    let skew = MAX_CLOCK_SKEW_SEC as i64;
+    // `diffUTCTime nextEpoch now`.
+    let delta = next_epoch as i64 - now as i64;
+
+    if snapshot.set_pool != 0 {
+        // NotZeroSetSnapshot.
+        if now <= next_epoch.saturating_add(MAX_CLOCK_SKEW_SEC) {
+            Ok(())
+        } else if snapshot.mark_pool == 0 {
+            Err(SigValidationError::SigExpired)
+        } else {
+            Err(SigValidationError::ClockSkew)
+        }
+    } else if snapshot.mark_pool != 0 {
+        // NotZeroMarkSnapshot (the set snapshot is zero).
+        if delta.abs() <= skew {
+            Ok(())
+        } else if delta > skew {
+            Err(SigValidationError::PoolNotEligible)
+        } else {
+            Err(SigValidationError::ClockSkew)
+        }
+    } else {
+        // ZeroSetSnapshot — the pool is unregistered / ineligible.
+        Err(SigValidationError::SigExpired)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // SigSubmission mini-protocol
 // (upstream `SigSubmission crypto = TxSubmission2 SigId (Sig crypto)`)
@@ -1471,6 +1525,97 @@ mod tests {
         );
         // The rejected counter must not overwrite the recorded value.
         assert_eq!(ctx.ocert_map.get(&pool).copied(), Some(9));
+    }
+
+    #[test]
+    fn validate_pool_eligibility_unknown_pool() {
+        use crate::diffusion::PoolId;
+        let pool = PoolId([0x01; 28]);
+        // No epoch yet → NotInitialized.
+        assert_eq!(
+            validate_pool_eligibility(&PoolValidationCtx::default(), &pool, 100),
+            Err(SigValidationError::NotInitialized)
+        );
+        // Epoch set but the pool is absent → UnrecognizedPool.
+        let ctx = PoolValidationCtx {
+            epoch: Some(100),
+            ..PoolValidationCtx::default()
+        };
+        assert_eq!(
+            validate_pool_eligibility(&ctx, &pool, 100),
+            Err(SigValidationError::UnrecognizedPool)
+        );
+    }
+
+    #[test]
+    fn validate_pool_eligibility_set_snapshot() {
+        use crate::diffusion::{PoolId, StakeSnapshot};
+        let pool = PoolId([0x02; 28]);
+        let ctx = |mark: u64| {
+            let mut c = PoolValidationCtx {
+                epoch: Some(1_000),
+                ..PoolValidationCtx::default()
+            };
+            c.stake_map.insert(
+                pool.clone(),
+                StakeSnapshot {
+                    mark_pool: mark,
+                    set_pool: 50,
+                    go_pool: 0,
+                },
+            );
+            c
+        };
+        // set != 0, now within [.., nextEpoch + skew] → eligible.
+        assert!(validate_pool_eligibility(&ctx(10), &pool, 1_003).is_ok());
+        // now past the window, mark zero → SigExpired.
+        assert_eq!(
+            validate_pool_eligibility(&ctx(0), &pool, 2_000),
+            Err(SigValidationError::SigExpired)
+        );
+        // now past the window, mark non-zero → ClockSkew.
+        assert_eq!(
+            validate_pool_eligibility(&ctx(10), &pool, 2_000),
+            Err(SigValidationError::ClockSkew)
+        );
+    }
+
+    #[test]
+    fn validate_pool_eligibility_mark_snapshot_and_zero() {
+        use crate::diffusion::{PoolId, StakeSnapshot};
+        let pool = PoolId([0x03; 28]);
+        let with = |mark: u64, set: u64| {
+            let mut c = PoolValidationCtx {
+                epoch: Some(1_000),
+                ..PoolValidationCtx::default()
+            };
+            c.stake_map.insert(
+                pool.clone(),
+                StakeSnapshot {
+                    mark_pool: mark,
+                    set_pool: set,
+                    go_pool: 0,
+                },
+            );
+            c
+        };
+        // set == 0, mark != 0, within skew of the epoch → eligible.
+        assert!(validate_pool_eligibility(&with(10, 0), &pool, 1_002).is_ok());
+        // epoch is well ahead of now → PoolNotEligible.
+        assert_eq!(
+            validate_pool_eligibility(&with(10, 0), &pool, 100),
+            Err(SigValidationError::PoolNotEligible)
+        );
+        // now well past the epoch → ClockSkew.
+        assert_eq!(
+            validate_pool_eligibility(&with(10, 0), &pool, 5_000),
+            Err(SigValidationError::ClockSkew)
+        );
+        // set == 0 and mark == 0 → SigExpired.
+        assert_eq!(
+            validate_pool_eligibility(&with(0, 0), &pool, 1_000),
+            Err(SigValidationError::SigExpired)
+        );
     }
 
     #[test]
