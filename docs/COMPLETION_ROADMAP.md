@@ -338,11 +338,18 @@ one extraction):
     nonce / stake-snapshot fields a chain analyser does not need).
     A pure tested function — wiring it into `run` + the runner is
     slice 5.
-  - **Slice 5 — thread the genesis-seeded `LedgerState` through
-    `run` into the analysis runner.** `run` calls `make_protocol_info`
-    + `build_genesis_ledger_state` when `--config` is supplied; the 6
-    ledger-applying analyses bootstrap from it instead of
-    `LedgerState::new()`.
+  - ✅ **Slice 5a** (round 715) — the 5 ledger-applying analysis
+    handlers (`TraceLedgerProcessing`, `BenchmarkLedgerOps`,
+    `StoreLedgerStateAt`, `GetBlockApplicationMetrics`,
+    `ReproMempoolAndForge`) take an `Option<LedgerState>`
+    `initial_state` parameter — when `Some`, they bootstrap from it
+    instead of `LedgerState::new()`. `run_analysis` passes `None`
+    (behavior-preserving plumbing).
+  - **Slice 5b — wire `run` to supply the genesis-seeded state.**
+    `run` calls `make_protocol_info` + `build_genesis_ledger_state`
+    when `--config` is supplied and threads the resulting
+    `LedgerState` through `run_analysis` into the 5 handlers. Closes
+    the arc's validation gate.
   **Validation gate:** a Conway genesis from
   `configuration/preview/` parses; `db-analyser --config
   <preview-config> --db <synthesized-chain>` runs the apply-loop

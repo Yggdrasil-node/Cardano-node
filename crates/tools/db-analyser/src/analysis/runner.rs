@@ -27,7 +27,7 @@
 //! `ShowEBBs`, `OnlyValidation`) and the 6 ledger-state-dependent
 //! deferrals.
 
-use yggdrasil_ledger::{Block, BlockNo, HeaderHash, SlotNo};
+use yggdrasil_ledger::{Block, BlockNo, HeaderHash, LedgerState, SlotNo};
 
 use crate::has_analysis::HasAnalysis;
 use crate::types::{AnalysisName, DBAnalyserConfig, Limit};
@@ -364,19 +364,23 @@ pub fn run_analysis<I: IntoIterator<Item = Block>>(
         // Ledger-state-dependent analyses — return structured error
         // pending the ledger-state apply-loop arc.
         AnalysisName::StoreLedgerStateAt(target_slot, _mode) => {
-            Ok(analysis_store_ledger_state_at(&bounded, *target_slot))
+            Ok(analysis_store_ledger_state_at(&bounded, *target_slot, None))
         }
         AnalysisName::CheckNoThunksEvery(_) => Err(AnalysisError::NotApplicableToRust {
             analysis_name: "CheckNoThunksEvery".to_string(),
             reason: "NoThunks-style ledger-state inspection walks GHC's lazy heap for unevaluated thunks; Rust is eagerly evaluated and has no runtime thunks to inspect.".to_string(),
         }),
-        AnalysisName::TraceLedgerProcessing => Ok(analysis_trace_ledger_processing(&bounded)),
-        AnalysisName::BenchmarkLedgerOps(_, _) => Ok(analysis_benchmark_ledger_ops(&bounded)),
+        AnalysisName::TraceLedgerProcessing => {
+            Ok(analysis_trace_ledger_processing(&bounded, None))
+        }
+        AnalysisName::BenchmarkLedgerOps(_, _) => {
+            Ok(analysis_benchmark_ledger_ops(&bounded, None))
+        }
         AnalysisName::ReproMempoolAndForge(_n) => {
-            Ok(analysis_repro_mempool_and_forge(&bounded))
+            Ok(analysis_repro_mempool_and_forge(&bounded, None))
         }
         AnalysisName::GetBlockApplicationMetrics(every_n, _path) => Ok(
-            analysis_get_block_application_metrics(&bounded, every_n.0.max(1)),
+            analysis_get_block_application_metrics(&bounded, every_n.0.max(1), None),
         ),
     }
 }
@@ -514,35 +518,43 @@ pub fn analysis_only_validation(blocks: &[Block]) -> AnalysisOutcome {
 /// [`yggdrasil_ledger::LedgerState::apply_block`], capturing the
 /// per-block Ok/Err outcome.
 ///
-/// **Forensic semantics:** the handler bootstraps a fresh
-/// `LedgerState::new(initial_era)` (where `initial_era` is the
-/// first block's era, defaulting to Byron for empty inputs). It
-/// applies each block in turn; an apply error does *not* abort the
-/// run — instead it's captured in the per-block trace and the walk
-/// continues with the unchanged state. This matches the forensic-
-/// tool stance: surface every block's outcome rather than stopping
-/// at the first ledger-rule violation.
+/// **Forensic semantics:** the handler bootstraps `initial_state`
+/// when supplied (the genesis-seeded `LedgerState` from `--config`),
+/// else a fresh `LedgerState::new(initial_era)` (where `initial_era`
+/// is the first block's era, defaulting to Byron for empty inputs).
+/// It applies each block in turn; an apply error does *not* abort
+/// the run — instead it's captured in the per-block trace and the
+/// walk continues with the unchanged state. This matches the
+/// forensic-tool stance: surface every block's outcome rather than
+/// stopping at the first ledger-rule violation.
 ///
-/// **Carve-out (R488):** without a configured genesis state, real
-/// Cardano mainnet blocks will mostly fail at apply time (UTxO not
-/// found, protocol params absent, etc.). The dispatch shape is
-/// wired and the per-block outcome line is operationally useful;
-/// closing the trace-content gap requires genesis-bootstrap CLI
-/// flags + protocol-params hydration which lands in a future arc.
+/// **Genesis-bootstrap arc (slice 5a):** `initial_state` is the
+/// genesis-seeded `LedgerState` plumbed in by the
+/// genesis-bootstrap arc. When it is `None` (no `--config`), real
+/// on-chain blocks still fail at apply time against the empty
+/// `LedgerState::new()` — the dispatch shape is wired and the
+/// per-block outcome line is operationally useful; slice 5b wires
+/// `run` to supply the genesis-seeded state from the operator's
+/// node `config.json`.
 ///
 /// Mirror of upstream `Analysis.hs::traceLedgerProcessing` —
 /// applies blocks and calls `emit_traces` per block. Yggdrasil's
 /// `Block::emit_traces` currently returns empty (R476 placeholder);
 /// the captured Ok/Err outcome is the Yggdrasil-side analog of the
 /// trace events.
-pub fn analysis_trace_ledger_processing(blocks: &[Block]) -> AnalysisOutcome {
+pub fn analysis_trace_ledger_processing(
+    blocks: &[Block],
+    initial_state: Option<LedgerState>,
+) -> AnalysisOutcome {
     use crate::has_analysis::{CardanoLedgerStateValues, WithLedgerState};
 
-    let initial_era = blocks
-        .first()
-        .map(|b| b.era)
-        .unwrap_or(yggdrasil_ledger::Era::Byron);
-    let mut state = yggdrasil_ledger::LedgerState::new(initial_era);
+    let mut state = initial_state.unwrap_or_else(|| {
+        let initial_era = blocks
+            .first()
+            .map(|b| b.era)
+            .unwrap_or(yggdrasil_ledger::Era::Byron);
+        LedgerState::new(initial_era)
+    });
     let mut traces = Vec::with_capacity(blocks.len());
     let mut emit_traces = Vec::with_capacity(blocks.len());
     let mut applied_ok: i64 = 0;
@@ -606,15 +618,20 @@ pub fn analysis_trace_ledger_processing(blocks: &[Block]) -> AnalysisOutcome {
 /// Mirror of upstream `Analysis.hs::benchmarkLedgerOps`. R374-R376
 /// already shipped the `SlotDataPoint`, `Metadata`, and `FileWriting`
 /// leaf records; R489 wires them through this handler.
-pub fn analysis_benchmark_ledger_ops(blocks: &[Block]) -> AnalysisOutcome {
+pub fn analysis_benchmark_ledger_ops(
+    blocks: &[Block],
+    initial_state: Option<LedgerState>,
+) -> AnalysisOutcome {
     use crate::analysis::benchmark_ledger_ops::slot_data_point::{BlockStats, SlotDataPoint};
     use std::time::Instant;
 
-    let initial_era = blocks
-        .first()
-        .map(|b| b.era)
-        .unwrap_or(yggdrasil_ledger::Era::Byron);
-    let mut state = yggdrasil_ledger::LedgerState::new(initial_era);
+    let mut state = initial_state.unwrap_or_else(|| {
+        let initial_era = blocks
+            .first()
+            .map(|b| b.era)
+            .unwrap_or(yggdrasil_ledger::Era::Byron);
+        LedgerState::new(initial_era)
+    });
     let mut slot_data_points = Vec::with_capacity(blocks.len());
     let mut applied_ok: i64 = 0;
     let mut applied_err: i64 = 0;
@@ -678,14 +695,17 @@ pub fn analysis_benchmark_ledger_ops(blocks: &[Block]) -> AnalysisOutcome {
 pub fn analysis_store_ledger_state_at(
     blocks: &[Block],
     target_slot: yggdrasil_ledger::SlotNo,
+    initial_state: Option<LedgerState>,
 ) -> AnalysisOutcome {
     use yggdrasil_ledger::CborEncode;
 
-    let initial_era = blocks
-        .first()
-        .map(|b| b.era)
-        .unwrap_or(yggdrasil_ledger::Era::Byron);
-    let mut state = yggdrasil_ledger::LedgerState::new(initial_era);
+    let mut state = initial_state.unwrap_or_else(|| {
+        let initial_era = blocks
+            .first()
+            .map(|b| b.era)
+            .unwrap_or(yggdrasil_ledger::Era::Byron);
+        LedgerState::new(initial_era)
+    });
     let mut applied_ok: i64 = 0;
     let mut applied_err: i64 = 0;
     let mut reached_slot: Option<SlotNo> = None;
@@ -741,14 +761,17 @@ pub fn analysis_store_ledger_state_at(
 pub fn analysis_get_block_application_metrics(
     blocks: &[Block],
     every_n_blocks: u64,
+    initial_state: Option<LedgerState>,
 ) -> AnalysisOutcome {
     use crate::has_analysis::{CardanoLedgerStateValues, WithLedgerState};
 
-    let initial_era = blocks
-        .first()
-        .map(|b| b.era)
-        .unwrap_or(yggdrasil_ledger::Era::Byron);
-    let mut state = yggdrasil_ledger::LedgerState::new(initial_era);
+    let mut state = initial_state.unwrap_or_else(|| {
+        let initial_era = blocks
+            .first()
+            .map(|b| b.era)
+            .unwrap_or(yggdrasil_ledger::Era::Byron);
+        LedgerState::new(initial_era)
+    });
     let metrics = <Block as HasAnalysis>::block_application_metrics();
     let mut rows: Vec<Vec<(String, String)>> = Vec::new();
     let mut applied_ok: i64 = 0;
@@ -806,17 +829,22 @@ pub fn analysis_get_block_application_metrics(
 /// ships the dispatch shape; richer fidelity (decode fees,
 /// derive ttl, derive inputs for conflict detection,
 /// ledger-state-aware revalidation) awaits a future arc.
-pub fn analysis_repro_mempool_and_forge(blocks: &[Block]) -> AnalysisOutcome {
+pub fn analysis_repro_mempool_and_forge(
+    blocks: &[Block],
+    initial_state: Option<LedgerState>,
+) -> AnalysisOutcome {
     use std::time::Instant;
     use yggdrasil_consensus::mempool::{Mempool, MempoolEntry};
 
     const MEMPOOL_CAPACITY_BYTES: usize = 1024 * 1024;
 
-    let initial_era = blocks
-        .first()
-        .map(|b| b.era)
-        .unwrap_or(yggdrasil_ledger::Era::Byron);
-    let mut state = yggdrasil_ledger::LedgerState::new(initial_era);
+    let mut state = initial_state.unwrap_or_else(|| {
+        let initial_era = blocks
+            .first()
+            .map(|b| b.era)
+            .unwrap_or(yggdrasil_ledger::Era::Byron);
+        LedgerState::new(initial_era)
+    });
     let mut per_block_stats = Vec::with_capacity(blocks.len());
     let mut applied_ok: i64 = 0;
     let mut applied_err: i64 = 0;
@@ -1246,7 +1274,7 @@ mod tests {
 
     #[test]
     fn analysis_trace_ledger_processing_empty_chain() {
-        let outcome = analysis_trace_ledger_processing(&[]);
+        let outcome = analysis_trace_ledger_processing(&[], None);
         match outcome {
             AnalysisOutcome::TraceLedgerProcessing {
                 traces,
@@ -1270,7 +1298,7 @@ mod tests {
         // lookups required).
         let mut blk = mk_block(0, 0, None);
         blk.era = yggdrasil_ledger::Era::Byron;
-        let outcome = analysis_trace_ledger_processing(&[blk]);
+        let outcome = analysis_trace_ledger_processing(&[blk], None);
         match outcome {
             AnalysisOutcome::TraceLedgerProcessing {
                 traces,
@@ -1288,11 +1316,14 @@ mod tests {
 
     #[test]
     fn analysis_trace_ledger_processing_per_block_trace_shape() {
-        let outcome = analysis_trace_ledger_processing(&[
-            mk_block(10, 100, None),
-            mk_block(20, 101, None),
-            mk_block(30, 102, None),
-        ]);
+        let outcome = analysis_trace_ledger_processing(
+            &[
+                mk_block(10, 100, None),
+                mk_block(20, 101, None),
+                mk_block(30, 102, None),
+            ],
+            None,
+        );
         match outcome {
             AnalysisOutcome::TraceLedgerProcessing {
                 traces,
@@ -1332,8 +1363,10 @@ mod tests {
         // is the HasAnalysis::emit_traces output for the i-th block.
         // Block-iteration-derived content: event/slot/block_no/era/
         // tx_count + EBB marker + origin marker.
-        let outcome =
-            analysis_trace_ledger_processing(&[mk_block(10, 100, None), mk_block(20, 101, None)]);
+        let outcome = analysis_trace_ledger_processing(
+            &[mk_block(10, 100, None), mk_block(20, 101, None)],
+            None,
+        );
         match outcome {
             AnalysisOutcome::TraceLedgerProcessing {
                 traces,
@@ -1369,7 +1402,7 @@ mod tests {
         // get a "prev=<origin>" trace.
         let blk = mk_block(0, 0, None);
         // mk_block sets prev_hash: HeaderHash([0x00; 32]) — origin.
-        let outcome = analysis_trace_ledger_processing(&[blk]);
+        let outcome = analysis_trace_ledger_processing(&[blk], None);
         match outcome {
             AnalysisOutcome::TraceLedgerProcessing { emit_traces, .. } => {
                 assert!(
@@ -1391,7 +1424,7 @@ mod tests {
         blk.header.hash = HeaderHash(crate::byron_ebbs::parse_hex32(
             "89d9b5a5b8ddc8d7e5a6795e9774d97faf1efea59b2caf7eaf9f8c5b32059df4",
         ));
-        let outcome = analysis_trace_ledger_processing(&[blk]);
+        let outcome = analysis_trace_ledger_processing(&[blk], None);
         match outcome {
             AnalysisOutcome::TraceLedgerProcessing { emit_traces, .. } => {
                 assert!(
@@ -1492,7 +1525,7 @@ mod tests {
 
     #[test]
     fn analysis_benchmark_ledger_ops_empty_chain() {
-        let outcome = analysis_benchmark_ledger_ops(&[]);
+        let outcome = analysis_benchmark_ledger_ops(&[], None);
         match outcome {
             AnalysisOutcome::BenchmarkLedgerOps {
                 slot_data_points,
@@ -1511,7 +1544,7 @@ mod tests {
     fn analysis_benchmark_ledger_ops_records_per_block_timing() {
         let mut byron = mk_block(10, 100, None);
         byron.era = yggdrasil_ledger::Era::Byron;
-        let outcome = analysis_benchmark_ledger_ops(&[byron]);
+        let outcome = analysis_benchmark_ledger_ops(&[byron], None);
         match outcome {
             AnalysisOutcome::BenchmarkLedgerOps {
                 slot_data_points,
@@ -1540,7 +1573,7 @@ mod tests {
         b.era = yggdrasil_ledger::Era::Byron;
         let mut c = mk_block(40, 102, None);
         c.era = yggdrasil_ledger::Era::Byron;
-        let outcome = analysis_benchmark_ledger_ops(&[a, b, c]);
+        let outcome = analysis_benchmark_ledger_ops(&[a, b, c], None);
         match outcome {
             AnalysisOutcome::BenchmarkLedgerOps {
                 slot_data_points, ..
@@ -1604,7 +1637,7 @@ mod tests {
 
     #[test]
     fn analysis_get_block_application_metrics_empty_chain() {
-        let outcome = analysis_get_block_application_metrics(&[], 1);
+        let outcome = analysis_get_block_application_metrics(&[], 1, None);
         match outcome {
             AnalysisOutcome::GetBlockApplicationMetrics {
                 rows,
@@ -1629,7 +1662,7 @@ mod tests {
         a.era = yggdrasil_ledger::Era::Byron;
         let mut b = mk_block(20, 2, None);
         b.era = yggdrasil_ledger::Era::Byron;
-        let outcome = analysis_get_block_application_metrics(&[a, b], 1);
+        let outcome = analysis_get_block_application_metrics(&[a, b], 1, None);
         match outcome {
             AnalysisOutcome::GetBlockApplicationMetrics { rows, .. } => {
                 assert_eq!(rows.len(), 2);
@@ -1647,7 +1680,7 @@ mod tests {
 
     #[test]
     fn analysis_repro_mempool_and_forge_empty_chain() {
-        let outcome = analysis_repro_mempool_and_forge(&[]);
+        let outcome = analysis_repro_mempool_and_forge(&[], None);
         match outcome {
             AnalysisOutcome::ReproMempoolAndForge {
                 per_block_stats,
@@ -1668,7 +1701,7 @@ mod tests {
         blk.era = yggdrasil_ledger::Era::Byron;
         // mk_block sets transactions: vec![] — confirm.
         assert!(blk.transactions.is_empty());
-        let outcome = analysis_repro_mempool_and_forge(&[blk]);
+        let outcome = analysis_repro_mempool_and_forge(&[blk], None);
         match outcome {
             AnalysisOutcome::ReproMempoolAndForge {
                 per_block_stats, ..
@@ -1700,7 +1733,7 @@ mod tests {
                 is_valid: None,
             });
         }
-        let outcome = analysis_repro_mempool_and_forge(&[blk]);
+        let outcome = analysis_repro_mempool_and_forge(&[blk], None);
         match outcome {
             AnalysisOutcome::ReproMempoolAndForge {
                 per_block_stats, ..
@@ -1730,7 +1763,7 @@ mod tests {
                 is_valid: None,
             });
         }
-        let outcome = analysis_repro_mempool_and_forge(&[blk]);
+        let outcome = analysis_repro_mempool_and_forge(&[blk], None);
         match outcome {
             AnalysisOutcome::ReproMempoolAndForge {
                 per_block_stats, ..
@@ -1790,7 +1823,7 @@ mod tests {
             auxiliary_data: None,
             is_valid: None,
         });
-        let outcome = analysis_repro_mempool_and_forge(&[blk]);
+        let outcome = analysis_repro_mempool_and_forge(&[blk], None);
         match outcome {
             AnalysisOutcome::ReproMempoolAndForge {
                 per_block_stats, ..
@@ -1847,7 +1880,7 @@ mod tests {
                 is_valid: None,
             });
         }
-        let outcome = analysis_repro_mempool_and_forge(&[blk]);
+        let outcome = analysis_repro_mempool_and_forge(&[blk], None);
         match outcome {
             AnalysisOutcome::ReproMempoolAndForge {
                 per_block_stats, ..
@@ -1874,7 +1907,7 @@ mod tests {
 
     #[test]
     fn analysis_store_ledger_state_at_empty_chain_returns_none() {
-        let outcome = analysis_store_ledger_state_at(&[], SlotNo(100));
+        let outcome = analysis_store_ledger_state_at(&[], SlotNo(100), None);
         match outcome {
             AnalysisOutcome::StoreLedgerStateAt {
                 target_slot,
@@ -1897,7 +1930,7 @@ mod tests {
     fn analysis_store_ledger_state_at_target_too_high_returns_none() {
         let mut blk = mk_block(10, 0, None);
         blk.era = yggdrasil_ledger::Era::Byron;
-        let outcome = analysis_store_ledger_state_at(&[blk], SlotNo(9999));
+        let outcome = analysis_store_ledger_state_at(&[blk], SlotNo(9999), None);
         match outcome {
             AnalysisOutcome::StoreLedgerStateAt {
                 reached_slot,
@@ -1920,7 +1953,7 @@ mod tests {
         let mut c = mk_block(30, 2, None);
         c.era = yggdrasil_ledger::Era::Byron;
         // target_slot=20 — should snapshot at block b.
-        let outcome = analysis_store_ledger_state_at(&[a, b, c], SlotNo(20));
+        let outcome = analysis_store_ledger_state_at(&[a, b, c], SlotNo(20), None);
         match outcome {
             AnalysisOutcome::StoreLedgerStateAt {
                 target_slot,
@@ -1944,7 +1977,7 @@ mod tests {
         use yggdrasil_ledger::{CborDecode, LedgerStateCheckpoint};
         let mut blk = mk_block(0, 0, None);
         blk.era = yggdrasil_ledger::Era::Byron;
-        let outcome = analysis_store_ledger_state_at(&[blk], SlotNo(0));
+        let outcome = analysis_store_ledger_state_at(&[blk], SlotNo(0), None);
         match outcome {
             AnalysisOutcome::StoreLedgerStateAt { snapshot_bytes, .. } => {
                 // Confirm the bytes decode back via the existing
@@ -1954,6 +1987,45 @@ mod tests {
             }
             _ => panic!("wrong outcome variant"),
         }
+    }
+
+    #[test]
+    fn analysis_store_ledger_state_at_uses_injected_initial_state() {
+        // Slice 5a: the seeded initial `LedgerState` flows into the
+        // handler. The block carries a garbage transaction body, so
+        // `apply_block` fails and leaves the injected state
+        // unchanged — the captured snapshot is therefore the
+        // checkpoint of the *injected* state. Seeding with two
+        // different eras yields two different snapshots: proof the
+        // injected state is used, not discarded for
+        // `LedgerState::new()`.
+        use yggdrasil_ledger::{Tx, compute_tx_id};
+        let garbage = vec![0xFF, 0xFF];
+        let mut blk = mk_block(0, 0, None);
+        blk.era = yggdrasil_ledger::Era::Shelley;
+        blk.transactions.push(Tx {
+            id: compute_tx_id(&garbage),
+            body: garbage,
+            witnesses: None,
+            auxiliary_data: None,
+            is_valid: None,
+        });
+        let snapshot = |era: yggdrasil_ledger::Era| match analysis_store_ledger_state_at(
+            &[blk.clone()],
+            SlotNo(0),
+            Some(yggdrasil_ledger::LedgerState::new(era)),
+        ) {
+            AnalysisOutcome::StoreLedgerStateAt { snapshot_bytes, .. } => snapshot_bytes,
+            _ => panic!("wrong outcome variant"),
+        };
+        let byron_bytes = snapshot(yggdrasil_ledger::Era::Byron);
+        let conway_bytes = snapshot(yggdrasil_ledger::Era::Conway);
+        assert!(!byron_bytes.is_empty());
+        assert!(!conway_bytes.is_empty());
+        assert_ne!(
+            byron_bytes, conway_bytes,
+            "the injected initial state must influence the captured snapshot"
+        );
     }
 
     #[test]
@@ -1980,7 +2052,7 @@ mod tests {
             b.era = yggdrasil_ledger::Era::Byron;
             blks.push(b);
         }
-        let outcome = analysis_get_block_application_metrics(&blks, 3);
+        let outcome = analysis_get_block_application_metrics(&blks, 3, None);
         match outcome {
             AnalysisOutcome::GetBlockApplicationMetrics { rows, .. } => {
                 // Indices 0, 3, 6, 9 → 4 rows.
