@@ -40,6 +40,7 @@ pub struct NumReq(pub u16);
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct NumUnacknowledged(pub u16);
 
+use std::collections::BTreeMap;
 use std::time::Duration;
 
 use crate::protocol::sig_submission::{
@@ -386,6 +387,35 @@ impl SigSubmissionV2State {
     }
 }
 
+/// The pipelined-result type for the `SigSubmissionV2` inbound peer.
+///
+/// Mirror of upstream `data Collect sigId sig`
+/// (`Protocol/SigSubmissionV2/Inbound.hs`). The protocol pipelines
+/// requests for identifiers and signatures, so a collected response
+/// is a sum: a `SigIds` reply (the original request count plus the
+/// returned `(sigId, size)` pairs) or a `Sigs` reply (the requested
+/// `sigId → size` map plus the returned signatures — pairing them
+/// lets the peer detect signatures that are no longer needed).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Collect {
+    /// `CollectSigIds NumIdsReq [(sigId, SizeInBytes)]` — the result
+    /// of a pipelined `MsgRequestSigIds`.
+    CollectSigIds {
+        /// The number of identifiers originally requested.
+        requested: NumIdsReq,
+        /// The returned signature identifiers and their sizes.
+        ids: Vec<SigIdAndSize>,
+    },
+    /// `CollectSigs (Map sigId SizeInBytes) [sig]` — the result of a
+    /// pipelined `MsgRequestSigs`.
+    CollectSigs {
+        /// The requested identifiers paired with their sizes.
+        requested: BTreeMap<SigId, u32>,
+        /// The returned signatures.
+        sigs: Vec<Sig>,
+    },
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -567,6 +597,43 @@ mod tests {
             2_500_000
         );
         assert_eq!(SigSubmissionV2State::StSigs.byte_limit(), 2_500_000);
+    }
+
+    #[test]
+    fn collect_variants_construct_and_compare() {
+        use crate::protocol::sig_submission::{SigHash, SigId};
+        let sig_id = SigId(SigHash(vec![0x01, 0x02]));
+        let ids = Collect::CollectSigIds {
+            requested: NumIdsReq(5),
+            ids: vec![SigIdAndSize {
+                sig_id: sig_id.clone(),
+                size: 2800,
+            }],
+        };
+        assert_eq!(
+            ids,
+            Collect::CollectSigIds {
+                requested: NumIdsReq(5),
+                ids: vec![SigIdAndSize {
+                    sig_id: sig_id.clone(),
+                    size: 2800,
+                }],
+            }
+        );
+        let mut requested = BTreeMap::new();
+        requested.insert(sig_id, 2800u32);
+        let sigs = Collect::CollectSigs {
+            requested,
+            sigs: vec![],
+        };
+        assert_ne!(format!("{ids:?}"), format!("{sigs:?}"));
+        match sigs {
+            Collect::CollectSigs { requested, sigs } => {
+                assert_eq!(requested.len(), 1);
+                assert!(sigs.is_empty());
+            }
+            Collect::CollectSigIds { .. } => panic!("wrong variant"),
+        }
     }
 
     #[test]
