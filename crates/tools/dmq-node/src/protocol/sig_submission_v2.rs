@@ -40,11 +40,29 @@ pub struct NumReq(pub u16);
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct NumUnacknowledged(pub u16);
 
+use std::time::Duration;
+
 use crate::protocol::sig_submission::{
     Sig, SigId, SigIdAndSize, decode_sig, decode_sig_id, encode_sig, encode_sig_id,
 };
 use yggdrasil_ledger::LedgerError;
 use yggdrasil_ledger::cbor::{Decoder, Encoder};
+
+/// `shortWait` — upstream `Ouroboros.Network.Protocol.Limits.shortWait`
+/// (`Just 10`).
+const SHORT_WAIT: Option<Duration> = Some(Duration::from_secs(10));
+
+/// The blocking-`StSigIds` inactivity timeout — upstream
+/// `timeLimitsSigSubmissionV2`'s `Just 20`.
+const BLOCKING_SIG_IDS_WAIT: Option<Duration> = Some(Duration::from_secs(20));
+
+/// `smallByteLimit` — upstream
+/// `Ouroboros.Network.Protocol.Limits.smallByteLimit` (`0xffff`).
+const SMALL_BYTE_LIMIT: u64 = 0xffff;
+
+/// `largeByteLimit` — upstream
+/// `Ouroboros.Network.Protocol.Limits.largeByteLimit` (`2_500_000`).
+const LARGE_BYTE_LIMIT: u64 = 2_500_000;
 
 /// Anti-DoS pre-allocation cap for `SigSubmissionV2` indefinite-length
 /// list decoding.
@@ -335,6 +353,37 @@ impl SigSubmissionV2State {
             }),
         }
     }
+
+    /// The inactivity timeout for this protocol state — `None` is
+    /// upstream `waitForever`.
+    ///
+    /// Mirror of upstream `timeLimitsSigSubmissionV2`: `StIdle` waits
+    /// forever; a blocking `StSigIds` uses 20 s; a non-blocking
+    /// `StSigIds` and `StSigs` use `shortWait` (10 s). The terminal
+    /// `StDone` has no active timeout.
+    pub fn time_limit(self) -> Option<Duration> {
+        match self {
+            SigSubmissionV2State::StIdle | SigSubmissionV2State::StDone => None,
+            SigSubmissionV2State::StSigIds { blocking: true } => BLOCKING_SIG_IDS_WAIT,
+            SigSubmissionV2State::StSigIds { blocking: false } | SigSubmissionV2State::StSigs => {
+                SHORT_WAIT
+            }
+        }
+    }
+
+    /// The maximum inbound-message size for this protocol state.
+    ///
+    /// Mirror of upstream `byteLimitsSigSubmissionV2`: `StIdle` uses
+    /// `smallByteLimit`; the reply states (`StSigIds`, `StSigs`) use
+    /// `largeByteLimit`.
+    pub fn byte_limit(self) -> u64 {
+        match self {
+            SigSubmissionV2State::StIdle | SigSubmissionV2State::StDone => SMALL_BYTE_LIMIT,
+            SigSubmissionV2State::StSigIds { .. } | SigSubmissionV2State::StSigs => {
+                LARGE_BYTE_LIMIT
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -488,6 +537,36 @@ mod tests {
         enc.array(1).unsigned(99);
         let err = SigSubmissionV2Message::from_cbor(&enc.into_bytes()).expect_err("rejects");
         assert!(matches!(err, LedgerError::CborTypeMismatch { .. }));
+    }
+
+    #[test]
+    fn time_limits_match_upstream() {
+        assert_eq!(SigSubmissionV2State::StIdle.time_limit(), None);
+        assert_eq!(SigSubmissionV2State::StDone.time_limit(), None);
+        assert_eq!(
+            SigSubmissionV2State::StSigIds { blocking: true }.time_limit(),
+            Some(std::time::Duration::from_secs(20))
+        );
+        let short = Some(std::time::Duration::from_secs(10));
+        assert_eq!(
+            SigSubmissionV2State::StSigIds { blocking: false }.time_limit(),
+            short
+        );
+        assert_eq!(SigSubmissionV2State::StSigs.time_limit(), short);
+    }
+
+    #[test]
+    fn byte_limits_match_upstream() {
+        assert_eq!(SigSubmissionV2State::StIdle.byte_limit(), 0xffff);
+        assert_eq!(
+            SigSubmissionV2State::StSigIds { blocking: true }.byte_limit(),
+            2_500_000
+        );
+        assert_eq!(
+            SigSubmissionV2State::StSigIds { blocking: false }.byte_limit(),
+            2_500_000
+        );
+        assert_eq!(SigSubmissionV2State::StSigs.byte_limit(), 2_500_000);
     }
 
     #[test]
