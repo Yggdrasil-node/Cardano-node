@@ -28,6 +28,7 @@ clap = { workspace = true }
 eyre = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+yggdrasil-consensus = { path = "../../consensus" }
 yggdrasil-crypto = { path = "../../crypto" }
 yggdrasil-telemetry.workspace = true
 thiserror = { workspace = true }

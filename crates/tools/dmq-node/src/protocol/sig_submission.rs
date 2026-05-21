@@ -18,6 +18,7 @@
 
 use std::fmt;
 
+use yggdrasil_consensus::OpCert;
 use yggdrasil_crypto::{KesSignature, VerificationKey};
 
 /// The hash identifying a DMQ signature.
@@ -129,6 +130,23 @@ pub struct SigColdKey(pub VerificationKey);
 impl SigColdKey {
     /// The wrapped Ed25519 verification key — upstream `getSigColdKey`.
     pub fn get(&self) -> &VerificationKey {
+        &self.0
+    }
+}
+
+/// A DMQ signature's operational certificate.
+///
+/// Upstream `newtype SigOpCertificate crypto =
+/// SigOpCertificate { getSigOpCertificate :: OCert crypto }`. The
+/// `crypto` parameter collapses to yggdrasil's concrete consensus
+/// [`OpCert`] (the hot-KES-verkey / counter / KES-period / cold
+/// signature record shared with block-header validation).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SigOpCertificate(pub OpCert);
+
+impl SigOpCertificate {
+    /// The wrapped operational certificate — upstream `getSigOpCertificate`.
+    pub fn get(&self) -> &OpCert {
         &self.0
     }
 }
@@ -298,6 +316,21 @@ mod tests {
         assert_eq!(key, SigColdKey(VerificationKey([0x11; 32])));
         assert_ne!(key, SigColdKey(VerificationKey([0xFF; 32])));
         assert_eq!(key.get(), &VerificationKey([0x11; 32]));
+    }
+
+    #[test]
+    fn sig_op_certificate_wraps_and_compares() {
+        use yggdrasil_crypto::{Signature, SumKesVerificationKey};
+        let ocert = |seq: u64| OpCert {
+            hot_vkey: SumKesVerificationKey([0x33; 32]),
+            sequence_number: seq,
+            kes_period: 5,
+            sigma: Signature([0x44; 64]),
+        };
+        let cert = SigOpCertificate(ocert(1));
+        assert_eq!(cert, SigOpCertificate(ocert(1)));
+        assert_ne!(cert, SigOpCertificate(ocert(2)));
+        assert_eq!(cert.get().sequence_number, 1);
     }
 
     #[test]
