@@ -9393,14 +9393,94 @@ pub enum CollectError {
     BadTranslation(ContextError),
 }
 
+/// A governance vote decision mirroring upstream `data Vote =
+/// VoteNo | VoteYes | Abstain`. CBOR-encoded as a Word8 enum.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Vote {
+    /// A "no" vote.
+    VoteNo,
+    /// A "yes" vote.
+    VoteYes,
+    /// An abstention.
+    Abstain,
+}
+
+impl Vote {
+    /// Decode a `Vote` from the next CBOR Word8 enum value.
+    fn from_decoder(dec: &mut yggdrasil_ledger::Decoder<'_>) -> Result<Self, DecoderError> {
+        let n = dec
+            .unsigned()
+            .map_err(|err| DecoderError(format!("Vote: expected Word8 enum: {err:?}")))?;
+        match n {
+            0 => Ok(Self::VoteNo),
+            1 => Ok(Self::VoteYes),
+            2 => Ok(Self::Abstain),
+            other => Err(DecoderError(format!("Vote: unknown vote enum {other}"))),
+        }
+    }
+}
+
+impl fmt::Display for Vote {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::VoteNo => "VoteNo",
+            Self::VoteYes => "VoteYes",
+            Self::Abstain => "Abstain",
+        })
+    }
+}
+
+/// A single governance vote mirroring upstream `data
+/// VotingProcedure era = VotingProcedure { vProcVote :: Vote,
+/// vProcAnchor :: StrictMaybe Anchor }`. CBOR wire format is a
+/// 2-element record `[vote, decodeNullStrictMaybe Anchor]`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VotingProcedure {
+    /// The vote decision.
+    pub vote: Vote,
+    /// The optional vote-rationale anchor.
+    pub anchor: Option<Anchor>,
+}
+
+impl VotingProcedure {
+    /// Decode a `VotingProcedure` from its 2-element CBOR
+    /// record.
+    fn from_decoder(dec: &mut yggdrasil_ledger::Decoder<'_>) -> Result<Self, DecoderError> {
+        let len = dec
+            .array()
+            .map_err(|err| DecoderError(format!("VotingProcedure: expected 2-array: {err:?}")))?;
+        if len != 2 {
+            return Err(DecoderError(format!(
+                "VotingProcedure: expected 2-element record, got len {len}"
+            )));
+        }
+        let vote = Vote::from_decoder(dec)?;
+        let anchor = decode_null_strict_maybe(dec, "VotingProcedure anchor", Anchor::from_decoder)?;
+        Ok(Self { vote, anchor })
+    }
+}
+
+impl fmt::Display for VotingProcedure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let anchor_render = match &self.anchor {
+            None => "SNothing".to_string(),
+            Some(anchor) => format!("SJust ({anchor})"),
+        };
+        write!(
+            f,
+            "VotingProcedure {{vProcVote = {}, vProcAnchor = {anchor_render}}}",
+            self.vote
+        )
+    }
+}
+
 /// `ContextError` mirror — a Conway-era Plutus script-context
 /// translation error (`data ConwayContextError era` from
 /// `Cardano.Ledger.Conway.TxInfo`). CBOR `Sum` tags 8-15.
 ///
-/// R681 ships the scaffold: tags 9/10/11/14/15 carry typed
-/// payloads (TxCert, PlutusPurpose AsItem, Coin, Coin, NonEmpty
-/// TxIn); tags 8/12/13 (`BabbageContextError`, voting/proposal
-/// procedure fields) keep raw inner CBOR.
+/// Tags 9-15 carry typed payloads (R681-R683); only tag 8
+/// (`BabbageContextError` — an inherited prior-era error tree)
+/// keeps raw inner CBOR.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ContextError {
     /// Tag 8: an inherited Babbage-era context error. Raw.
@@ -9414,9 +9494,10 @@ pub enum ContextError {
     /// Tag 11: the current-treasury field is not supported —
     /// `Coin` (R681 typed).
     CurrentTreasuryFieldNotSupported(u64),
-    /// Tag 12: the voting-procedures field is not supported.
-    /// Raw.
-    VotingProceduresFieldNotSupported(Vec<u8>),
+    /// Tag 12: the voting-procedures field is not supported —
+    /// `VotingProcedures` (`Map Voter (Map GovActionId
+    /// VotingProcedure)`) (R683 typed).
+    VotingProceduresFieldNotSupported(Vec<(Voter, Vec<(GovActionId, VotingProcedure)>)>),
     /// Tag 13: the proposal-procedures field is not supported —
     /// `OSet (ProposalProcedure era)` (R682 typed).
     ProposalProceduresFieldNotSupported(Vec<ProposalProcedure>),
@@ -9472,7 +9553,32 @@ impl ContextError {
                 })?;
                 Ok(Self::CurrentTreasuryFieldNotSupported(coin))
             }
-            12 => Ok(Self::VotingProceduresFieldNotSupported(capture_raw(dec)?)),
+            12 => {
+                // VotingProcedures — `Map Voter (Map GovActionId
+                // VotingProcedure)`.
+                let voter_count = dec.map().map_err(|err| {
+                    DecoderError(format!(
+                        "VotingProceduresFieldNotSupported: expected outer map: {err:?}"
+                    ))
+                })?;
+                let mut voters = Vec::with_capacity(voter_count as usize);
+                for _ in 0..voter_count {
+                    let voter = Voter::from_decoder(dec)?;
+                    let action_count = dec.map().map_err(|err| {
+                        DecoderError(format!(
+                            "VotingProceduresFieldNotSupported: expected inner map: {err:?}"
+                        ))
+                    })?;
+                    let mut actions = Vec::with_capacity(action_count as usize);
+                    for _ in 0..action_count {
+                        let gaid = GovActionId::from_decoder(dec)?;
+                        let procedure = VotingProcedure::from_decoder(dec)?;
+                        actions.push((gaid, procedure));
+                    }
+                    voters.push((voter, actions));
+                }
+                Ok(Self::VotingProceduresFieldNotSupported(voters))
+            }
             13 => {
                 // OSet (ProposalProcedure era) — an optionally
                 // tag-258-wrapped array of proposal procedures.
@@ -9540,12 +9646,26 @@ impl fmt::Display for ContextError {
             Self::CurrentTreasuryFieldNotSupported(coin) => {
                 write!(f, "CurrentTreasuryFieldNotSupported ({})", CoinShow(*coin))
             }
-            Self::VotingProceduresFieldNotSupported(b) => {
-                write!(
-                    f,
-                    "VotingProceduresFieldNotSupported <raw-cbor {} bytes>",
-                    b.len()
-                )
+            Self::VotingProceduresFieldNotSupported(voters) => {
+                f.write_str("VotingProceduresFieldNotSupported (fromList [")?;
+                let mut first_voter = true;
+                for (voter, actions) in voters {
+                    if !first_voter {
+                        f.write_str(",")?;
+                    }
+                    first_voter = false;
+                    write!(f, "({voter},fromList [")?;
+                    let mut first_action = true;
+                    for (gaid, procedure) in actions {
+                        if !first_action {
+                            f.write_str(",")?;
+                        }
+                        first_action = false;
+                        write!(f, "({gaid},{procedure})")?;
+                    }
+                    f.write_str("])")?;
+                }
+                f.write_str("])")
             }
             Self::ProposalProceduresFieldNotSupported(procedures) => {
                 f.write_str("ProposalProceduresFieldNotSupported (fromList [")?;
@@ -13765,6 +13885,51 @@ mod tests {
         assert_eq!(
             f.to_string(),
             "ValidationTagMismatch (IsValid False) (FailedUnexpectedly (PlutusFailure \"boom\" <bytestring 3 bytes> :| []))"
+        );
+    }
+
+    #[test]
+    fn context_error_decodes_voting_procedures_field() {
+        // ContextError tag 12 (VotingProceduresFieldNotSupported)
+        // — a Voter→GovActionId→VotingProcedure nested map with
+        // one entry.
+        let mut cbor = vec![0x82_u8, 0x0C]; // ContextError [12, ...]
+        cbor.push(0xA1); // outer map(1)
+        // Voter [4, keyhash(28)] (StakePoolVoter)
+        cbor.push(0x82);
+        cbor.push(0x04);
+        cbor.push(0x58);
+        cbor.push(28);
+        cbor.extend_from_slice(&[0x71_u8; 28]);
+        // inner map(1)
+        cbor.push(0xA1);
+        // GovActionId [txid32, ix=0]
+        cbor.push(0x82);
+        cbor.push(0x58);
+        cbor.push(32);
+        cbor.extend_from_slice(&[0x2E_u8; 32]);
+        cbor.push(0x00);
+        // VotingProcedure [vote=1 (VoteYes), anchor=null]
+        cbor.push(0x82);
+        cbor.push(0x01);
+        cbor.push(0xF6);
+        use yggdrasil_ledger::Decoder;
+        let mut dec = Decoder::new(&cbor);
+        let ctx = ContextError::from_decoder(&mut dec, &cbor).expect("ContextError");
+        if let ContextError::VotingProceduresFieldNotSupported(voters) = &ctx {
+            assert_eq!(voters.len(), 1);
+            assert!(matches!(voters[0].0, Voter::StakePoolVoter(_)));
+            let (_, actions) = &voters[0];
+            assert_eq!(actions.len(), 1);
+            assert_eq!(actions[0].1.vote, Vote::VoteYes);
+            assert!(actions[0].1.anchor.is_none());
+        } else {
+            panic!("expected VotingProceduresFieldNotSupported, got {ctx:?}");
+        }
+        assert!(
+            ctx.to_string()
+                .contains("VotingProcedure {vProcVote = VoteYes, vProcAnchor = SNothing}"),
+            "got: {ctx}"
         );
     }
 

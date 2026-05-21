@@ -905,10 +905,14 @@ Language typed) plus the `NonEmptyCollectError` carrier. R674
 `PlutusPurpose AsItem`, current-treasury / treasury-donation
 `Coin`, ReferenceInputsNotDisjointFromInputs `NonEmpty TxIn`)
 carry typed payloads. R682 (2026-05-21) typed `ContextError`
-tag 13 (`ProposalProceduresFieldNotSupported`) to carry a
-typed `Vec<ProposalProcedure>` (the `OSet ProposalProcedure`
-form); only tags 8 (`BabbageContextError`) and 12
-(`VotingProceduresFieldNotSupported`) keep raw inner CBOR.
+tag 13 (`ProposalProceduresFieldNotSupported`). R683
+(2026-05-21) added the `Vote` enum and `VotingProcedure` type
+and typed `ContextError` tag 12
+(`VotingProceduresFieldNotSupported`) to carry the nested
+`Voter → GovActionId → VotingProcedure` map. **7 of 8
+`ContextError` variants now carry typed payloads**; only tag 8
+(`BabbageContextError` — an inherited prior-era error tree)
+keeps raw inner CBOR.
 **All four `CollectError` variants now carry typed payloads.**
 **Both Conway UTXOS variants now carry typed payloads — the
 Conway UTXOS sub-rule is fully typed.** The Conway LEDGER →
