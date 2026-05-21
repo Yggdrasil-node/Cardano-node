@@ -43,6 +43,37 @@ pub enum LocalMsgNotificationState {
     StDone,
 }
 
+/// The reply payload of a `MsgReply` — a blocking-style-tagged list
+/// of messages.
+///
+/// Mirror of upstream `data BlockingReplyList (blocking ::
+/// StBlockingStyle) a` (re-exported by `LocalMsgNotification.Type`
+/// from `TxSubmission2`): a blocking reply carries a non-empty list, a
+/// non-blocking reply a possibly-empty list. yggdrasil flattens the
+/// GADT's `blocking` type parameter into this 2-variant enum. The
+/// blocking style also drives the wire encoding — a non-blocking
+/// reply carries a `HasMore` flag, a blocking reply does not (the
+/// upstream `Codec.hs` "Issue #15").
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum BlockingReplyList {
+    /// `BlockingReply` — a non-empty reply (a blocking request must
+    /// not return an empty list).
+    Blocking(Vec<Sig>),
+    /// `NonBlockingReply` — a possibly-empty reply.
+    NonBlocking(Vec<Sig>),
+}
+
+impl BlockingReplyList {
+    /// The reply's messages, regardless of blocking style.
+    pub fn messages(&self) -> &[Sig] {
+        match self {
+            BlockingReplyList::Blocking(messages) | BlockingReplyList::NonBlocking(messages) => {
+                messages
+            }
+        }
+    }
+}
+
 /// Messages of the `LocalMsgNotification` mini-protocol.
 ///
 /// Mirror of upstream `Message (LocalMsgNotification msg)`:
@@ -59,12 +90,14 @@ pub enum LocalMsgNotificationMessage {
         /// `true` blocking, `false` non-blocking.
         blocking: bool,
     },
-    /// Reply with a list of messages and a has-more flag.
-    /// `StBusy → StIdle`.
+    /// Reply with a (blocking-style-tagged) list of messages and a
+    /// has-more flag. `StBusy → StIdle`.
     MsgReply {
-        /// The notified signatures (non-empty for a blocking reply).
-        messages: Vec<Sig>,
-        /// Whether the server has further messages.
+        /// The notified signatures, tagged by blocking style.
+        reply: BlockingReplyList,
+        /// Whether the server has further messages. Carried for both
+        /// styles, but a blocking reply does not encode it on the
+        /// wire (upstream `Codec.hs` "Issue #15").
         has_more: HasMore,
     },
     /// Client terminates the exchange. `StIdle → StDone`.
@@ -137,7 +170,7 @@ mod tests {
         assert_eq!(busy, LocalMsgNotificationState::StBusy { blocking: true });
         assert_eq!(
             busy.transition(&LocalMsgNotificationMessage::MsgReply {
-                messages: vec![],
+                reply: BlockingReplyList::NonBlocking(vec![]),
                 has_more: HasMore::DoesNotHaveMore,
             })
             .expect("reply"),
@@ -156,7 +189,7 @@ mod tests {
         // MsgReply is illegal in StIdle.
         let err = LocalMsgNotificationState::StIdle
             .transition(&LocalMsgNotificationMessage::MsgReply {
-                messages: vec![],
+                reply: BlockingReplyList::NonBlocking(vec![]),
                 has_more: HasMore::HasMore,
             })
             .expect_err("rejects");
@@ -173,5 +206,15 @@ mod tests {
     #[test]
     fn has_more_round_trips() {
         assert_ne!(HasMore::HasMore, HasMore::DoesNotHaveMore);
+    }
+
+    #[test]
+    fn blocking_reply_list_exposes_messages_for_both_styles() {
+        assert!(BlockingReplyList::NonBlocking(vec![]).messages().is_empty());
+        assert!(BlockingReplyList::Blocking(vec![]).messages().is_empty());
+        assert_ne!(
+            BlockingReplyList::Blocking(vec![]),
+            BlockingReplyList::NonBlocking(vec![]),
+        );
     }
 }
