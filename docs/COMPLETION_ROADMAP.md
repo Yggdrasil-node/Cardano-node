@@ -263,9 +263,45 @@ Praos forging needs. Verified decomposition:
       writes is at the *final* tip (a post-application checkpoint),
       which does not serve as an apply-loop *starting* state.
   **R3c-6 status:** the three structural slices are done; the
-  remaining work is the R488 genesis-bootstrap arc (CLI genesis
-  flags + protocol-params hydration), without which `db-analyser`
-  cannot run a real ledger apply-loop from genesis.
+  remaining work is the **db-analyser genesis-bootstrap arc**
+  decomposed below.
+
+#### db-analyser genesis-bootstrap arc (the R488 deferral — scoped R708)
+`db-analyser`'s ledger-applying analyses (`TraceLedgerProcessing`,
+`BenchmarkLedgerOps`, `GetBlockApplicationMetrics`,
+`StoreLedgerStateAt`, `ReproMempoolAndForge` — the 6 that R488
+flagged) currently bootstrap an empty `LedgerState::new(initial_era)`,
+so real on-chain blocks fail at apply time (UTxO absent, protocol
+params absent). Upstream `db-analyser` takes `--config PATH`
+(`.reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus-cardano/app/DBAnalyser/Parsers.hs:253-266`,
+`parseCardanoArgs`/`parseConfigFile`) and builds a `ProtocolInfo`
++ genesis-seeded initial `LedgerState` from it. Verified
+decomposition (the loaders already exist; this is wiring +
+one extraction):
+  - **Slice 1 — extract the shared config→genesis loaders.** Move
+    `load_genesis_bundle` / `load_consensus_protocol` /
+    `build_initial_forge_state` / `load_initial_forge_state` (today
+    in `crates/tools/db-synthesizer/src/run.rs`) into
+    `yggdrasil-node-genesis`, so `db-analyser` reuses them without
+    a sister-tool cross-dependency. `build_base_ledger_state` +
+    `BaseLedgerStateInputs` already live there
+    (`crates/node/genesis/src/lib.rs:2960,3001`). Behavior-
+    preserving extraction — db-synthesizer's gates stay green.
+  - **Slice 2 — `db-analyser --config PATH` parser flag.** Add the
+    flag + `DBAnalyserConfig` field, mirroring upstream
+    `parseConfigFile`.
+  - **Slice 3 — load the genesis-seeded `LedgerState` in `run`.**
+    When `--config` is supplied, build the initial `LedgerState`
+    via the slice-1 shared loader.
+  - **Slice 4 — thread it into the analysis runner.** The 6
+    ledger-applying analyses bootstrap from the genesis-seeded
+    `LedgerState` instead of `LedgerState::new()`.
+  **Validation gate:** a Conway genesis from
+  `configuration/preview/` parses; `db-analyser --config
+  <preview-config> --db <synthesized-chain>` runs the apply-loop
+  analyses without empty-`LedgerState::new()` apply failures.
+  **Each slice is its own round** — author a `parity-plan` for the
+  slices that touch genesis-config parsing.
 
 **Each slice is its own protocol-critical round** — author a `parity-plan`
 first; R3a/R3c touch the consensus `OpCert` / forge surface. **Exit (R3c):**
