@@ -471,25 +471,33 @@ pub fn encode_sig_raw(raw: &SigRaw, enc: &mut Encoder) {
     enc.bytes(&raw.sig_raw_cold_key.0.0);
 }
 
+/// Decode the `SigRaw` payload sub-array — the 4-element CBOR array
+/// `[sigId, sigBody, kesPeriod, expiresAt]` that the KES key signs.
+///
+/// Mirror of upstream `decodeSig`'s `decodePayload` `where`-clause.
+fn decode_sig_payload(dec: &mut Decoder) -> Result<(SigId, SigBody, u64, PosixTime), LedgerError> {
+    expect_array_len(dec, 4)?;
+    let sig_id = decode_sig_id(dec)?;
+    let sig_body = SigBody(dec.bytes_owned()?);
+    let kes_period = dec.unsigned()?;
+    let expires = dec.unsigned()?;
+    let expires_at = PosixTime(
+        u32::try_from(expires).map_err(|_| LedgerError::ValueOverflow {
+            site: "SigRaw.expiresAt",
+        })?,
+    );
+    Ok((sig_id, sig_body, kes_period, expires_at))
+}
+
 /// Decode a [`SigRaw`] from the CBOR 4-element array.
 ///
 /// Mirror of the structure upstream `decodeSig` parses — without the
-/// `sigRawSignedBytes` byte-offset capture, which the (later)
-/// `Sig`-level decoder adds.
+/// `sigRawSignedBytes` byte-offset capture, which [`decode_sig`] adds.
 pub fn decode_sig_raw(dec: &mut Decoder) -> Result<SigRaw, LedgerError> {
     expect_array_len(dec, 4)?;
-    // [0] payload.
-    expect_array_len(dec, 4)?;
-    let sig_raw_id = decode_sig_id(dec)?;
-    let sig_raw_body = SigBody(dec.bytes_owned()?);
-    let sig_raw_kes_period = dec.unsigned()?;
-    let expires = dec.unsigned()?;
-    let sig_raw_expires_at =
-        PosixTime(
-            u32::try_from(expires).map_err(|_| LedgerError::ValueOverflow {
-                site: "SigRaw.expiresAt",
-            })?,
-        );
+    // [0] payload — the signed sub-array.
+    let (sig_raw_id, sig_raw_body, sig_raw_kes_period, sig_raw_expires_at) =
+        decode_sig_payload(dec)?;
     // [1] KES signature.
     let sig_raw_kes_signature = SigKesSignature(KesSignature(decode_fixed_bytes::<64>(dec)?));
     // [2] operational certificate.
@@ -504,6 +512,45 @@ pub fn decode_sig_raw(dec: &mut Decoder) -> Result<SigRaw, LedgerError> {
         sig_raw_cold_key,
         sig_raw_expires_at,
         sig_raw_kes_signature,
+    })
+}
+
+/// Decode a [`Sig`] from the full CBOR message bytes.
+///
+/// Mirror of upstream `decodeSig` — decodes the `SigRaw` 4-element
+/// array and additionally captures `sigRawSignedBytes`: the exact
+/// bytes of the payload sub-array (element 0), the bytes the KES key
+/// signed. Upstream uses `peekByteOffset` / `bytesBetweenOffsets`;
+/// the Rust port uses `Decoder::position()` to bracket the payload.
+///
+/// `input` must be exactly the bytes the returned `Sig`'s
+/// `sig_raw_bytes` should hold — the full encoded `SigRaw` message.
+pub fn decode_sig(input: &[u8]) -> Result<Sig, LedgerError> {
+    let mut dec = Decoder::new(input);
+    expect_array_len(&mut dec, 4)?;
+    // Bracket the payload sub-array to recover the signed bytes.
+    let start = dec.position();
+    let (sig_raw_id, sig_raw_body, sig_raw_kes_period, sig_raw_expires_at) =
+        decode_sig_payload(&mut dec)?;
+    let end = dec.position();
+    let sig_raw_kes_signature = SigKesSignature(KesSignature(decode_fixed_bytes::<64>(&mut dec)?));
+    let sig_raw_op_certificate = decode_sig_op_certificate(&mut dec)?;
+    let sig_raw_cold_key = SigColdKey(VerificationKey(decode_fixed_bytes::<32>(&mut dec)?));
+    let sig_raw = SigRaw {
+        sig_raw_id,
+        sig_raw_body,
+        sig_raw_kes_period,
+        sig_raw_op_certificate,
+        sig_raw_cold_key,
+        sig_raw_expires_at,
+        sig_raw_kes_signature,
+    };
+    Ok(Sig {
+        sig_raw_bytes: input.to_vec(),
+        sig_raw_with_signed_bytes: SigRawWithSignedBytes {
+            sig_raw_signed_bytes: input[start..end].to_vec(),
+            sig_raw,
+        },
     })
 }
 
@@ -749,6 +796,36 @@ mod tests {
         encode_sig(&sig, &mut enc);
         // CBOR byte string of length 3 → 0x43, then the cached bytes.
         assert_eq!(enc.into_bytes(), vec![0x43, 0x01, 0x02, 0x03]);
+    }
+
+    #[test]
+    fn decode_sig_captures_signed_payload_bytes() {
+        let raw = sample_sig_raw();
+        let mut enc = Encoder::new();
+        encode_sig_raw(&raw, &mut enc);
+        let encoded = enc.into_bytes();
+
+        let sig = decode_sig(&encoded).expect("decodes");
+        // The decoded SigRaw round-trips.
+        assert_eq!(sig.sig_raw_with_signed_bytes.sig_raw, raw);
+        // `sigBytes` is the full encoded message.
+        assert_eq!(sig.sig_bytes(), encoded.as_slice());
+
+        // `sigSignedBytes` is exactly the payload sub-array: re-decoding
+        // it as a payload yields the original fields and consumes every
+        // byte (no trailing data, nothing missing).
+        let signed = sig.sig_signed_bytes().to_vec();
+        let mut dec = Decoder::new(&signed);
+        let (id, body, kp, exp) = decode_sig_payload(&mut dec).expect("payload decodes");
+        assert_eq!(id, raw.sig_raw_id);
+        assert_eq!(body, raw.sig_raw_body);
+        assert_eq!(kp, raw.sig_raw_kes_period);
+        assert_eq!(exp, raw.sig_raw_expires_at);
+        assert_eq!(
+            dec.remaining(),
+            0,
+            "signed bytes must be exactly the payload"
+        );
     }
 
     #[test]
