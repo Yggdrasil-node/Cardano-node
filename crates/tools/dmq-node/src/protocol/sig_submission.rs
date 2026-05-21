@@ -22,7 +22,8 @@ use std::time::Duration;
 use crate::diffusion::{PoolId, PoolValidationCtx};
 use yggdrasil_consensus::OpCert;
 use yggdrasil_crypto::{
-    Signature, SumKesSignature, SumKesVerificationKey, VerificationKey, verify_sum_kes,
+    Signature, SumKesSignature, SumKesVerificationKey, VerificationKey, hash_bytes_224,
+    verify_sum_kes,
 };
 use yggdrasil_ledger::LedgerError;
 use yggdrasil_ledger::cbor::{Decoder, Encoder, vec_with_strict_capacity};
@@ -767,6 +768,83 @@ pub fn validate_kes_signature(
             reason: format!("{err:?}"),
         }
     })
+}
+
+/// The pool identifier for a signature's cold key — the Blake2b-224
+/// hash of the Ed25519 verification key (upstream `hashKey`).
+fn pool_id_of_cold_key(cold: &SigColdKey) -> PoolId {
+    PoolId(hash_bytes_224(&cold.get().0).0)
+}
+
+/// Run the five `validate_sig` checks in upstream order against the
+/// (working copy of the) context.
+fn validate_sig_checks(
+    ctx: &mut PoolValidationCtx,
+    now: u64,
+    sig: &Sig,
+    total_kes_periods: u64,
+) -> Result<(), SigValidationError> {
+    let pool = pool_id_of_cold_key(sig.sig_cold_key());
+    let ocert = sig.sig_op_certificate();
+    let ocert_kes_period = ocert.get().kes_period;
+    let sig_kes_period = sig.sig_kes_period();
+
+    validate_kes_period(sig_kes_period, ocert_kes_period, total_kes_periods)?;
+    validate_pool_eligibility(ctx, &pool, now)?;
+    validate_ocert_counter(ctx, &pool, ocert.get().sequence_number)?;
+    validate_ocert_signature(sig.sig_cold_key(), ocert, sig_kes_period)?;
+    validate_kes_signature(
+        &ocert.get().hot_vkey,
+        sig.sig_kes_signature(),
+        sig.sig_signed_bytes(),
+        ocert_kes_period,
+        sig_kes_period,
+    )?;
+    Ok(())
+}
+
+/// Validate one DMQ signature against the pool-validation context.
+///
+/// Mirror of upstream `validateSig`'s per-signature `validate` run
+/// under `exceptions`: the five checks (KES period, pool eligibility,
+/// ocert-counter monotonicity, ocert signature, KES signature) are
+/// applied in order; the context's `ocert_map` update is committed
+/// only when every check passes. A failure rolls the context back —
+/// exactly as upstream's `exceptions` returns the unmodified state on
+/// `Left`.
+pub fn validate_sig(
+    ctx: &mut PoolValidationCtx,
+    now: u64,
+    sig: &Sig,
+    total_kes_periods: u64,
+) -> Result<(), SigValidationError> {
+    let mut working = ctx.clone();
+    let outcome = validate_sig_checks(&mut working, now, sig, total_kes_periods);
+    if outcome.is_ok() {
+        *ctx = working;
+    }
+    outcome
+}
+
+/// Validate a batch of DMQ signatures, threading the context.
+///
+/// Mirror of upstream `validateSig`'s `traverse` over the signature
+/// list: each result is `Ok(())` for an accepted signature or
+/// `Err((SigId, SigValidationError))` for a rejected one (keyed by
+/// position into `sigs`). The context carries forward the
+/// ocert-counter updates of the accepted signatures only.
+pub fn validate_sig_batch(
+    ctx: &mut PoolValidationCtx,
+    now: u64,
+    sigs: &[Sig],
+    total_kes_periods: u64,
+) -> Vec<Result<(), (SigId, SigValidationError)>> {
+    sigs.iter()
+        .map(|sig| {
+            validate_sig(ctx, now, sig, total_kes_periods)
+                .map_err(|err| (sig.sig_id().clone(), err))
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -1738,6 +1816,55 @@ mod tests {
             matches!(err, SigValidationError::InvalidKesSignature { .. }),
             "unexpected error: {err:?}"
         );
+    }
+
+    #[test]
+    fn validate_sig_fails_on_uninitialized_context() {
+        let mut ctx = PoolValidationCtx::default();
+        let err = validate_sig(&mut ctx, 1_000, &sample_sig(), 64)
+            .expect_err("an empty context cannot validate any signature");
+        assert_eq!(err, SigValidationError::NotInitialized);
+    }
+
+    #[test]
+    fn validate_sig_rolls_back_context_on_a_later_failure() {
+        use crate::diffusion::StakeSnapshot;
+        let pool = pool_id_of_cold_key(&SigColdKey(VerificationKey([0x11; 32])));
+        let mut ctx = PoolValidationCtx {
+            epoch: Some(1_000),
+            ..PoolValidationCtx::default()
+        };
+        ctx.stake_map.insert(
+            pool,
+            StakeSnapshot {
+                mark_pool: 0,
+                set_pool: 100,
+                go_pool: 0,
+            },
+        );
+        // KES-period, pool-eligibility and ocert-counter all pass; the
+        // garbage opcert signature fails the ocert-signature check.
+        let err = validate_sig(&mut ctx, 1_000, &sample_sig(), 64)
+            .expect_err("the garbage opcert signature must fail");
+        assert!(
+            matches!(err, SigValidationError::InvalidSignatureOcert { .. }),
+            "unexpected error: {err:?}"
+        );
+        // The ocert-counter update is rolled back — the map stays empty.
+        assert!(ctx.ocert_map.is_empty());
+    }
+
+    #[test]
+    fn validate_sig_batch_reports_one_result_per_signature() {
+        let mut ctx = PoolValidationCtx::default();
+        let results = validate_sig_batch(&mut ctx, 1_000, &[sample_sig(), sample_sig()], 64);
+        assert_eq!(results.len(), 2);
+        for result in &results {
+            assert!(matches!(
+                result,
+                Err((_, SigValidationError::NotInitialized))
+            ));
+        }
     }
 
     #[test]
