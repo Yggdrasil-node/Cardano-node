@@ -916,7 +916,11 @@ certificate constructor name surfaced (RegTxCert, RegPoolTxCert,
 RegDRepTxCert, …); the per-certificate payload stays raw
 pending the typed `ConwayDelegCert` / `PoolCert` /
 `ConwayGovCert` decoders. `ConwayPlutusPurposeItem::ConwayCertifying`
-now carries a typed `TxCert`.
+now carries a typed `TxCert`. R661 (2026-05-21) typed the
+staking credential in every delegation-family certificate —
+`TxCert::ConwayTxCertDeleg` now carries a typed `Credential`
+(always the first payload field of tags 0-2/7-13) plus a raw
+tail for the pool-key-hash / DRep / deposit fields.
 Phase-2.5+ remaining work: per-variant decoders for those 5 raw
 UTXO variants, `ShelleyDelegsPredFailure` (tag-1 of the LEDGER
 tree), wiring the typed `ShelleyUtxowPredFailure` decoder into

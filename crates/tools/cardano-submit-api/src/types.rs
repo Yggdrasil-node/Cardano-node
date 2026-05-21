@@ -5878,12 +5878,18 @@ impl fmt::Display for ConwayPlutusPurposeIx {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TxCert {
     /// Delegation-family certificate (`ConwayTxCertDeleg`) —
-    /// upstream `Sum` tags 0-2 and 7-13.
+    /// upstream `Sum` tags 0-2 and 7-13. Every delegation
+    /// certificate's first payload field is the staking
+    /// credential, which R661 surfaces typed.
     ConwayTxCertDeleg {
         /// The upstream `decodeRecordSum` tag.
         cert_tag: u64,
-        /// The raw per-certificate payload (after the tag).
-        raw: Vec<u8>,
+        /// The staking credential the certificate acts on.
+        credential: Credential,
+        /// The remaining per-certificate payload after the
+        /// credential (pool key hash / DRep / deposit — raw
+        /// pending their typed decoders).
+        rest: Vec<u8>,
     },
     /// Stake-pool-family certificate (`ConwayTxCertPool`) —
     /// upstream `Sum` tags 3-4.
@@ -5949,20 +5955,42 @@ impl TxCert {
                 "TxCert: tag {cert_tag} (genesis/MIR) is no longer supported"
             )));
         }
-        let payload_start = dec.position();
-        for _ in 1..len {
-            dec.skip()
-                .map_err(|err| DecoderError(format!("TxCert: payload skip: {err:?}")))?;
-        }
-        let payload_end = dec.position();
-        let raw = source
-            .get(payload_start..payload_end)
-            .ok_or_else(|| DecoderError("TxCert: payload byte range out of bounds".to_string()))?
-            .to_vec();
+        // Capture the byte range of element indices `skip_from`
+        // ..len after advancing the decoder past them.
+        let capture_rest = |dec: &mut yggdrasil_ledger::Decoder<'_>,
+                            skip_from: u64|
+         -> Result<Vec<u8>, DecoderError> {
+            let start = dec.position();
+            for _ in skip_from..len {
+                dec.skip()
+                    .map_err(|err| DecoderError(format!("TxCert: payload skip: {err:?}")))?;
+            }
+            let end = dec.position();
+            source
+                .get(start..end)
+                .map(<[u8]>::to_vec)
+                .ok_or_else(|| DecoderError("TxCert: payload byte range out of bounds".to_string()))
+        };
         match cert_tag {
-            0..=2 | 7..=13 => Ok(Self::ConwayTxCertDeleg { cert_tag, raw }),
-            3 | 4 => Ok(Self::ConwayTxCertPool { cert_tag, raw }),
-            14..=18 => Ok(Self::ConwayTxCertGov { cert_tag, raw }),
+            0..=2 | 7..=13 => {
+                // Every delegation certificate's first payload
+                // field is the staking credential.
+                let credential = Credential::from_decoder(dec)?;
+                let rest = capture_rest(dec, 2)?;
+                Ok(Self::ConwayTxCertDeleg {
+                    cert_tag,
+                    credential,
+                    rest,
+                })
+            }
+            3 | 4 => Ok(Self::ConwayTxCertPool {
+                cert_tag,
+                raw: capture_rest(dec, 1)?,
+            }),
+            14..=18 => Ok(Self::ConwayTxCertGov {
+                cert_tag,
+                raw: capture_rest(dec, 1)?,
+            }),
             other => Err(DecoderError(format!(
                 "TxCert: unknown certificate tag {other}"
             ))),
@@ -5971,22 +5999,47 @@ impl TxCert {
 }
 
 impl fmt::Display for TxCert {
-    /// Render `<Family> (<CertificateConstructor> <raw-cbor N
-    /// bytes>)` — the family mirrors upstream's `ConwayTxCert`
-    /// 3-way split; the inner certificate constructor is named
-    /// from the wire tag.
+    /// Render `<Family> (<CertificateConstructor> ...)` — the
+    /// family mirrors upstream's `ConwayTxCert` 3-way split; the
+    /// inner certificate constructor is named from the wire tag.
+    /// Delegation certificates surface the typed staking
+    /// credential; remaining per-certificate fields render as a
+    /// `<raw-cbor N bytes>` marker.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let (family, cert_tag, raw) = match self {
-            Self::ConwayTxCertDeleg { cert_tag, raw } => ("ConwayTxCertDeleg", *cert_tag, raw),
-            Self::ConwayTxCertPool { cert_tag, raw } => ("ConwayTxCertPool", *cert_tag, raw),
-            Self::ConwayTxCertGov { cert_tag, raw } => ("ConwayTxCertGov", *cert_tag, raw),
-        };
-        write!(
-            f,
-            "{family} ({} <raw-cbor {} bytes>)",
-            Self::cert_constructor(cert_tag),
-            raw.len()
-        )
+        match self {
+            Self::ConwayTxCertDeleg {
+                cert_tag,
+                credential,
+                rest,
+            } => {
+                write!(
+                    f,
+                    "ConwayTxCertDeleg ({} ({credential})",
+                    Self::cert_constructor(*cert_tag)
+                )?;
+                if rest.is_empty() {
+                    f.write_str(")")
+                } else {
+                    write!(f, " <raw-cbor {} bytes>)", rest.len())
+                }
+            }
+            Self::ConwayTxCertPool { cert_tag, raw } => {
+                write!(
+                    f,
+                    "ConwayTxCertPool ({} <raw-cbor {} bytes>)",
+                    Self::cert_constructor(*cert_tag),
+                    raw.len()
+                )
+            }
+            Self::ConwayTxCertGov { cert_tag, raw } => {
+                write!(
+                    f,
+                    "ConwayTxCertGov ({} <raw-cbor {} bytes>)",
+                    Self::cert_constructor(*cert_tag),
+                    raw.len()
+                )
+            }
+        }
     }
 }
 
@@ -9983,8 +10036,15 @@ mod tests {
             match &redeemers.entries[0].0 {
                 ConwayPlutusPurposeItem::ConwayCertifying(TxCert::ConwayTxCertDeleg {
                     cert_tag,
-                    ..
-                }) => assert_eq!(*cert_tag, 1),
+                    credential,
+                    rest,
+                }) => {
+                    assert_eq!(*cert_tag, 1);
+                    assert!(matches!(credential, Credential::KeyHashObj(_)));
+                    // Tag 1 (UnRegTxCert) is `[tag, credential]`
+                    // — no trailing fields.
+                    assert!(rest.is_empty());
+                }
                 other => panic!("expected ConwayCertifying deleg, got {other:?}"),
             }
         } else {
@@ -9992,10 +10052,56 @@ mod tests {
         }
         assert!(
             f.to_string().contains(
-                "ConwayCertifying (AsItem {unAsItem = ConwayTxCertDeleg (UnRegTxCert <raw-cbor"
+                "ConwayCertifying (AsItem {unAsItem = ConwayTxCertDeleg (UnRegTxCert (KeyHashObj (KeyHash {unKeyHash = \"3a3a"
             ),
             "got: {f}"
         );
+    }
+
+    #[test]
+    fn conway_utxow_pred_failure_missing_redeemers_certifying_reg_deposit() {
+        // ConwayCertifying carrying a TxCert Sum tag 7
+        // (RegDepositTxCert) — `[7, credential, deposit]`, so the
+        // typed credential is surfaced and `rest` holds the
+        // deposit Coin.
+        let mut cbor = vec![0x82_u8, 0x0A, 0x81, 0x82];
+        cbor.push(0x82); // PlutusPurpose AsItem [2, TxCert]
+        cbor.push(0x02);
+        cbor.push(0x83); // TxCert Sum [tag=7, credential, deposit]
+        cbor.push(0x07);
+        cbor.push(0x82); // credential [1, bytes(28)] (ScriptHashObj)
+        cbor.push(0x01);
+        cbor.push(0x58);
+        cbor.push(28);
+        cbor.extend_from_slice(&[0x6C_u8; 28]);
+        cbor.extend_from_slice(&[0x19, 0x27, 0x10]); // deposit 10000
+        cbor.push(0x58); // pair ScriptHash bytes(28)
+        cbor.push(28);
+        cbor.extend_from_slice(&[0x7D_u8; 28]);
+        let f = ConwayUtxowPredFailure::from_cbor(&cbor).expect("MissingRedeemers");
+        if let ConwayUtxowPredFailure::MissingRedeemers(redeemers) = &f {
+            match &redeemers.entries[0].0 {
+                ConwayPlutusPurposeItem::ConwayCertifying(TxCert::ConwayTxCertDeleg {
+                    cert_tag,
+                    credential,
+                    rest,
+                }) => {
+                    assert_eq!(*cert_tag, 7);
+                    assert!(matches!(credential, Credential::ScriptHashObj(_)));
+                    // Trailing deposit Coin (3 CBOR bytes).
+                    assert!(!rest.is_empty());
+                }
+                other => panic!("expected ConwayCertifying deleg, got {other:?}"),
+            }
+        } else {
+            panic!("expected MissingRedeemers, got {f:?}");
+        }
+        assert!(
+            f.to_string()
+                .contains("ConwayTxCertDeleg (RegDepositTxCert (ScriptHashObj (ScriptHash \"6c6c"),
+            "got: {f}"
+        );
+        assert!(f.to_string().contains("<raw-cbor 3 bytes>"), "got: {f}");
     }
 
     #[test]
