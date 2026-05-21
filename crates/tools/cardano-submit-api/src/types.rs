@@ -3014,6 +3014,49 @@ impl fmt::Display for ProtVer {
     }
 }
 
+/// `StrictMaybe (GovPurposeId p)` renderer. `GovPurposeId` is
+/// upstream `newtype GovPurposeId (p :: GovActionPurpose) =
+/// GovPurposeId {unGovPurposeId :: GovActionId}` — a thin
+/// newtype over `GovActionId`. `StrictMaybe` is CBOR-encoded as
+/// a list (0-element = `SNothing`, 1-element = `SJust`). Display
+/// matches upstream stock-derived Show: `SNothing` / `SJust
+/// (GovPurposeId {unGovPurposeId = <GovActionId>})`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StrictMaybeGovPurposeId(pub Option<GovActionId>);
+
+impl StrictMaybeGovPurposeId {
+    /// Decode from an in-progress decoder (CBOR list: 0-element =
+    /// SNothing, 1-element = SJust GovActionId).
+    fn from_decoder(dec: &mut yggdrasil_ledger::Decoder<'_>) -> Result<Self, DecoderError> {
+        let len = dec.array().map_err(|err| {
+            DecoderError(format!(
+                "StrictMaybeGovPurposeId: expected CBOR list: {err:?}"
+            ))
+        })?;
+        match len {
+            0 => Ok(Self(None)),
+            1 => {
+                let gaid = GovActionId::from_decoder(dec)?;
+                Ok(Self(Some(gaid)))
+            }
+            other => Err(DecoderError(format!(
+                "StrictMaybeGovPurposeId: expected 0- or 1-element list, got len {other}"
+            ))),
+        }
+    }
+}
+
+impl fmt::Display for StrictMaybeGovPurposeId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            None => f.write_str("SNothing"),
+            Some(gaid) => {
+                write!(f, "SJust (GovPurposeId {{unGovPurposeId = {gaid}}})")
+            }
+        }
+    }
+}
+
 /// PPUP voting period mirroring upstream
 /// `data VotingPeriod = VoteForThisEpoch | VoteForNextEpoch`.
 /// CBOR encoding: Word8 (0=VoteForThisEpoch, 1=VoteForNextEpoch).
@@ -7431,8 +7474,14 @@ pub enum ConwayGovPredFailure {
     VotingOnExpiredGovAction(NonEmptyVoterGovActionId),
     /// Tag 10: hard-fork proposal protocol-version sequence —
     /// `StrictMaybe (GovPurposeId 'HardForkPurpose) + Mismatch
-    /// RelGT ProtVer` via ToGroup. Raw.
-    ProposalCantFollow(Vec<u8>),
+    /// RelGT ProtVer` (R651 typed; the Mismatch is ToGroup
+    /// flattened, supplied-then-expected).
+    ProposalCantFollow {
+        /// The previous hard-fork gov-action id, if any.
+        prev: StrictMaybeGovPurposeId,
+        /// Supplied vs expected protocol-version mismatch.
+        mismatch: Mismatch<ProtVer>,
+    },
     /// Tag 11: guardrails-script-hash mismatch —
     /// `StrictMaybe ScriptHash + StrictMaybe ScriptHash` (R645
     /// typed).
@@ -7480,7 +7529,7 @@ impl ConwayGovPredFailure {
             Self::ExpirationEpochTooSmall(_) => 7,
             Self::InvalidPrevGovActionId(_) => 8,
             Self::VotingOnExpiredGovAction(_) => 9,
-            Self::ProposalCantFollow(_) => 10,
+            Self::ProposalCantFollow { .. } => 10,
             Self::InvalidGuardrailsScriptHash { .. } => 11,
             Self::DisallowedProposalDuringBootstrap(_) => 12,
             Self::DisallowedVotesDuringBootstrap(_) => 13,
@@ -7507,7 +7556,7 @@ impl ConwayGovPredFailure {
             Self::ExpirationEpochTooSmall(_) => "ExpirationEpochTooSmall",
             Self::InvalidPrevGovActionId(_) => "InvalidPrevGovActionId",
             Self::VotingOnExpiredGovAction(_) => "VotingOnExpiredGovAction",
-            Self::ProposalCantFollow(_) => "ProposalCantFollow",
+            Self::ProposalCantFollow { .. } => "ProposalCantFollow",
             Self::InvalidGuardrailsScriptHash { .. } => "InvalidGuardrailsScriptHash",
             Self::DisallowedProposalDuringBootstrap(_) => "DisallowedProposalDuringBootstrap",
             Self::DisallowedVotesDuringBootstrap(_) => "DisallowedVotesDuringBootstrap",
@@ -7687,10 +7736,26 @@ impl ConwayGovPredFailure {
                     NonEmptyVoterGovActionId::from_cbor(payload_bytes)?,
                 ))
             }
-            10 => Ok(Self::ProposalCantFollow(capture_raw(
-                "ProposalCantFollow",
-                4,
-            )?)),
+            10 => {
+                if len != 4 {
+                    return Err(DecoderError(format!(
+                        "ProposalCantFollow: expected 4-element envelope, got len {len}"
+                    )));
+                }
+                let prev = StrictMaybeGovPurposeId::from_decoder(&mut dec)?;
+                // ToGroup flattens the Mismatch: supplied ProtVer
+                // then expected ProtVer (each a 2-element array).
+                let supplied = ProtVer::from_decoder(&mut dec)?;
+                let expected = ProtVer::from_decoder(&mut dec)?;
+                Ok(Self::ProposalCantFollow {
+                    prev,
+                    mismatch: Mismatch {
+                        relation: MismatchRelation::RelGT,
+                        supplied,
+                        expected,
+                    },
+                })
+            }
             11 => {
                 if len != 3 {
                     return Err(DecoderError(format!(
@@ -7809,10 +7874,12 @@ impl fmt::Display for ConwayGovPredFailure {
             }
             Self::MalformedProposal(b)
             | Self::InvalidPrevGovActionId(b)
-            | Self::ProposalCantFollow(b)
             | Self::DisallowedProposalDuringBootstrap(b)
             | Self::ZeroTreasuryWithdrawals(b) => {
                 write!(f, "{} <raw-cbor {} bytes>", self.constructor(), b.len())
+            }
+            Self::ProposalCantFollow { prev, mismatch } => {
+                write!(f, "ProposalCantFollow ({prev}) ({mismatch})")
             }
             Self::ProposalProcedureNetworkIdMismatch { account, network } => {
                 write!(
@@ -9341,6 +9408,32 @@ mod tests {
             "got: {s}"
         );
         assert!(s.ends_with(") Testnet"), "got: {s}");
+    }
+
+    #[test]
+    fn conway_gov_pred_failure_proposal_cant_follow_tag10() {
+        // outer [0x84, 0x0A, StrictMaybe GovPurposeId,
+        // supplied ProtVer, expected ProtVer].
+        // prev = SNothing; supplied = ProtVer [9, 0];
+        // expected = ProtVer [10, 0].
+        let cbor = [
+            0x84_u8, 0x0A, 0x80, // SNothing
+            0x82, 0x09, 0x00, // supplied ProtVer [9, 0]
+            0x82, 0x0A, 0x00, // expected ProtVer [10, 0]
+        ];
+        let f = ConwayGovPredFailure::from_cbor(&cbor).expect("ProposalCantFollow");
+        if let ConwayGovPredFailure::ProposalCantFollow { prev, mismatch } = &f {
+            assert_eq!(prev.0, None);
+            assert_eq!(mismatch.relation, MismatchRelation::RelGT);
+            assert_eq!(mismatch.supplied.major, 9);
+            assert_eq!(mismatch.expected.major, 10);
+        } else {
+            panic!("expected ProposalCantFollow, got {f:?}");
+        }
+        assert_eq!(
+            f.to_string(),
+            "ProposalCantFollow (SNothing) (Mismatch (RelGT) {supplied: ProtVer {pvMajor = 9, pvMinor = 0}, expected: ProtVer {pvMajor = 10, pvMinor = 0}})"
+        );
     }
 
     #[test]
