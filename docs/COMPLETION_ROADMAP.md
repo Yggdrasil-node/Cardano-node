@@ -769,11 +769,16 @@ R634 (2026-05-21) typed Conway UTXO tag 2
 (`OutsideValidityIntervalUTxO`) — added the `StrictMaybeSlot`
 and `ValidityInterval` types (the latter a 2-field record of
 CBOR-list-encoded StrictMaybe SlotNo) and wired the variant to
-`{ interval: ValidityInterval, current_slot: u64 }`. **16 of 23
-Conway UTXO variants now carry typed payloads**; the 7
-remaining (6/13/14/15/21/22, plus 11's set-decode is done — so
-6/13/14/15/21/22) keep raw inner CBOR pending Value / ExUnits /
-NonEmptyMap / triple / pair decoders. R631
+`{ interval: ValidityInterval, current_slot: u64 }`. R635
+(2026-05-21) typed Conway UTXO tag 22
+(`BabbageNonDisjointRefInputs`) — added the `NonEmptyTxIn`
+(Vec-based, wire-order-preserving NonEmpty list) carrier and
+wired the variant. **18 of 23 Conway UTXO variants now carry
+typed payloads**; the 5 remaining (6 ValueNotConservedUTxO, 13
+ScriptsNotPaidUTxO, 14 ExUnitsTooBigUTxO, 15
+CollateralContainsNonADA, 21 BabbageOutputTooSmallUTxO) keep
+raw inner CBOR pending Value / NonEmptyMap / ExUnits /
+TxOut-Coin-pair decoders. R631
 (2026-05-21) added the `ConwayUtxosPredFailure` 2-variant
 scaffold (the UTXOS Plutus-script-evaluation sub-rule) plus the
 `FailureDescription` and `TagMismatchDescription` helper types,

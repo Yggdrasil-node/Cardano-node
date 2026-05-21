@@ -2068,6 +2068,59 @@ impl fmt::Display for NonEmptySetTxIn {
     }
 }
 
+/// Non-empty list of transaction inputs mirroring upstream
+/// `NonEmpty TxIn` (`Data.List.NonEmpty`). Unlike
+/// [`NonEmptySetTxIn`], this preserves wire order and permits
+/// duplicates — the CBOR wire format is a plain CBOR array (no
+/// tag-258 prefix). Empty arrays are rejected at decode time.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NonEmptyTxIn {
+    /// Decoded entries in wire order. Guaranteed non-empty by
+    /// `from_cbor`.
+    pub entries: Vec<TxIn>,
+}
+
+impl NonEmptyTxIn {
+    /// Decode a `NonEmpty TxIn` from canonical CBOR bytes.
+    pub fn from_cbor(bytes: &[u8]) -> Result<Self, DecoderError> {
+        use yggdrasil_ledger::Decoder;
+        let mut dec = Decoder::new(bytes);
+        let count = dec
+            .array()
+            .map_err(|err| DecoderError(format!("NonEmptyTxIn: expected CBOR array: {err:?}")))?;
+        if count == 0 {
+            return Err(DecoderError(
+                "NonEmptyTxIn: NonEmpty requires at least one entry".to_string(),
+            ));
+        }
+        let mut entries = Vec::with_capacity(count as usize);
+        for _ in 0..count {
+            entries.push(TxIn::from_decoder(&mut dec)?);
+        }
+        Ok(Self { entries })
+    }
+}
+
+impl fmt::Display for NonEmptyTxIn {
+    /// Render upstream `Show (NonEmpty TxIn)`: `<head> :| [<tail>...]`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let (head, tail) = self
+            .entries
+            .split_first()
+            .expect("NonEmptyTxIn enforces ≥1 entry at decode time");
+        write!(f, "{head} :| [")?;
+        let mut first = true;
+        for t in tail {
+            if !first {
+                f.write_str(",")?;
+            }
+            first = false;
+            write!(f, "{t}")?;
+        }
+        f.write_str("]")
+    }
+}
+
 /// Cardano network identifier mirroring upstream `data Network =
 /// Testnet | Mainnet` from `Cardano.Ledger.BaseTypes`. CBOR encoding
 /// is a single Word8: 0=Testnet, 1=Mainnet. Display matches upstream
@@ -5345,9 +5398,8 @@ pub enum ConwayUtxoPredFailure {
     /// `NonEmpty (TxOut era, Coin)`. Raw pending pair decoder.
     BabbageOutputTooSmallUTxO(Vec<u8>),
     /// Tag 22: TxIns appearing in both inputs and reference
-    /// inputs — `NonEmpty TxIn`. Raw pending NonEmpty (non-Set)
-    /// TxIn decoder.
-    BabbageNonDisjointRefInputs(Vec<u8>),
+    /// inputs — `NonEmpty TxIn` (R635 typed).
+    BabbageNonDisjointRefInputs(NonEmptyTxIn),
 }
 
 impl ConwayUtxoPredFailure {
@@ -5676,10 +5728,16 @@ impl ConwayUtxoPredFailure {
                 "BabbageOutputTooSmallUTxO",
                 2,
             )?)),
-            22 => Ok(Self::BabbageNonDisjointRefInputs(capture_raw(
-                "BabbageNonDisjointRefInputs",
-                2,
-            )?)),
+            22 => {
+                if len != 2 {
+                    return Err(DecoderError(format!(
+                        "BabbageNonDisjointRefInputs: expected 2-element envelope, got len {len}"
+                    )));
+                }
+                Ok(Self::BabbageNonDisjointRefInputs(NonEmptyTxIn::from_cbor(
+                    payload_bytes,
+                )?))
+            }
             other => Err(DecoderError(format!(
                 "ConwayUtxoPredFailure: unknown variant tag {other}"
             ))),
@@ -5700,9 +5758,11 @@ impl fmt::Display for ConwayUtxoPredFailure {
             | Self::ScriptsNotPaidUTxO(b)
             | Self::ExUnitsTooBigUTxO(b)
             | Self::CollateralContainsNonADA(b)
-            | Self::BabbageOutputTooSmallUTxO(b)
-            | Self::BabbageNonDisjointRefInputs(b) => {
+            | Self::BabbageOutputTooSmallUTxO(b) => {
                 write!(f, "{} <raw-cbor {} bytes>", self.constructor(), b.len())
+            }
+            Self::BabbageNonDisjointRefInputs(ins) => {
+                write!(f, "BabbageNonDisjointRefInputs ({ins})")
             }
             Self::OutsideValidityIntervalUTxO {
                 interval,
@@ -7981,6 +8041,41 @@ mod tests {
                 "ValidityInterval {invalidBefore = SNothing, invalidHereafter = SNothing}"
             ),
             "got: {f}"
+        );
+    }
+
+    #[test]
+    fn conway_utxo_pred_failure_babbage_non_disjoint_ref_inputs_tag22() {
+        // outer [0x82, 0x16, NonEmpty [TxIn]]. NonEmpty is a bare
+        // array(1) of TxIn [txid32, ix].
+        let mut cbor = vec![0x82_u8, 0x16, 0x81, 0x82];
+        cbor.push(0x58);
+        cbor.push(32);
+        cbor.extend_from_slice(&[0x44_u8; 32]);
+        cbor.push(0x07); // ix = 7
+        let f = ConwayUtxoPredFailure::from_cbor(&cbor).expect("BabbageNonDisjointRefInputs");
+        if let ConwayUtxoPredFailure::BabbageNonDisjointRefInputs(ins) = &f {
+            assert_eq!(ins.entries.len(), 1);
+            assert_eq!(ins.entries[0].tx_ix.0, 7);
+        } else {
+            panic!("expected BabbageNonDisjointRefInputs, got {f:?}");
+        }
+        assert!(
+            f.to_string()
+                .starts_with("BabbageNonDisjointRefInputs (TxIn (TxId"),
+            "got: {f}"
+        );
+        assert!(f.to_string().ends_with(":| [])"), "got: {f}");
+    }
+
+    #[test]
+    fn conway_utxo_pred_failure_babbage_non_disjoint_ref_inputs_rejects_empty() {
+        let cbor = [0x82_u8, 0x16, 0x80];
+        let err = ConwayUtxoPredFailure::from_cbor(&cbor).expect_err("empty NonEmpty must reject");
+        assert!(
+            err.to_string()
+                .contains("NonEmpty requires at least one entry"),
+            "got: {err}"
         );
     }
 
