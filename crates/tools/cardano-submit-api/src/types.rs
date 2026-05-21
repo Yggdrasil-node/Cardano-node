@@ -612,6 +612,87 @@ impl fmt::Display for DeltaCoinShow {
     }
 }
 
+/// `StrictMaybe SlotNo` renderer. Upstream `StrictMaybe` is
+/// CBOR-encoded as a CBOR list: empty for `SNothing`, 1-element
+/// for `SJust`. Display matches upstream stock-derived Show:
+/// `SNothing` / `SJust (SlotNo {unSlotNo = <n>})`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub struct StrictMaybeSlot(pub Option<u64>);
+
+impl StrictMaybeSlot {
+    /// Decode a `StrictMaybe SlotNo` from an in-progress decoder
+    /// (CBOR list: 0-element = SNothing, 1-element = SJust).
+    fn from_decoder(dec: &mut yggdrasil_ledger::Decoder<'_>) -> Result<Self, DecoderError> {
+        let len = dec
+            .array()
+            .map_err(|err| DecoderError(format!("StrictMaybeSlot: expected CBOR list: {err:?}")))?;
+        match len {
+            0 => Ok(Self(None)),
+            1 => {
+                let slot = dec.unsigned().map_err(|err| {
+                    DecoderError(format!("StrictMaybeSlot: expected SlotNo: {err:?}"))
+                })?;
+                Ok(Self(Some(slot)))
+            }
+            other => Err(DecoderError(format!(
+                "StrictMaybeSlot: expected 0- or 1-element list, got len {other}"
+            ))),
+        }
+    }
+}
+
+impl fmt::Display for StrictMaybeSlot {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            None => f.write_str("SNothing"),
+            Some(slot) => write!(f, "SJust (SlotNo {{unSlotNo = {slot}}})"),
+        }
+    }
+}
+
+/// `ValidityInterval` mirror from `Cardano.Ledger.Allegra.Scripts`
+/// — a half-open transaction validity interval. CBOR wire format
+/// is a 2-element record array `[invalidBefore, invalidHereafter]`
+/// where each field is a `StrictMaybe SlotNo`. Display matches
+/// upstream stock-derived record Show.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ValidityInterval {
+    /// Lower bound (inclusive); `SNothing` = negative infinity.
+    pub invalid_before: StrictMaybeSlot,
+    /// Upper bound (exclusive); `SNothing` = positive infinity.
+    pub invalid_hereafter: StrictMaybeSlot,
+}
+
+impl ValidityInterval {
+    /// Decode a `ValidityInterval` from an in-progress decoder.
+    fn from_decoder(dec: &mut yggdrasil_ledger::Decoder<'_>) -> Result<Self, DecoderError> {
+        let len = dec
+            .array()
+            .map_err(|err| DecoderError(format!("ValidityInterval: expected 2-array: {err:?}")))?;
+        if len != 2 {
+            return Err(DecoderError(format!(
+                "ValidityInterval: expected 2-element array, got len {len}"
+            )));
+        }
+        let invalid_before = StrictMaybeSlot::from_decoder(dec)?;
+        let invalid_hereafter = StrictMaybeSlot::from_decoder(dec)?;
+        Ok(Self {
+            invalid_before,
+            invalid_hereafter,
+        })
+    }
+}
+
+impl fmt::Display for ValidityInterval {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "ValidityInterval {{invalidBefore = {}, invalidHereafter = {}}}",
+            self.invalid_before, self.invalid_hereafter
+        )
+    }
+}
+
 /// Typed payload for
 /// `ShelleyLedgerPredFailure::ShelleyIncompleteWithdrawals`.
 ///
@@ -5178,8 +5259,13 @@ pub enum ConwayUtxoPredFailure {
     /// typed).
     BadInputsUTxO(NonEmptySetTxIn),
     /// Tag 2: tx validity interval excludes the current slot —
-    /// `ValidityInterval + SlotNo`. Raw pending decoder.
-    OutsideValidityIntervalUTxO(Vec<u8>),
+    /// `ValidityInterval + SlotNo` (R634 typed).
+    OutsideValidityIntervalUTxO {
+        /// The transaction's declared validity interval.
+        interval: ValidityInterval,
+        /// The current slot at validation time.
+        current_slot: u64,
+    },
     /// Tag 3: tx size exceeds the maximum — `Mismatch RelLTEQ
     /// Word32` via ToGroup flattened (R630 typed).
     MaxTxSizeUTxO(Mismatch<u64>),
@@ -5270,7 +5356,7 @@ impl ConwayUtxoPredFailure {
         match self {
             Self::UtxosFailure(_) => 0,
             Self::BadInputsUTxO(_) => 1,
-            Self::OutsideValidityIntervalUTxO(_) => 2,
+            Self::OutsideValidityIntervalUTxO { .. } => 2,
             Self::MaxTxSizeUTxO(_) => 3,
             Self::InputSetEmptyUTxO => 4,
             Self::FeeTooSmallUTxO(_) => 5,
@@ -5299,7 +5385,7 @@ impl ConwayUtxoPredFailure {
         match self {
             Self::UtxosFailure(_) => "UtxosFailure",
             Self::BadInputsUTxO(_) => "BadInputsUTxO",
-            Self::OutsideValidityIntervalUTxO(_) => "OutsideValidityIntervalUTxO",
+            Self::OutsideValidityIntervalUTxO { .. } => "OutsideValidityIntervalUTxO",
             Self::MaxTxSizeUTxO(_) => "MaxTxSizeUTxO",
             Self::InputSetEmptyUTxO => "InputSetEmptyUTxO",
             Self::FeeTooSmallUTxO(_) => "FeeTooSmallUTxO",
@@ -5374,10 +5460,23 @@ impl ConwayUtxoPredFailure {
                     payload_bytes,
                 )?))
             }
-            2 => Ok(Self::OutsideValidityIntervalUTxO(capture_raw(
-                "OutsideValidityIntervalUTxO",
-                3,
-            )?)),
+            2 => {
+                if len != 3 {
+                    return Err(DecoderError(format!(
+                        "OutsideValidityIntervalUTxO: expected 3-element envelope, got len {len}"
+                    )));
+                }
+                let interval = ValidityInterval::from_decoder(&mut dec)?;
+                let current_slot = dec.unsigned().map_err(|err| {
+                    DecoderError(format!(
+                        "OutsideValidityIntervalUTxO: current slot: {err:?}"
+                    ))
+                })?;
+                Ok(Self::OutsideValidityIntervalUTxO {
+                    interval,
+                    current_slot,
+                })
+            }
             3 => {
                 if len != 3 {
                     return Err(DecoderError(format!(
@@ -5596,8 +5695,7 @@ impl fmt::Display for ConwayUtxoPredFailure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::UtxosFailure(utxos) => write!(f, "UtxosFailure ({utxos})"),
-            Self::OutsideValidityIntervalUTxO(b)
-            | Self::ValueNotConservedUTxO(b)
+            Self::ValueNotConservedUTxO(b)
             | Self::OutputTooBigUTxO(b)
             | Self::ScriptsNotPaidUTxO(b)
             | Self::ExUnitsTooBigUTxO(b)
@@ -5605,6 +5703,15 @@ impl fmt::Display for ConwayUtxoPredFailure {
             | Self::BabbageOutputTooSmallUTxO(b)
             | Self::BabbageNonDisjointRefInputs(b) => {
                 write!(f, "{} <raw-cbor {} bytes>", self.constructor(), b.len())
+            }
+            Self::OutsideValidityIntervalUTxO {
+                interval,
+                current_slot,
+            } => {
+                write!(
+                    f,
+                    "OutsideValidityIntervalUTxO ({interval}) (SlotNo {{unSlotNo = {current_slot}}})"
+                )
             }
             Self::InsufficientCollateral { balance, required } => {
                 write!(
@@ -7827,6 +7934,53 @@ mod tests {
         assert_eq!(
             f.to_string(),
             "IncorrectTotalCollateralField (DeltaCoin 750) (Coin 800)"
+        );
+    }
+
+    #[test]
+    fn conway_utxo_pred_failure_outside_validity_interval_tag2() {
+        // outer [0x83, 0x02, ValidityInterval, current_slot=5000].
+        // ValidityInterval [invalidBefore=SJust 100,
+        // invalidHereafter=SJust 200]: [0x82, [0x81, 100],
+        // [0x81, 200]].
+        let cbor = [
+            0x83_u8, 0x02, 0x82, 0x81, 0x18, 100, 0x81, 0x18, 200, 0x19, 0x13, 0x88,
+        ];
+        let f = ConwayUtxoPredFailure::from_cbor(&cbor).expect("OutsideValidityIntervalUTxO");
+        if let ConwayUtxoPredFailure::OutsideValidityIntervalUTxO {
+            interval,
+            current_slot,
+        } = &f
+        {
+            assert_eq!(interval.invalid_before.0, Some(100));
+            assert_eq!(interval.invalid_hereafter.0, Some(200));
+            assert_eq!(*current_slot, 5000);
+        } else {
+            panic!("expected OutsideValidityIntervalUTxO, got {f:?}");
+        }
+        assert_eq!(
+            f.to_string(),
+            "OutsideValidityIntervalUTxO (ValidityInterval {invalidBefore = SJust (SlotNo {unSlotNo = 100}), invalidHereafter = SJust (SlotNo {unSlotNo = 200})}) (SlotNo {unSlotNo = 5000})"
+        );
+    }
+
+    #[test]
+    fn conway_utxo_pred_failure_outside_validity_interval_open_bounds_tag2() {
+        // ValidityInterval with SNothing on both bounds:
+        // [0x82, [], []].
+        let cbor = [0x83_u8, 0x02, 0x82, 0x80, 0x80, 0x00];
+        let f = ConwayUtxoPredFailure::from_cbor(&cbor).expect("OutsideValidityIntervalUTxO");
+        if let ConwayUtxoPredFailure::OutsideValidityIntervalUTxO { interval, .. } = &f {
+            assert_eq!(interval.invalid_before.0, None);
+            assert_eq!(interval.invalid_hereafter.0, None);
+        } else {
+            panic!("expected OutsideValidityIntervalUTxO, got {f:?}");
+        }
+        assert!(
+            f.to_string().contains(
+                "ValidityInterval {invalidBefore = SNothing, invalidHereafter = SNothing}"
+            ),
+            "got: {f}"
         );
     }
 
