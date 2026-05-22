@@ -103,7 +103,7 @@ pub struct TxsToMempool {
 /// sum) shape: a peer downloads `tx`s and then requests more `txid`s
 /// in the same decision, which keeps the peer non-active for longer
 /// and spares the `makeDecision` computation.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct TxDecision {
     /// Transaction ids to acknowledge.
     pub txd_tx_ids_to_acknowledge: NumTxIdsToAck,
@@ -116,6 +116,15 @@ pub struct TxDecision {
     pub txd_txs_to_request: BTreeMap<SigId, u32>,
     /// The transactions to submit to the mempool.
     pub txd_txs_to_mempool: TxsToMempool,
+}
+
+impl TxDecision {
+    /// The empty decision — acknowledge nothing, request nothing.
+    ///
+    /// Mirror of upstream `emptyTxDecision`.
+    pub fn empty() -> TxDecision {
+        TxDecision::default()
+    }
 }
 
 /// The inbound tx-submission governor's per-peer state.
@@ -208,6 +217,45 @@ impl<PeerAddr: Ord> Default for SharedTxState<PeerAddr> {
     }
 }
 
+/// A set of reference-count decrements to apply to a
+/// [`SharedTxState`]'s `reference_counts`.
+///
+/// Mirror of upstream `newtype RefCountDiff txid`.
+#[derive(Clone, Debug, Eq, PartialEq, Default)]
+pub struct RefCountDiff {
+    /// The per-txid decrement amounts.
+    pub tx_ids_to_ack: BTreeMap<SigId, i64>,
+}
+
+/// Apply a [`RefCountDiff`] to a reference-count map.
+///
+/// Mirror of upstream `updateRefCounts`: each entry of
+/// `reference_counts` is decremented by the matching `diff` amount;
+/// an entry whose count reaches zero is removed; entries absent from
+/// `diff` are carried through unchanged; entries present only in
+/// `diff` are ignored.
+pub fn update_ref_counts(
+    reference_counts: &BTreeMap<SigId, i64>,
+    diff: &RefCountDiff,
+) -> BTreeMap<SigId, i64> {
+    let mut result = BTreeMap::new();
+    for (txid, &x) in reference_counts {
+        match diff.tx_ids_to_ack.get(txid) {
+            Some(&y) => {
+                debug_assert!(x >= y, "updateRefCounts: reference-count underflow");
+                if x > y {
+                    result.insert(txid.clone(), x - y);
+                }
+                // x == y → the count reached zero, drop the entry.
+            }
+            None => {
+                result.insert(txid.clone(), x);
+            }
+        }
+    }
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -291,6 +339,37 @@ mod tests {
         assert_eq!(p.unacknowledged_tx_ids.len(), 1);
         assert_eq!(p.available_tx_ids.get(&id), Some(&1500));
         assert!(p.requested_txs_inflight.contains(&id));
+    }
+
+    #[test]
+    fn empty_tx_decision_is_all_zero() {
+        let d = TxDecision::empty();
+        assert_eq!(d.txd_tx_ids_to_acknowledge, NumTxIdsToAck(0));
+        assert_eq!(d.txd_tx_ids_to_request, NumTxIdsToReq(0));
+        assert!(!d.txd_pipeline_tx_ids);
+        assert!(d.txd_txs_to_request.is_empty());
+        assert!(d.txd_txs_to_mempool.list_of_txs_to_mempool.is_empty());
+        assert_eq!(d, TxDecision::default());
+    }
+
+    #[test]
+    fn update_ref_counts_decrements_carries_and_drops() {
+        use crate::protocol::sig_submission::{SigHash, SigId};
+        let a = SigId(SigHash(vec![0x0a]));
+        let b = SigId(SigHash(vec![0x0b]));
+        let c = SigId(SigHash(vec![0x0c]));
+        let mut counts = BTreeMap::new();
+        counts.insert(a.clone(), 3);
+        counts.insert(b.clone(), 2);
+        counts.insert(c.clone(), 5);
+        let mut diff = RefCountDiff::default();
+        diff.tx_ids_to_ack.insert(a.clone(), 1); // 3 - 1 = 2 (kept)
+        diff.tx_ids_to_ack.insert(b.clone(), 2); // 2 - 2 = 0 (dropped)
+        // c is absent from diff -> carried through unchanged.
+        let updated = update_ref_counts(&counts, &diff);
+        assert_eq!(updated.get(&a), Some(&2));
+        assert_eq!(updated.get(&b), None);
+        assert_eq!(updated.get(&c), Some(&5));
     }
 
     #[test]
