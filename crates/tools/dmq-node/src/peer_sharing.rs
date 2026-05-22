@@ -11,10 +11,10 @@
 //!
 //! Slices of the Option A `run()` integration arc (see the
 //! `docs/COMPLETION_ROADMAP.md` A4 dmq-node entry): the peer-sharing
-//! policy constants, the `PublicPeerSelectionState`, and the
-//! `PeerSharingAPI` record.
+//! policy constants, `PublicPeerSelectionState`, the `PeerSharingAPI`
+//! record, and the `PeerSharingController` / `PeerSharingRegistry`.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -107,6 +107,71 @@ pub fn new_peer_sharing_api<PeerAddr: Ord>(
     }
 }
 
+/// A pending peer-sharing request — how many peers are wanted plus
+/// the slot the shared peers will be delivered into.
+///
+/// Models the upstream `(PeerSharingAmount, MVar m [peer])` payload of
+/// a `PeerSharingController`'s request mailbox.
+#[derive(Clone, Debug)]
+pub struct PeerSharingRequest<Peer> {
+    /// How many peers are being requested.
+    pub amount: PeerSharingAmount,
+    /// The result slot — filled with the shared peers once available.
+    pub result: Arc<Mutex<Option<Vec<Peer>>>>,
+}
+
+/// A depth-1 request mailbox for one peer's peer-sharing exchange.
+///
+/// Mirror of upstream `newtype PeerSharingController peer m`. The
+/// upstream `StrictTMVar m (PeerSharingAmount, MVar m [peer])` mailbox
+/// is modelled as a `Mutex`-guarded optional slot — `None` empty,
+/// `Some` one pending request.
+#[derive(Clone, Debug)]
+pub struct PeerSharingController<Peer> {
+    /// The pending peer-sharing request, if any (`requestQueue`).
+    pub request_queue: Arc<Mutex<Option<PeerSharingRequest<Peer>>>>,
+}
+
+impl<Peer> Default for PeerSharingController<Peer> {
+    fn default() -> Self {
+        PeerSharingController {
+            request_queue: Arc::new(Mutex::new(None)),
+        }
+    }
+}
+
+impl<Peer> PeerSharingController<Peer> {
+    /// A fresh controller with an empty request mailbox.
+    pub fn new() -> PeerSharingController<Peer> {
+        PeerSharingController::default()
+    }
+}
+
+/// A registry of per-peer peer-sharing controllers.
+///
+/// Mirror of upstream `newtype PeerSharingRegistry peer m`.
+#[derive(Clone, Debug)]
+pub struct PeerSharingRegistry<Peer: Ord> {
+    /// One [`PeerSharingController`] per registered peer
+    /// (`getPeerSharingRegistry`).
+    pub get_peer_sharing_registry: Arc<Mutex<BTreeMap<Peer, PeerSharingController<Peer>>>>,
+}
+
+impl<Peer: Ord> Default for PeerSharingRegistry<Peer> {
+    fn default() -> Self {
+        PeerSharingRegistry {
+            get_peer_sharing_registry: Arc::new(Mutex::new(BTreeMap::new())),
+        }
+    }
+}
+
+/// Construct an empty [`PeerSharingRegistry`].
+///
+/// Mirror of upstream `newPeerSharingRegistry`.
+pub fn new_peer_sharing_registry<Peer: Ord>() -> PeerSharingRegistry<Peer> {
+    PeerSharingRegistry::default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -159,5 +224,53 @@ mod tests {
                 .available_to_share
                 .contains("peer-x")
         );
+    }
+
+    #[test]
+    fn peer_sharing_registry_registers_controllers() {
+        let registry = new_peer_sharing_registry::<String>();
+        assert!(
+            registry
+                .get_peer_sharing_registry
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .is_empty()
+        );
+        registry
+            .get_peer_sharing_registry
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert("peer-a".to_string(), PeerSharingController::new());
+        let guard = registry
+            .get_peer_sharing_registry
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let controller = guard.get("peer-a").expect("registered");
+        // A fresh controller has an empty request mailbox.
+        assert!(
+            controller
+                .request_queue
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn peer_sharing_controller_holds_a_request() {
+        let controller: PeerSharingController<String> = PeerSharingController::new();
+        let result: Arc<Mutex<Option<Vec<String>>>> = Arc::new(Mutex::new(None));
+        *controller
+            .request_queue
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(PeerSharingRequest {
+            amount: PeerSharingAmount(5),
+            result: Arc::clone(&result),
+        });
+        let guard = controller
+            .request_queue
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        assert_eq!(guard.as_ref().map(|r| r.amount), Some(PeerSharingAmount(5)));
     }
 }
