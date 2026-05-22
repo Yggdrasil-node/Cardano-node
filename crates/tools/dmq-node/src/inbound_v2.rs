@@ -13,13 +13,12 @@
 //! `Sig`.
 //!
 //! Ports the inbound-V2 state surface — the foundational types,
-//! `TxDecision`, `PeerTxState`, `SharedTxState` — and the governor
-//! functions: `update_ref_counts`, `tick_timed_txs`,
+//! `TxDecision`, `PeerTxState`, `SharedTxState` — the governor
+//! functions (`update_ref_counts`, `tick_timed_txs`,
 //! `split_acknowledged_tx_ids`, `filter_active_peers`,
-//! `acknowledge_tx_ids`, `pick_txs_to_download`, and the
-//! `make_decisions` orchestrator. The remaining `State.hs`
-//! state-mutation functions (`receivedTxIdsImpl`, `collectTxsImpl`)
-//! land in subsequent rounds.
+//! `acknowledge_tx_ids`, `pick_txs_to_download`, `make_decisions`),
+//! and the `received_tx_ids_impl` inbound handler. The remaining
+//! `State.hs` `collectTxsImpl` handler lands in a subsequent round.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::time::Duration;
@@ -791,6 +790,85 @@ pub fn make_decisions<P: Ord + Clone + std::hash::Hash>(
     (updated_shared, decisions.into_iter().collect())
 }
 
+/// Record txids received from a peer in reply to a `MsgReplyTxIds`.
+///
+/// Mirror of upstream `receivedTxIdsImpl` (`State.hs`). Received
+/// txids already in the mempool are buffered as `None` (no download
+/// needed); the rest are added to the peer's `available_tx_ids`
+/// (unless already unacknowledged or buffered). All received txids
+/// are appended to `unacknowledged_tx_ids`, their reference counts
+/// incremented, and `req_no` outstanding txid requests cleared.
+/// `mempool_has_tx` mirrors upstream's `mempoolHasTx` callback.
+pub fn received_tx_ids_impl<P: Ord + Clone>(
+    mempool_has_tx: impl Fn(&SigId) -> bool,
+    peeraddr: &P,
+    req_no: NumTxIdsToReq,
+    txids_seq: &[SigId],
+    txids_map: &BTreeMap<SigId, u32>,
+    st: &SharedTxState<P>,
+) -> SharedTxState<P> {
+    // Upstream `fromJust` requires the peer to be registered; a fresh
+    // `PeerTxState` is used here if it is absent.
+    let ps = st.peer_tx_states.get(peeraddr).cloned().unwrap_or_default();
+
+    // Split the received txids into those already in the mempool
+    // (ignored — no download needed) and the rest.
+    let mut ignored: BTreeMap<SigId, u32> = BTreeMap::new();
+    let mut available_new: BTreeMap<SigId, u32> = BTreeMap::new();
+    for (txid, &size) in txids_map {
+        if mempool_has_tx(txid) {
+            ignored.insert(txid.clone(), size);
+        } else {
+            available_new.insert(txid.clone(), size);
+        }
+    }
+
+    // Add the not-in-mempool txids that are neither unacknowledged nor
+    // already buffered.
+    let mut available_tx_ids = ps.available_tx_ids.clone();
+    for (txid, size) in &available_new {
+        if !ps.unacknowledged_tx_ids.contains(txid) && !st.buffered_txs.contains_key(txid) {
+            available_tx_ids.insert(txid.clone(), *size);
+        }
+    }
+
+    let mut unacknowledged_tx_ids = ps.unacknowledged_tx_ids.clone();
+    unacknowledged_tx_ids.extend(txids_seq.iter().cloned());
+
+    // Buffer the ignored (in-mempool) txids as `None`, keeping any
+    // existing buffered entry.
+    let mut buffered_txs = st.buffered_txs.clone();
+    for txid in ignored.keys() {
+        buffered_txs.entry(txid.clone()).or_insert(None);
+    }
+
+    let mut reference_counts = st.reference_counts.clone();
+    for txid in txids_seq {
+        *reference_counts.entry(txid.clone()).or_insert(0) += 1;
+    }
+
+    debug_assert!(
+        ps.requested_tx_ids_inflight.0 >= req_no.0,
+        "receivedTxIdsImpl: cleared more txid requests than were in flight"
+    );
+    let ps_prime = PeerTxState {
+        available_tx_ids,
+        unacknowledged_tx_ids,
+        requested_tx_ids_inflight: NumTxIdsToReq(
+            ps.requested_tx_ids_inflight.0.saturating_sub(req_no.0),
+        ),
+        ..ps
+    };
+    let mut peer_tx_states = st.peer_tx_states.clone();
+    peer_tx_states.insert(peeraddr.clone(), ps_prime);
+    SharedTxState {
+        peer_tx_states,
+        buffered_txs,
+        reference_counts,
+        ..st.clone()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1140,6 +1218,43 @@ mod tests {
         // The peer received a decision requesting its available tx.
         assert!(decisions.contains_key("p"));
         assert!(decisions["p"].txd_txs_to_request.contains_key(&x));
+    }
+
+    #[test]
+    fn received_tx_ids_impl_buffers_known_and_offers_new() {
+        use crate::protocol::sig_submission::{SigHash, SigId};
+        let known = SigId(SigHash(vec![0x01]));
+        let fresh = SigId(SigHash(vec![0x02]));
+        let mut st: SharedTxState<String> = SharedTxState::default();
+        st.peer_tx_states.insert(
+            "p".to_string(),
+            PeerTxState {
+                requested_tx_ids_inflight: NumTxIdsToReq(2),
+                ..Default::default()
+            },
+        );
+        let txids_map = BTreeMap::from([(known.clone(), 100u32), (fresh.clone(), 200u32)]);
+        let txids_seq = vec![known.clone(), fresh.clone()];
+        // `known` is already in the mempool; `fresh` is not.
+        let updated = received_tx_ids_impl(
+            |id| *id == known,
+            &"p".to_string(),
+            NumTxIdsToReq(2),
+            &txids_seq,
+            &txids_map,
+            &st,
+        );
+        let ps = &updated.peer_tx_states["p"];
+        // `fresh` is offered for download; `known` is buffered (in mempool).
+        assert_eq!(ps.available_tx_ids.get(&fresh), Some(&200));
+        assert!(!ps.available_tx_ids.contains_key(&known));
+        assert_eq!(updated.buffered_txs.get(&known), Some(&None));
+        // Both received txids are now unacknowledged and ref-counted.
+        assert_eq!(ps.unacknowledged_tx_ids.len(), 2);
+        assert_eq!(updated.reference_counts.get(&known), Some(&1));
+        assert_eq!(updated.reference_counts.get(&fresh), Some(&1));
+        // The two outstanding txid requests were cleared.
+        assert_eq!(ps.requested_tx_ids_inflight, NumTxIdsToReq(0));
     }
 
     #[test]
