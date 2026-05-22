@@ -1,11 +1,12 @@
 # Guidance for the pure-Rust port of upstream `dmq-node`.
 
-**Status:** `partial`. The DMQ pure-logic surface is **complete** —
-the protocol definitions, all six peer drivers, the NtN/NtC version
-surfaces, the `MempoolSeq` signature store, and the full inbound-V2
-tx-submission governor (R717-R801 — see *Current functional
-surface*). The remaining `NodeKernel` / `Diffusion/*` / `run()` mux
-event-loop integration is a deliberate carve-out. Scope band:
+**Status:** `partial`. The DMQ pure-logic surface and every `run()`
+integration **component** are **complete** — the protocol
+definitions, all six peer drivers, the NtN/NtC version surfaces, the
+`MempoolSeq` store, the full inbound-V2 governor, and the
+`NodeKernel` + its registries + the NtN/NtC mux bundles (R717-R816 —
+see *Current functional surface*). Only the `run()` event loop
+itself — the socket accept-loop assembly — remains. Scope band:
 **MEDIUM**.
 
 ## Strict 1:1 file-mirror policy (R274+)
@@ -25,7 +26,7 @@ Vendored at: `.reference-haskell-cardano-node/deps/dmq-node/` (51 `.hs` files).
 
 Delegated Mempool Queue diffusion-layer node (sister project for Mithril). Phase D.1 mini-arc R450-R459 (10 rounds, MEDIUM). R453-R454 port the DMQ wire protocol + mempool queue logic; R455 reuses the local-socket pattern from `crates/network/src/local_state_query_server.rs`; R456 reuses `crates/network` mux for the cardano-node connection.
 
-## Current functional surface (post-R801)
+## Current functional surface (post-R816)
 
 ### CLI surface
 
@@ -114,16 +115,37 @@ following the `crates/network` mini-protocol-driver pattern
   dmq-node-local — `crates/consensus`'s governor is concrete over
   ledger txs.
 
-### Deferred — the mux / diffusion event-loop integration
+### run() integration components — complete (R805-R816, Option A)
 
-- ❌ The `ntnApps` / `ntcApps` mux-application wiring, `NodeKernel`,
-  `Diffusion/*`, `Tracer.hs`, `Handlers/TopLevel.hs`, and the `run()`
-  loop. These are STM-var-record + event-loop integration — they wire
-  the (now-complete) drivers into a live mux / diffusion process and
-  have no standalone bounded test target. `run` returns
-  `RunError::DiffusionWiringDeferred` until this lands; its
-  verification is the end-to-end byte-equivalence soak against the
-  upstream binary (operator-gated). See the **Carve-out inventory**.
+The Option A `run()` integration arc (per the
+`docs/COMPLETION_ROADMAP.md` A4 dmq-node entry) ported every
+component the event loop assembles:
+
+- ✅ `registry.rs` — `TxChannels` / `TxChannelsVar` / `TxMempoolSem`
+  (the inbound-V2 channel registry).
+- ✅ `diffusion.rs` — `StakePools`, and `NodeKernel` +
+  `new_node_kernel` (the shared runtime state composing all eight
+  registry / state components).
+- ✅ `peer_sharing.rs` — the peer-sharing policy constants,
+  `PublicPeerSelectionState`, `PeerSharingAPI`, and the
+  `PeerSharingController` / `PeerSharingRegistry`.
+- ✅ `delta_q.rs` — the DeltaQ `Distribution` / `Gsv` / `PeerGsv`
+  latency model.
+- ✅ `keep_alive.rs` — `KeepAliveRegistry` (the `NodeKernel`'s
+  `fetchClientRegistry` field, per the R813 resolution).
+- ✅ `node_to_node.rs` / `node_to_client.rs` — `dmq_ntn_bundle` /
+  `dmq_ntc_bundle`, the NtN / NtC mux `OuroborosBundle`s.
+
+### Deferred — the run() event loop
+
+- ❌ The `run()` event loop itself: the socket accept-loop driving
+  `crates/network`'s `ConnectionManagerState`, per-connection
+  handshake + mux, and the per-protocol driver runners that convert
+  the `OuroborosBundle` descriptors into running protocol tasks. The
+  components above are all in place; this is the final concurrent-
+  runtime assembly. `run` returns `RunError::DiffusionWiringDeferred`
+  until it lands; its verification is the end-to-end byte-equivalence
+  soak against the upstream binary (operator-gated).
 - ❌ End-to-end behavioral tests against the upstream binary —
   pending that integration.
 
