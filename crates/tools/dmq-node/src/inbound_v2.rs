@@ -12,13 +12,13 @@
 //! over ledger transactions, so it cannot be reused for `SigId` /
 //! `Sig`.
 //!
-//! Ports the inbound-V2 state surface — the foundational types,
-//! `TxDecision`, `PeerTxState`, `SharedTxState` — the governor
+//! Ports the inbound-V2 governor: the state surface (the foundational
+//! types, `TxDecision`, `PeerTxState`, `SharedTxState`), the governor
 //! functions (`update_ref_counts`, `tick_timed_txs`,
 //! `split_acknowledged_tx_ids`, `filter_active_peers`,
 //! `acknowledge_tx_ids`, `pick_txs_to_download`, `make_decisions`),
-//! and the `received_tx_ids_impl` inbound handler. The remaining
-//! `State.hs` `collectTxsImpl` handler lands in a subsequent round.
+//! and the inbound handlers (`received_tx_ids_impl`,
+//! `collect_txs_impl`).
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::time::Duration;
@@ -869,6 +869,138 @@ pub fn received_tx_ids_impl<P: Ord + Clone>(
     }
 }
 
+/// The maximum allowed discrepancy, in bytes, between a tx's
+/// advertised size and its received size.
+///
+/// Mirror of upstream `const_MAX_TX_SIZE_DISCREPANCY` (`State.hs`).
+pub const CONST_MAX_TX_SIZE_DISCREPANCY: u32 = 32;
+
+/// A protocol violation detected by the inbound tx-submission
+/// governor.
+///
+/// Mirror of upstream `data TxSubmissionProtocolError`
+/// (`Inbound/V2/Types.hs`).
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum TxSubmissionProtocolError {
+    /// The peer replied with a transaction that was not requested.
+    #[error("the peer replied with a transaction that was not requested")]
+    ProtocolErrorTxNotRequested,
+    /// The peer replied with transaction ids that were not requested.
+    #[error("the peer replied with transaction ids that were not requested")]
+    ProtocolErrorTxIdsNotRequested,
+    /// Received transactions whose size did not match the advertised
+    /// size — each entry is `(txid, received_size, advertised_size)`.
+    #[error("the peer sent transactions with mismatched sizes: {0:?}")]
+    ProtocolErrorTxSizeError(Vec<(SigId, u32, u32)>),
+}
+
+/// Record the txs a peer delivered in reply to a `MsgReplyTxs`.
+///
+/// Mirror of upstream `collectTxsImpl` (`State.hs`). Every received tx
+/// must agree with its advertised size to within
+/// [`CONST_MAX_TX_SIZE_DISCREPANCY`] — otherwise a
+/// [`TxSubmissionProtocolError::ProtocolErrorTxSizeError`] is
+/// returned. Received txs are recorded in `downloaded_txs`, requested
+/// txids that were not delivered move to `unknown_txs`, and the
+/// requested txids are cleared from the in-flight tracking.
+/// `tx_size` mirrors upstream's `txSize` callback.
+pub fn collect_txs_impl<P: Ord + Clone>(
+    tx_size: impl Fn(&Sig) -> u32,
+    peeraddr: &P,
+    requested_tx_ids_map: &BTreeMap<SigId, u32>,
+    received_txs: &BTreeMap<SigId, Sig>,
+    st: &SharedTxState<P>,
+) -> Result<SharedTxState<P>, TxSubmissionProtocolError> {
+    let ps = st.peer_tx_states.get(peeraddr).cloned().unwrap_or_default();
+
+    // Size check: received vs advertised, within the discrepancy bound.
+    let mut wrong_sized: Vec<(SigId, u32, u32)> = Vec::new();
+    for (txid, tx) in received_txs {
+        if let Some(&advertised) = requested_tx_ids_map.get(txid) {
+            let received = tx_size(tx);
+            if received.abs_diff(advertised) > CONST_MAX_TX_SIZE_DISCREPANCY {
+                wrong_sized.push((txid.clone(), received, advertised));
+            }
+        }
+    }
+    if !wrong_sized.is_empty() {
+        return Err(TxSubmissionProtocolError::ProtocolErrorTxSizeError(
+            wrong_sized,
+        ));
+    }
+
+    let requested_tx_ids: BTreeSet<SigId> = requested_tx_ids_map.keys().cloned().collect();
+    let not_received: BTreeSet<SigId> = requested_tx_ids
+        .iter()
+        .filter(|id| !received_txs.contains_key(*id))
+        .cloned()
+        .collect();
+
+    // Record the received txs — an existing downloaded entry wins.
+    let mut downloaded_txs = ps.downloaded_txs.clone();
+    for (txid, tx) in received_txs {
+        downloaded_txs
+            .entry(txid.clone())
+            .or_insert_with(|| tx.clone());
+    }
+
+    // Requested-but-not-delivered txids become unknown; intersect with
+    // the live (still unacknowledged) set.
+    let live: BTreeSet<SigId> = ps.unacknowledged_tx_ids.iter().cloned().collect();
+    let mut unknown_txs: BTreeSet<SigId> = ps.unknown_txs.clone();
+    unknown_txs.extend(not_received);
+    unknown_txs.retain(|id| live.contains(id));
+
+    let requested_txs_inflight: BTreeSet<SigId> = ps
+        .requested_txs_inflight
+        .iter()
+        .filter(|id| !requested_tx_ids.contains(*id))
+        .cloned()
+        .collect();
+
+    // Reclaim the requested in-flight size from the available-size map.
+    let requested_size: u64 = requested_tx_ids
+        .iter()
+        .filter_map(|id| ps.available_tx_ids.get(id))
+        .map(|s| u64::from(*s))
+        .sum();
+    let requested_txs_inflight_size =
+        u64::from(ps.requested_txs_inflight_size).saturating_sub(requested_size) as u32;
+
+    let available_tx_ids: BTreeMap<SigId, u32> = ps
+        .available_tx_ids
+        .iter()
+        .filter(|(id, _)| !requested_tx_ids.contains(*id))
+        .map(|(id, s)| (id.clone(), *s))
+        .collect();
+
+    // Decrement the in-flight multiplicity for each requested txid.
+    let inflight_diff: BTreeMap<SigId, i64> =
+        requested_tx_ids.iter().map(|id| (id.clone(), 1)).collect();
+    let inflight_txs = update_ref_counts(
+        &st.inflight_txs,
+        &RefCountDiff {
+            tx_ids_to_ack: inflight_diff,
+        },
+    );
+
+    let ps_prime = PeerTxState {
+        available_tx_ids,
+        unknown_txs,
+        requested_txs_inflight_size,
+        requested_txs_inflight,
+        downloaded_txs,
+        ..ps
+    };
+    let mut peer_tx_states = st.peer_tx_states.clone();
+    peer_tx_states.insert(peeraddr.clone(), ps_prime);
+    Ok(SharedTxState {
+        peer_tx_states,
+        inflight_txs,
+        ..st.clone()
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1255,6 +1387,37 @@ mod tests {
         assert_eq!(updated.reference_counts.get(&fresh), Some(&1));
         // The two outstanding txid requests were cleared.
         assert_eq!(ps.requested_tx_ids_inflight, NumTxIdsToReq(0));
+    }
+
+    #[test]
+    fn collect_txs_impl_undelivered_requests_become_unknown() {
+        use crate::protocol::sig_submission::{SigHash, SigId};
+        let a = SigId(SigHash(vec![0x55]));
+        let mut st: SharedTxState<String> = SharedTxState::default();
+        st.inflight_txs.insert(a.clone(), 1);
+        st.peer_tx_states.insert(
+            "p".to_string(),
+            PeerTxState {
+                available_tx_ids: BTreeMap::from([(a.clone(), 500u32)]),
+                requested_txs_inflight: BTreeSet::from([a.clone()]),
+                requested_txs_inflight_size: 500,
+                unacknowledged_tx_ids: VecDeque::from(vec![a.clone()]),
+                ..Default::default()
+            },
+        );
+        // We requested `a` but the peer delivered nothing.
+        let requested = BTreeMap::from([(a.clone(), 500u32)]);
+        let received: BTreeMap<SigId, crate::protocol::sig_submission::Sig> = BTreeMap::new();
+        let updated = collect_txs_impl(|_sig| 0u32, &"p".to_string(), &requested, &received, &st)
+            .expect("no size mismatch");
+        let ps = &updated.peer_tx_states["p"];
+        // `a` was not delivered -> it becomes unknown (and is live).
+        assert!(ps.unknown_txs.contains(&a));
+        // The request is cleared from in-flight tracking on every level.
+        assert!(ps.requested_txs_inflight.is_empty());
+        assert_eq!(ps.requested_txs_inflight_size, 0);
+        assert!(!ps.available_tx_ids.contains_key(&a));
+        assert!(!updated.inflight_txs.contains_key(&a));
     }
 
     #[test]
