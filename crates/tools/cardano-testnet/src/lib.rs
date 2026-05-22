@@ -24,6 +24,7 @@
 use std::io::Write;
 use std::process::ExitCode;
 
+pub mod filepath;
 pub mod parser;
 pub mod paths;
 pub mod runtime_types;
