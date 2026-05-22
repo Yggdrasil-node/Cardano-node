@@ -3,14 +3,16 @@
 //! ## Naming parity
 //!
 //! **Strict mirror:** none. Yggdrasil-side module for the upstream
-//! `DMQ/Diffusion/` subtree. This slice ports the self-contained
-//! validation-context data types from `Diffusion/NodeKernel/Types.hs`
-//! — `PoolId`, `StakeSnapshot`, `PoolValidationCtx`. The runtime-heavy
-//! `NodeKernel` / `StakePools` records (STM vars, fetch-client and
-//! peer-sharing registries) and the rest of `Diffusion/*` land with
-//! the deferred Diffusion-wiring sub-arc.
+//! `DMQ/Diffusion/` subtree. Ports the data types of
+//! `Diffusion/NodeKernel/Types.hs` — `PoolId`, `StakeSnapshot`,
+//! `PoolValidationCtx`, and the `StakePools` stake-pool monitoring
+//! record. The `NodeKernel` record itself and the rest of
+//! `Diffusion/*` land with the Option A `run()` integration arc.
 
 use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
+
+use yggdrasil_network::LedgerPeerSnapshot;
 
 /// A stake-pool identifier — the 28-byte Blake2b-224 hash of the
 /// pool's cold verification key.
@@ -54,6 +56,34 @@ pub struct PoolValidationCtx {
     pub ocert_map: BTreeMap<PoolId, u64>,
 }
 
+/// The stake-pool monitoring state the DMQ `NodeKernel` holds.
+///
+/// Mirror of upstream `data StakePools m`
+/// (`Diffusion/NodeKernel/Types.hs`). The upstream
+/// `withPoolValidationCtx` field is a rank-2 polymorphic closure —
+/// Rust cannot carry that as a struct field, so it is modelled as a
+/// method landing with the `NodeKernel` assembly (it also needs the
+/// kernel-level next-epoch / ocert-counter state).
+#[derive(Clone, Debug, Default)]
+pub struct StakePools {
+    /// Per-pool stake snapshot obtained via the local-state-query
+    /// client (`stakePoolsVar`).
+    pub stake_pools_var: Arc<Mutex<BTreeMap<PoolId, StakeSnapshot>>>,
+    /// Big ledger peers that advertise SRV endpoints
+    /// (`ledgerBigPeersVar`).
+    pub ledger_big_peers_var: Arc<Mutex<Option<LedgerPeerSnapshot>>>,
+    /// All ledger peers, restricted to SRV endpoints
+    /// (`ledgerPeersVar`).
+    pub ledger_peers_var: Arc<Mutex<Option<LedgerPeerSnapshot>>>,
+}
+
+impl StakePools {
+    /// A fresh, empty stake-pool monitoring state.
+    pub fn new() -> StakePools {
+        StakePools::default()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -85,5 +115,54 @@ mod tests {
         assert_eq!(ctx.stake_map.get(&pool).map(|s| s.set_pool), Some(20));
         assert_eq!(ctx.ocert_map.get(&pool).copied(), Some(7));
         assert_eq!(ctx.epoch, Some(1_700_000_000));
+    }
+
+    #[test]
+    fn stake_pools_new_is_empty() {
+        let pools = StakePools::new();
+        assert!(
+            pools
+                .stake_pools_var
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .is_empty()
+        );
+        assert!(
+            pools
+                .ledger_big_peers_var
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .is_none()
+        );
+        assert!(
+            pools
+                .ledger_peers_var
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn stake_pools_var_records_a_pool_snapshot() {
+        let pools = StakePools::new();
+        let pool = PoolId([0x22; 28]);
+        pools
+            .stake_pools_var
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(
+                pool.clone(),
+                StakeSnapshot {
+                    mark_pool: 1,
+                    set_pool: 2,
+                    go_pool: 3,
+                },
+            );
+        let guard = pools
+            .stake_pools_var
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        assert_eq!(guard.get(&pool).map(|s| s.go_pool), Some(3));
     }
 }
