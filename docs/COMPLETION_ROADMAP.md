@@ -610,7 +610,7 @@ own parser / generator / submission implementation plus upstream
   blocker is upstream-binary soak evidence — every documented
   byte-parity gap inside yggdrasil is now closed.
 
-**dmq-node — DMQ protocol surface CODE COMPLETE (R717-R756, 40 rounds).**
+**dmq-node — pure-logic surface CODE COMPLETE (R717-R802, ~85 rounds).**
 R717-R731 ported the V1 `SigSubmission` `Type.hs` data plus the
 standalone codec functions and investigated the `TxSubmission2` reuse,
 finding `crates/network`'s `TxSubmission2` is **concrete** (not generic
@@ -634,16 +634,23 @@ delivered the comprehensive protocol-definition surface:
 - NtN/NtC version types, `Policy`, `Topology`, `PoolValidationCtx`,
   `SigSubmissionProtocolError`.
 
-**Remaining dmq-node scope — the runtime / diffusion sub-arc.** The
-typed-protocols peer drivers (`Protocol/*/{Client,Server,Inbound,
-Outbound}.hs` — continuation-style, framework-bound) plus the runtime
-(`NodeKernel`, `Diffusion/*`, the NtN/NtC mux bundles, `Tracer.hs`,
-`Handlers/TopLevel.hs`) form one entangled
-`crates/network`-integration sub-arc — a peer driver is only
-exercisable plugged into the mux, so none has a standalone test
-target. This is the explicit `DiffusionWiringDeferred` carve-out; it
-warrants its own `parity-plan` and is not decomposable into standalone
-bounded slices.
+**R758-R802 extended the surface well past the protocol definitions.**
+The peer drivers (R758-R768 — all six, plus NtN/NtC version
+negotiation and the mux protocol numbers), the `MempoolSeq` signature
+store (R787), and the complete inbound-V2 tx-submission governor
+(R788-R801 — the state surface, the seven decision functions
+`split_acknowledged_tx_ids` → `acknowledge_tx_ids` → `pick_peer_step`
+→ `pick_txs_to_download` → `make_decisions` plus `filter_active_peers`
+/ `update_ref_counts` / `tick_timed_txs`, and the `received_tx_ids_impl`
+/ `collect_txs_impl` inbound handlers) are all ported as bounded
+gate-green slices. The earlier "not decomposable" framing was
+over-stated — those `crates/network`-pattern drivers and the pure
+governor logic decomposed cleanly. Only the `NodeKernel` /
+`Diffusion/*` / `run()` mux event-loop integration now remains: the
+STM-var construction and event-loop wiring that plugs the ported
+pieces into `crates/network`'s diffusion machinery. That residual is
+the genuine `DiffusionWiringDeferred` carve-out — it warrants its own
+`parity-plan` and is verified by the operator-gated end-to-end soak.
 
 **Scope:** ~5–8 rounds per tool. **Exit:** each
 reaches `implemented_needs_11_0_1_evidence` in `parity-matrix.json`.
