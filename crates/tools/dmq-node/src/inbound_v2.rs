@@ -156,6 +156,58 @@ pub struct PeerTxState {
     pub to_mempool_txs: BTreeMap<SigId, Sig>,
 }
 
+/// The inbound tx-submission governor's state, shared across all
+/// peers.
+///
+/// Mirror of upstream `data SharedTxState peeraddr txid tx`, concrete
+/// over the DMQ `SigId` / `Sig` and generic over the peer-address
+/// key. `PartialEq` only — it holds [`PeerTxState`], which is
+/// `PartialEq`-only via its `f64` score.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SharedTxState<PeerAddr: Ord> {
+    /// Per-peer governor state. Invariant: every peer registered via
+    /// `withPeer` has an entry, even with an empty txid set.
+    pub peer_tx_states: BTreeMap<PeerAddr, PeerTxState>,
+    /// In-flight (already-requested) txids, each with its
+    /// multiplicity — the number of peers it is currently in-flight
+    /// from.
+    pub inflight_txs: BTreeMap<SigId, i64>,
+    /// Downloaded txs: `Some(tx)` once downloaded, `None` once it is
+    /// already in the mempool. Only live txids are kept.
+    pub buffered_txs: BTreeMap<SigId, Option<Sig>>,
+    /// Reference counts of every unacknowledged / timed txid — a txid
+    /// is dropped from `buffered_txs` when its count reaches zero.
+    pub reference_counts: BTreeMap<SigId, i64>,
+    /// Short timeouts for txids buffered after mempool insertion,
+    /// avoiding immediate re-download. Keyed by deadline (upstream
+    /// `Time`, modelled as a duration since the monotonic origin).
+    pub timed_txs: BTreeMap<Duration, Vec<SigId>>,
+    /// Txids downloaded and on their way to the mempool, with a
+    /// counter — no further fetch requests are issued while in this
+    /// state.
+    pub in_submission_to_mempool_txs: BTreeMap<SigId, i64>,
+    /// PRNG state used to randomly order peers. Stands in for
+    /// upstream's `StdGen`; the peer-ordering RNG is governor logic
+    /// landing in a later round, so it is modelled here as the
+    /// seed/state value to keep `SharedTxState` a plain comparable
+    /// data structure.
+    pub peer_rng: u64,
+}
+
+impl<PeerAddr: Ord> Default for SharedTxState<PeerAddr> {
+    fn default() -> Self {
+        SharedTxState {
+            peer_tx_states: BTreeMap::new(),
+            inflight_txs: BTreeMap::new(),
+            buffered_txs: BTreeMap::new(),
+            reference_counts: BTreeMap::new(),
+            timed_txs: BTreeMap::new(),
+            in_submission_to_mempool_txs: BTreeMap::new(),
+            peer_rng: 0,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -239,6 +291,30 @@ mod tests {
         assert_eq!(p.unacknowledged_tx_ids.len(), 1);
         assert_eq!(p.available_tx_ids.get(&id), Some(&1500));
         assert!(p.requested_txs_inflight.contains(&id));
+    }
+
+    #[test]
+    fn shared_tx_state_default_is_empty() {
+        let s: SharedTxState<String> = SharedTxState::default();
+        assert!(s.peer_tx_states.is_empty());
+        assert!(s.inflight_txs.is_empty());
+        assert!(s.buffered_txs.is_empty());
+        assert_eq!(s.peer_rng, 0);
+    }
+
+    #[test]
+    fn shared_tx_state_registers_a_peer_and_buffers_txs() {
+        use crate::protocol::sig_submission::{SigHash, SigId};
+        let id = SigId(SigHash(vec![0x07]));
+        let mut s: SharedTxState<String> = SharedTxState::default();
+        s.peer_tx_states
+            .insert("peer-a".to_string(), PeerTxState::default());
+        s.inflight_txs.insert(id.clone(), 2);
+        s.buffered_txs.insert(id.clone(), None);
+        s.reference_counts.insert(id.clone(), 1);
+        assert_eq!(s.peer_tx_states.len(), 1);
+        assert_eq!(s.inflight_txs.get(&id), Some(&2));
+        assert_eq!(s.buffered_txs.get(&id), Some(&None));
     }
 
     #[test]
