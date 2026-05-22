@@ -8,4 +8,5 @@
 //! node-querying and genesis-creation bodies are runtime / era-coupled
 //! and land with later rounds.
 
+pub mod configuration;
 pub mod query;
