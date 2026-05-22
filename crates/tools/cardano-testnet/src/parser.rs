@@ -44,8 +44,9 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 use crate::types::{
-    GenesisOptions, NodeOption, PraosCredentialsSource, RpcSupport, TestnetOnChainParams,
-    TestnetRuntimeOptions, cardano_default_testnet_node_options,
+    GenesisOptions, NodeOption, NumDReps, PraosCredentialsSource, RpcSupport,
+    TestnetCreationOptions, TestnetOnChainParams, TestnetRuntimeOptions,
+    cardano_default_testnet_node_options,
 };
 
 /// Look up the value following a `--flag` in an argument list.
@@ -145,6 +146,35 @@ pub fn parse_on_chain_params(args: &[String]) -> Result<TestnetOnChainParams, Pa
     } else {
         Ok(TestnetOnChainParams::DefaultParams)
     }
+}
+
+/// Parse the `TestnetCreationOptions` from a `cardano` / `create-env`
+/// argument list.
+///
+/// Mirror of upstream `pCreationOptions` (`Parsers/Cardano.hs`):
+/// composes the node set, the `--max-lovelace-supply` and
+/// `--num-dreps` field flags, the genesis options, and the on-chain
+/// params. The era is not a CLI flag — upstream's
+/// `pure (AnyShelleyBasedEra defaultEra)` is the `Default`'s
+/// `creation_era` (Conway).
+pub fn parse_creation_options(args: &[String]) -> Result<TestnetCreationOptions, ParseError> {
+    let default = TestnetCreationOptions::default();
+    Ok(TestnetCreationOptions {
+        creation_nodes: parse_testnet_node_options(args)?,
+        creation_era: default.creation_era,
+        creation_max_supply: flag_or_default(
+            args,
+            "--max-lovelace-supply",
+            default.creation_max_supply,
+        )?,
+        creation_num_dreps: NumDReps(flag_or_default(
+            args,
+            "--num-dreps",
+            default.creation_num_dreps.0,
+        )?),
+        creation_genesis_options: parse_genesis_options(args)?,
+        creation_on_chain_params: parse_on_chain_params(args)?,
+    })
 }
 
 /// Parse the `TestnetRuntimeOptions` flags from a `cardano` /
@@ -339,6 +369,43 @@ mod tests {
         assert_eq!(
             parse_on_chain_params(&mainnet_args),
             Ok(TestnetOnChainParams::OnChainParamsMainnet)
+        );
+    }
+
+    #[test]
+    fn creation_options_default_when_no_flags() {
+        assert_eq!(
+            parse_creation_options(&[]),
+            Ok(TestnetCreationOptions::default())
+        );
+    }
+
+    #[test]
+    fn creation_options_compose_each_flag() {
+        let args: Vec<String> = [
+            "--num-pool-nodes",
+            "2",
+            "--max-lovelace-supply",
+            "42000000",
+            "--num-dreps",
+            "5",
+            "--params-mainnet",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let opts = parse_creation_options(&args).expect("valid creation flags");
+        assert_eq!(opts.creation_nodes.len(), 2);
+        assert_eq!(opts.creation_max_supply, 42_000_000);
+        assert_eq!(opts.creation_num_dreps, NumDReps(5));
+        assert_eq!(
+            opts.creation_on_chain_params,
+            TestnetOnChainParams::OnChainParamsMainnet
+        );
+        // The era is fixed (not a CLI flag) — the default Conway.
+        assert_eq!(
+            opts.creation_era,
+            TestnetCreationOptions::default().creation_era
         );
     }
 
