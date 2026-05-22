@@ -34,6 +34,7 @@ pub mod node_to_node;
 pub mod parser;
 pub mod policy;
 pub mod protocol;
+pub mod registry;
 pub mod sig_submission_v2;
 pub mod status;
 pub mod topology;
