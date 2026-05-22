@@ -13,14 +13,8 @@
 //! Rust port depends on yggdrasil-ledger's era-aware genesis and
 //! protocol-parameter surface — those land in subsequent rounds.
 //!
-//! Carve-outs (NOT ported in R359; tracked under `remaining_work`):
+//! Carve-outs:
 //!
-//! - **`Cardano.Api.cardanoEra`** + per-era variants
-//!   (`AnyShelleyBasedEra`, `AnyCardanoEra`): the era-aware machinery
-//!   needs the full yggdrasil-ledger era surface to be exposed at
-//!   crate boundaries before testnet types can carry typed era
-//!   discriminators. Port lands when the testnet runtime round wires
-//!   the era selector.
 //! - **`Cardano.Ledger.Alonzo.Genesis.AlonzoGenesis` /
 //!   `Cardano.Ledger.Conway.Genesis.ConwayGenesis`**: parsed
 //!   per-era genesis records. Yggdrasil keeps these as
@@ -37,6 +31,93 @@ use std::path::PathBuf;
 /// The default value for the `--testnet-magic` option for
 /// `cardano-testnet`. Mirrors upstream `defaultTestnetMagic = 42`.
 pub const DEFAULT_TESTNET_MAGIC: i64 = 42;
+
+/// A Cardano ledger era.
+///
+/// Mirror of `Cardano.Api`'s `CardanoEra` era tag (Byron through
+/// Conway, matching `yggdrasil_ledger::eras::Era`). Upstream's
+/// `AnyCardanoEra` is the GADT-erased existential wrapper — a plain
+/// Rust enum is already the erased form.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum CardanoEra {
+    /// The Byron era.
+    Byron,
+    /// The Shelley era.
+    Shelley,
+    /// The Allegra era.
+    Allegra,
+    /// The Mary era.
+    Mary,
+    /// The Alonzo era.
+    Alonzo,
+    /// The Babbage era.
+    Babbage,
+    /// The Conway era.
+    Conway,
+}
+
+impl CardanoEra {
+    /// The era's lower-case name.
+    ///
+    /// Mirror of upstream `eraToString` / `anyEraToString`
+    /// (`eraToString ByronEra` returns `"byron"`).
+    pub fn era_to_string(self) -> &'static str {
+        match self {
+            CardanoEra::Byron => "byron",
+            CardanoEra::Shelley => "shelley",
+            CardanoEra::Allegra => "allegra",
+            CardanoEra::Mary => "mary",
+            CardanoEra::Alonzo => "alonzo",
+            CardanoEra::Babbage => "babbage",
+            CardanoEra::Conway => "conway",
+        }
+    }
+}
+
+/// A Shelley-based Cardano ledger era — every era except Byron.
+///
+/// Mirror of `Cardano.Api`'s `ShelleyBasedEra` era tag. Upstream's
+/// `AnyShelleyBasedEra` is the GADT-erased existential wrapper.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum ShelleyBasedEra {
+    /// The Shelley era.
+    Shelley,
+    /// The Allegra era.
+    Allegra,
+    /// The Mary era.
+    Mary,
+    /// The Alonzo era.
+    Alonzo,
+    /// The Babbage era.
+    Babbage,
+    /// The Conway era.
+    Conway,
+}
+
+impl ShelleyBasedEra {
+    /// The era's lower-case name.
+    ///
+    /// Mirror of upstream `eraToString` / `anyShelleyBasedEraToString`
+    /// (`anyShelleyBasedEraToString (AnyShelleyBasedEra
+    /// ShelleyBasedEraConway)` returns `"conway"`).
+    pub fn era_to_string(self) -> &'static str {
+        CardanoEra::from(self).era_to_string()
+    }
+}
+
+impl From<ShelleyBasedEra> for CardanoEra {
+    /// Every Shelley-based era is also a Cardano era.
+    fn from(sbe: ShelleyBasedEra) -> CardanoEra {
+        match sbe {
+            ShelleyBasedEra::Shelley => CardanoEra::Shelley,
+            ShelleyBasedEra::Allegra => CardanoEra::Allegra,
+            ShelleyBasedEra::Mary => CardanoEra::Mary,
+            ShelleyBasedEra::Alonzo => CardanoEra::Alonzo,
+            ShelleyBasedEra::Babbage => CardanoEra::Babbage,
+            ShelleyBasedEra::Conway => CardanoEra::Conway,
+        }
+    }
+}
 
 /// Identifier of an individual node within a testnet topology.
 ///
@@ -339,6 +420,30 @@ mod tests {
     #[test]
     fn default_testnet_magic_matches_upstream() {
         assert_eq!(DEFAULT_TESTNET_MAGIC, 42);
+    }
+
+    #[test]
+    fn cardano_era_to_string_is_lowercase_name() {
+        assert_eq!(CardanoEra::Byron.era_to_string(), "byron");
+        assert_eq!(CardanoEra::Conway.era_to_string(), "conway");
+        assert_eq!(CardanoEra::Alonzo.era_to_string(), "alonzo");
+    }
+
+    #[test]
+    fn shelley_based_era_to_string_and_widening() {
+        assert_eq!(ShelleyBasedEra::Conway.era_to_string(), "conway");
+        assert_eq!(ShelleyBasedEra::Shelley.era_to_string(), "shelley");
+        assert_eq!(CardanoEra::from(ShelleyBasedEra::Mary), CardanoEra::Mary);
+        assert_eq!(
+            CardanoEra::from(ShelleyBasedEra::Babbage),
+            CardanoEra::Babbage
+        );
+    }
+
+    #[test]
+    fn cardano_era_is_ordered_byron_first() {
+        assert!(CardanoEra::Byron < CardanoEra::Shelley);
+        assert!(CardanoEra::Babbage < CardanoEra::Conway);
     }
 
     #[test]
