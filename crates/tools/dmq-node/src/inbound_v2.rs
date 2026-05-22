@@ -15,9 +15,10 @@
 //! Ports the inbound-V2 state surface — the foundational types,
 //! `TxDecision`, `PeerTxState`, `SharedTxState` — and the governor
 //! functions incrementally (`update_ref_counts`,
-//! `split_acknowledged_tx_ids` so far). The remaining `Decision.hs` /
-//! `State.hs` governor functions (`acknowledgeTxIds`,
-//! `makeDecisions`, ...) land in subsequent rounds.
+//! `split_acknowledged_tx_ids`, `filter_active_peers`,
+//! `acknowledge_tx_ids` so far). The remaining `Decision.hs` /
+//! `State.hs` functions (`receivedTxIdsImpl`, `collectTxsImpl`,
+//! `pickTxsToDownload`, `makeDecisions`) land in subsequent rounds.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::time::Duration;
@@ -365,6 +366,131 @@ pub fn filter_active_peers<P: Ord + Clone>(
         .collect()
 }
 
+/// Acknowledge the longest prefix of a peer's unacknowledged txids.
+///
+/// Mirror of upstream `acknowledgeTxIds` (`State.hs`). Returns
+/// `(tx_ids_to_acknowledge, tx_ids_to_request, txs_to_mempool,
+/// ref_count_diff, updated_peer)`. Txids can only be acknowledged
+/// when new ones can also be requested — a `MsgRequestTxIds` for zero
+/// txids is a protocol error — so a zero request count yields the
+/// no-op `(0, 0, ..)` result.
+pub fn acknowledge_tx_ids<P: Ord>(
+    policy: &SigDecisionPolicy,
+    shared: &SharedTxState<P>,
+    ps: &PeerTxState,
+) -> (
+    NumTxIdsToAck,
+    NumTxIdsToReq,
+    TxsToMempool,
+    RefCountDiff,
+    PeerTxState,
+) {
+    let (tx_ids_to_request, acknowledged_tx_ids, unacknowledged_tx_ids) =
+        split_acknowledged_tx_ids(policy, shared, ps);
+
+    // Downloaded, acknowledged txs not already buffered or queued —
+    // these can now be submitted to the mempool.
+    let txs_to_mempool: Vec<(SigId, Sig)> = acknowledged_tx_ids
+        .iter()
+        .filter(|txid| {
+            !shared.buffered_txs.contains_key(*txid) && !ps.to_mempool_txs.contains_key(*txid)
+        })
+        .filter_map(|txid| {
+            ps.downloaded_txs
+                .get(txid)
+                .map(|tx| (txid.clone(), tx.clone()))
+        })
+        .collect();
+
+    let mut to_mempool_txs = ps.to_mempool_txs.clone();
+    for (txid, tx) in &txs_to_mempool {
+        to_mempool_txs.insert(txid.clone(), tx.clone());
+    }
+
+    // The still-unacknowledged txids form the "live" set.
+    let live_set: BTreeSet<SigId> = unacknowledged_tx_ids.iter().cloned().collect();
+
+    // Split downloaded txs into still-live and acknowledged.
+    let mut downloaded_txs = BTreeMap::new();
+    let mut acked_downloaded: BTreeMap<SigId, Sig> = BTreeMap::new();
+    for (txid, tx) in &ps.downloaded_txs {
+        if live_set.contains(txid) {
+            downloaded_txs.insert(txid.clone(), tx.clone());
+        } else {
+            acked_downloaded.insert(txid.clone(), tx.clone());
+        }
+    }
+    // Late txs: acknowledged downloads already buffered (another peer
+    // delivered them first) — these count against the peer's score.
+    let late_count = acked_downloaded
+        .keys()
+        .filter(|txid| shared.buffered_txs.contains_key(*txid))
+        .count();
+    let score = ps.score + late_count as f64;
+
+    let available_tx_ids: BTreeMap<SigId, u32> = ps
+        .available_tx_ids
+        .iter()
+        .filter(|(txid, _)| live_set.contains(*txid))
+        .map(|(txid, size)| (txid.clone(), *size))
+        .collect();
+    let unknown_txs: BTreeSet<SigId> = ps
+        .unknown_txs
+        .iter()
+        .filter(|txid| live_set.contains(*txid))
+        .cloned()
+        .collect();
+
+    // Reference-count increments — one per occurrence of each
+    // acknowledged txid.
+    let mut ref_counts: BTreeMap<SigId, i64> = BTreeMap::new();
+    for txid in &acknowledged_tx_ids {
+        *ref_counts.entry(txid.clone()).or_insert(0) += 1;
+    }
+    let tx_ids_to_acknowledge = NumTxIdsToAck(acknowledged_tx_ids.len() as u16);
+    let txs_to_mempool = TxsToMempool {
+        list_of_txs_to_mempool: txs_to_mempool,
+    };
+
+    if tx_ids_to_request.0 > 0 {
+        let updated = PeerTxState {
+            unacknowledged_tx_ids,
+            available_tx_ids,
+            requested_tx_ids_inflight: NumTxIdsToReq(
+                ps.requested_tx_ids_inflight.0 + tx_ids_to_request.0,
+            ),
+            requested_txs_inflight_size: ps.requested_txs_inflight_size,
+            requested_txs_inflight: ps.requested_txs_inflight.clone(),
+            unknown_txs,
+            score,
+            score_ts: ps.score_ts,
+            downloaded_txs,
+            to_mempool_txs,
+        };
+        (
+            tx_ids_to_acknowledge,
+            tx_ids_to_request,
+            txs_to_mempool,
+            RefCountDiff {
+                tx_ids_to_ack: ref_counts,
+            },
+            updated,
+        )
+    } else {
+        let updated = PeerTxState {
+            to_mempool_txs,
+            ..ps.clone()
+        };
+        (
+            NumTxIdsToAck(0),
+            NumTxIdsToReq(0),
+            txs_to_mempool,
+            RefCountDiff::default(),
+            updated,
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -540,6 +666,36 @@ mod tests {
         assert_eq!(active.len(), 1);
         assert!(active.contains_key("active"));
         assert!(!active.contains_key("idle"));
+    }
+
+    #[test]
+    fn acknowledge_tx_ids_acks_the_known_prefix() {
+        use crate::policy::sig_decision_policy;
+        use crate::protocol::sig_submission::{SigHash, SigId};
+        let a = SigId(SigHash(vec![0xa1]));
+        let b = SigId(SigHash(vec![0xb2]));
+        let c = SigId(SigHash(vec![0xc3]));
+        let mut peer = PeerTxState::default();
+        peer.unacknowledged_tx_ids.push_back(a.clone());
+        peer.unacknowledged_tx_ids.push_back(b.clone());
+        peer.unacknowledged_tx_ids.push_back(c.clone());
+        // a and b are unknown-to-the-peer (acknowledgeable); c is not.
+        peer.unknown_txs.insert(a.clone());
+        peer.unknown_txs.insert(b.clone());
+        let shared: SharedTxState<String> = SharedTxState::default();
+        let (ack, req, to_mempool, ref_diff, updated) =
+            acknowledge_tx_ids(&sig_decision_policy(), &shared, &peer);
+        assert_eq!(ack, NumTxIdsToAck(2));
+        assert!(req.0 > 0);
+        assert!(to_mempool.list_of_txs_to_mempool.is_empty());
+        // ref-count diff has one increment for each acknowledged txid.
+        assert_eq!(ref_diff.tx_ids_to_ack.get(&a), Some(&1));
+        assert_eq!(ref_diff.tx_ids_to_ack.get(&b), Some(&1));
+        // the updated peer keeps only the still-unacknowledged `c`.
+        assert_eq!(updated.unacknowledged_tx_ids, VecDeque::from(vec![c]));
+        // `unknown_txs` is restricted to the live set (now empty).
+        assert!(updated.unknown_txs.is_empty());
+        assert_eq!(updated.requested_tx_ids_inflight, NumTxIdsToReq(req.0));
     }
 
     #[test]
