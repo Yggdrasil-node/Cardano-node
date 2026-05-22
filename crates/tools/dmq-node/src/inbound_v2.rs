@@ -12,13 +12,17 @@
 //! over ledger transactions, so it cannot be reused for `SigId` /
 //! `Sig`.
 //!
-//! This slice ports the foundational standalone types;
-//! `PeerTxState`, `SharedTxState`, the `TxDecision` record, and the
-//! governor logic land in subsequent rounds.
+//! Ports the inbound-V2 state surface — the foundational types,
+//! `TxDecision`, `PeerTxState`, `SharedTxState` — and the governor
+//! functions incrementally (`update_ref_counts`,
+//! `split_acknowledged_tx_ids` so far). The remaining `Decision.hs` /
+//! `State.hs` governor functions (`acknowledgeTxIds`,
+//! `makeDecisions`, ...) land in subsequent rounds.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::time::Duration;
 
+use crate::policy::SigDecisionPolicy;
 use crate::protocol::sig_submission::{Sig, SigId};
 
 /// Which tx-submission inbound logic a peer connection uses.
@@ -256,6 +260,65 @@ pub fn update_ref_counts(
     result
 }
 
+/// Split a peer's unacknowledged txids into the longest
+/// acknowledgeable prefix and the txids still unacknowledged, and
+/// compute how many new txids to request.
+///
+/// Mirror of upstream `splitAcknowledgedTxIds` (`State.hs`). A txid
+/// is acknowledgeable when it is not in-flight and is either
+/// downloaded, unknown to the peer, or already buffered. Returns
+/// `(num_to_request, acknowledged, still_unacknowledged)`.
+pub fn split_acknowledged_tx_ids<P: Ord>(
+    policy: &SigDecisionPolicy,
+    shared: &SharedTxState<P>,
+    peer: &PeerTxState,
+) -> (NumTxIdsToReq, VecDeque<SigId>, VecDeque<SigId>) {
+    let split = peer
+        .unacknowledged_tx_ids
+        .iter()
+        .position(|txid| {
+            !(!peer.requested_txs_inflight.contains(txid)
+                && (peer.downloaded_txs.contains_key(txid)
+                    || peer.unknown_txs.contains(txid)
+                    || shared.buffered_txs.contains_key(txid)))
+        })
+        .unwrap_or(peer.unacknowledged_tx_ids.len());
+    let acknowledged: VecDeque<SigId> = peer
+        .unacknowledged_tx_ids
+        .iter()
+        .take(split)
+        .cloned()
+        .collect();
+    let still_unacknowledged: VecDeque<SigId> = peer
+        .unacknowledged_tx_ids
+        .iter()
+        .skip(split)
+        .cloned()
+        .collect();
+
+    let num_unacked = peer.unacknowledged_tx_ids.len() as i64;
+    let num_acked = split as i64;
+    let requested_inflight = i64::from(peer.requested_tx_ids_inflight.0);
+    let unacked_and_requested = num_unacked + requested_inflight;
+    let max_unacked = policy.max_unacknowledged_tx_ids as i64;
+    let max_req = policy.max_num_tx_ids_to_request as i64;
+    debug_assert!(
+        unacked_and_requested <= max_unacked,
+        "splitAcknowledgedTxIds: unacked + requested over the limit"
+    );
+    debug_assert!(
+        requested_inflight <= max_req,
+        "splitAcknowledgedTxIds: requested over the limit"
+    );
+    let num_to_request =
+        (max_unacked - unacked_and_requested + num_acked).min(max_req - requested_inflight);
+    (
+        NumTxIdsToReq(num_to_request as u16),
+        acknowledged,
+        still_unacknowledged,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -370,6 +433,45 @@ mod tests {
         assert_eq!(updated.get(&a), Some(&2));
         assert_eq!(updated.get(&b), None);
         assert_eq!(updated.get(&c), Some(&5));
+    }
+
+    #[test]
+    fn split_acknowledged_tx_ids_takes_the_known_prefix() {
+        use crate::policy::sig_decision_policy;
+        use crate::protocol::sig_submission::{SigHash, SigId};
+        let a = SigId(SigHash(vec![0x0a]));
+        let b = SigId(SigHash(vec![0x0b]));
+        let c = SigId(SigHash(vec![0x0c]));
+        let mut peer = PeerTxState::default();
+        peer.unacknowledged_tx_ids.push_back(a.clone());
+        peer.unacknowledged_tx_ids.push_back(b.clone());
+        peer.unacknowledged_tx_ids.push_back(c.clone());
+        // a and b are unknown-to-the-peer (acknowledgeable); c is not.
+        peer.unknown_txs.insert(a.clone());
+        peer.unknown_txs.insert(b.clone());
+        let shared: SharedTxState<String> = SharedTxState::default();
+        let (num_to_request, acked, unacked) =
+            split_acknowledged_tx_ids(&sig_decision_policy(), &shared, &peer);
+        assert_eq!(acked, VecDeque::from(vec![a, b]));
+        assert_eq!(unacked, VecDeque::from(vec![c]));
+        // Some capacity to request more is available.
+        assert!(num_to_request.0 > 0);
+    }
+
+    #[test]
+    fn split_acknowledged_tx_ids_stops_at_an_inflight_txid() {
+        use crate::policy::sig_decision_policy;
+        use crate::protocol::sig_submission::{SigHash, SigId};
+        let a = SigId(SigHash(vec![0x01]));
+        let mut peer = PeerTxState::default();
+        peer.unacknowledged_tx_ids.push_back(a.clone());
+        peer.unknown_txs.insert(a.clone());
+        // `a` is still in-flight, so it cannot be acknowledged.
+        peer.requested_txs_inflight.insert(a.clone());
+        let shared: SharedTxState<String> = SharedTxState::default();
+        let (_, acked, unacked) = split_acknowledged_tx_ids(&sig_decision_policy(), &shared, &peer);
+        assert!(acked.is_empty());
+        assert_eq!(unacked, VecDeque::from(vec![a]));
     }
 
     #[test]
