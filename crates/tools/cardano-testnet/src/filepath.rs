@@ -7,10 +7,12 @@
 //! The path helpers return `String` (Haskell `FilePath`) rather than
 //! `PathBuf` so the trailing-separator forms produced by
 //! `addTrailingPathSeparator` survive — `PathBuf` normalises trailing
-//! separators away. This slice ports `TmpAbsolutePath`,
-//! `makeTmpBaseAbsPath`, and `makeLogDir`; the `Sprocket`-valued
-//! `makeTmpRelPath` / `makeSocketDir` / `makeSprocket` land with the
-//! testnet-harness rounds.
+//! separators away. Ports the full `Filepath.hs` surface:
+//! `TmpAbsolutePath`, `Sprocket`, and the `makeTmpBaseAbsPath` /
+//! `makeLogDir` / `makeTmpRelPath` / `makeSocketDir` / `makeSprocket`
+//! helpers. `Sprocket` is the `Hedgehog.Extras` socket-path type,
+//! carried locally (it is referenced by `Filepath.hs`'s
+//! `makeSprocket` signature).
 
 use std::path::Path;
 
@@ -81,6 +83,71 @@ pub fn make_log_dir(tmp: &TmpAbsolutePath) -> String {
     add_trailing_path_separator(&format!("{}/logs", tmp.0.trim_end_matches('/')))
 }
 
+/// A Unix-domain-socket path, split into a base directory and a name.
+///
+/// Mirror of upstream `Sprocket` (from
+/// `Hedgehog.Extras.Stock.IO.Network.Sprocket` — a base path plus a
+/// relative name; the full socket path is their join). Carried
+/// locally because `Filepath.hs`'s `makeSprocket` produces it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Sprocket {
+    /// The base (absolute) directory.
+    pub base: String,
+    /// The socket name — a path relative to `base`.
+    pub name: String,
+}
+
+impl Sprocket {
+    /// The full socket path — `base` joined with `name`.
+    ///
+    /// Mirror of upstream `sprocketSystemName`.
+    pub fn system_name(&self) -> String {
+        Path::new(&self.base)
+            .join(&self.name)
+            .to_string_lossy()
+            .into_owned()
+    }
+}
+
+/// The temporary path relative to its base directory.
+///
+/// Mirror of upstream
+/// `makeTmpRelPath fp = makeRelative (makeTmpBaseAbsPath fp) fp` — a
+/// path not under the base is returned unchanged.
+pub fn make_tmp_rel_path(tmp: &TmpAbsolutePath) -> String {
+    let base = make_tmp_base_abs_path(tmp);
+    Path::new(&tmp.0)
+        .strip_prefix(&base)
+        .map(|rel| rel.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| tmp.0.clone())
+}
+
+/// The socket directory of a temporary path —
+/// `<tmp-rel-path>/socket`.
+///
+/// Mirror of upstream `makeSocketDir fp = makeTmpRelPath fp </>
+/// defaultSocketDir`.
+pub fn make_socket_dir(tmp: &TmpAbsolutePath) -> String {
+    Path::new(&make_tmp_rel_path(tmp))
+        .join(crate::paths::DEFAULT_SOCKET_DIR)
+        .to_string_lossy()
+        .into_owned()
+}
+
+/// The [`Sprocket`] for a named node within a temporary path.
+///
+/// Mirror of upstream `makeSprocket tmpAbsPath node = Sprocket
+/// (makeTmpBaseAbsPath tmpAbsPath) (makeSocketDir tmpAbsPath </> node)`.
+pub fn make_sprocket(tmp: &TmpAbsolutePath, node: &str) -> Sprocket {
+    Sprocket {
+        base: make_tmp_base_abs_path(tmp),
+        name: Path::new(&make_socket_dir(tmp))
+            .join(node)
+            .to_string_lossy()
+            .into_owned(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -107,5 +174,26 @@ mod tests {
         // A trailing slash on the input is not doubled.
         let tmp_slash: TmpAbsolutePath = "/tmp/run/".into();
         assert_eq!(make_log_dir(&tmp_slash), "/tmp/run/logs/");
+    }
+
+    #[test]
+    fn make_tmp_rel_path_strips_the_base() {
+        let tmp: TmpAbsolutePath = "/tmp/testnet-abc/run".into();
+        assert_eq!(make_tmp_rel_path(&tmp), "run");
+    }
+
+    #[test]
+    fn make_socket_dir_is_rel_path_plus_socket() {
+        let tmp: TmpAbsolutePath = "/tmp/testnet-abc/run".into();
+        assert_eq!(make_socket_dir(&tmp), "run/socket");
+    }
+
+    #[test]
+    fn make_sprocket_splits_base_and_name() {
+        let tmp: TmpAbsolutePath = "/tmp/testnet-abc/run".into();
+        let s = make_sprocket(&tmp, "node0");
+        assert_eq!(s.base, "/tmp/testnet-abc/");
+        assert_eq!(s.name, "run/socket/node0");
+        assert_eq!(s.system_name(), "/tmp/testnet-abc/run/socket/node0");
     }
 }
