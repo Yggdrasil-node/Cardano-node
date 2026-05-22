@@ -16,7 +16,7 @@
 //! `PeerTxState`, `SharedTxState`, the `TxDecision` record, and the
 //! governor logic land in subsequent rounds.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::time::Duration;
 
 use crate::protocol::sig_submission::{Sig, SigId};
@@ -118,6 +118,44 @@ pub struct TxDecision {
     pub txd_txs_to_mempool: TxsToMempool,
 }
 
+/// The inbound tx-submission governor's per-peer state.
+///
+/// Mirror of upstream `data PeerTxState txid tx`, concrete over the
+/// DMQ `SigId` / `Sig`. `PartialEq` only — upstream derives `Eq` but
+/// `score` is `f64`. `Default` is the empty state of a fresh peer.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PeerTxState {
+    /// Txids the peer told us about and which we have not yet
+    /// acknowledged, in the order the peer gave them — the same order
+    /// we submit to the mempool and acknowledge in.
+    pub unacknowledged_tx_ids: VecDeque<SigId>,
+    /// Known txids requestable from this peer, with their sizes.
+    pub available_tx_ids: BTreeMap<SigId, u32>,
+    /// Count of txids requested but not yet replied to — tracked to
+    /// keep requests within the unacknowledged-txid limit.
+    pub requested_tx_ids_inflight: NumTxIdsToReq,
+    /// Total size of txs requested but not yet replied to.
+    pub requested_txs_inflight_size: u32,
+    /// The set of requested txids.
+    pub requested_txs_inflight: BTreeSet<SigId>,
+    /// A subset of `unacknowledged_tx_ids` the peer did not know
+    /// (requested but not received) — tracked per peer so they still
+    /// get acknowledged.
+    pub unknown_txs: BTreeSet<SigId>,
+    /// Peer-usefulness metric — larger is less useful; it decays
+    /// towards zero over time.
+    pub score: f64,
+    /// The time `score` was last drained — mirror of upstream `Time`
+    /// (a duration since the monotonic origin).
+    pub score_ts: Duration,
+    /// Txs downloaded from the peer, not yet acknowledged or sent to
+    /// the mempool.
+    pub downloaded_txs: BTreeMap<SigId, Sig>,
+    /// Txs on their way to the mempool — tracked so they can be
+    /// cleaned up if the peer dies.
+    pub to_mempool_txs: BTreeMap<SigId, Sig>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -177,6 +215,30 @@ mod tests {
     fn count_newtypes_wrap_word16() {
         assert_eq!(NumTxIdsToAck(7).0, 7);
         assert_eq!(NumTxIdsToReq::default(), NumTxIdsToReq(0));
+    }
+
+    #[test]
+    fn peer_tx_state_default_is_empty() {
+        let p = PeerTxState::default();
+        assert!(p.unacknowledged_tx_ids.is_empty());
+        assert!(p.available_tx_ids.is_empty());
+        assert_eq!(p.requested_tx_ids_inflight, NumTxIdsToReq(0));
+        assert_eq!(p.requested_txs_inflight_size, 0);
+        assert_eq!(p.score, 0.0);
+    }
+
+    #[test]
+    fn peer_tx_state_tracks_offered_and_inflight() {
+        use crate::protocol::sig_submission::{SigHash, SigId};
+        let id = SigId(SigHash(vec![0xAB]));
+        let mut p = PeerTxState::default();
+        p.unacknowledged_tx_ids.push_back(id.clone());
+        p.available_tx_ids.insert(id.clone(), 1500);
+        p.requested_txs_inflight.insert(id.clone());
+        p.requested_tx_ids_inflight = NumTxIdsToReq(1);
+        assert_eq!(p.unacknowledged_tx_ids.len(), 1);
+        assert_eq!(p.available_tx_ids.get(&id), Some(&1500));
+        assert!(p.requested_txs_inflight.contains(&id));
     }
 
     #[test]
