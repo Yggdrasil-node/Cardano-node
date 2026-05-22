@@ -652,6 +652,22 @@ pieces into `crates/network`'s diffusion machinery. That residual is
 the genuine `DiffusionWiringDeferred` carve-out — it warrants its own
 `parity-plan` and is verified by the operator-gated end-to-end soak.
 
+R804 authored that parity-plan and resolved its architectural fork:
+**Option A** — dmq-node assembles `crates/network`'s diffusion
+components (`connection_manager`, `governor`, `inbound_governor`,
+`mux`, the `diffusion.rs` bundles) in its own `run()`, rather than
+refactoring a turnkey runner into `crates/network` (Option C) or
+depending on the node's server sub-crates (Option B). This is
+consistent with the R732 dmq-node-local precedent and keeps the
+blast radius off the core crates. The integration arc — `NodeKernel`
+struct + `new_node_kernel`, the `TxChannels` / `TxMempoolSem`
+concurrency primitives (`Inbound/V2/Registry.hs`), the
+`ntnApps` / `ntcApps` mux bundles, the `diffusion_arguments` /
+`diffusion_applications` wiring, then the `run()` event loop — is
+~15-25 rounds; its slices are runtime concurrency plumbing plus a
+final assembly, so it lands as one coherent arc, not standalone
+pure-logic slices.
+
 **Scope:** ~5–8 rounds per tool. **Exit:** each
 reaches `implemented_needs_11_0_1_evidence` in `parity-matrix.json`.
 
