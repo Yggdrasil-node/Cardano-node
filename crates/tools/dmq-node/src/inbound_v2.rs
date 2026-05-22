@@ -491,6 +491,48 @@ pub fn acknowledge_tx_ids<P: Ord>(
     }
 }
 
+/// Advance the governor's timed-tx timeouts to a given time.
+///
+/// Mirror of upstream `tickTimedTxs` (`State.hs`). Timed entries with
+/// a deadline strictly before `now` have expired: their txids'
+/// reference counts are decremented (entries reaching zero are
+/// dropped), and `buffered_txs` is restricted to the txids that
+/// still have a live reference count. The `now` entry and later
+/// entries are retained.
+pub fn tick_timed_txs<P: Ord + Clone>(now: Duration, st: &SharedTxState<P>) -> SharedTxState<P> {
+    // Count one reference decrement for every txid in an expired
+    // (deadline strictly before `now`) timed entry.
+    let mut ref_diff: BTreeMap<SigId, i64> = BTreeMap::new();
+    for (_deadline, txids) in st.timed_txs.range(..now) {
+        for txid in txids {
+            *ref_diff.entry(txid.clone()).or_insert(0) += 1;
+        }
+    }
+    let timed_txs: BTreeMap<Duration, Vec<SigId>> = st
+        .timed_txs
+        .range(now..)
+        .map(|(deadline, txids)| (*deadline, txids.clone()))
+        .collect();
+    let reference_counts = update_ref_counts(
+        &st.reference_counts,
+        &RefCountDiff {
+            tx_ids_to_ack: ref_diff,
+        },
+    );
+    let buffered_txs: BTreeMap<SigId, Option<Sig>> = st
+        .buffered_txs
+        .iter()
+        .filter(|(txid, _)| reference_counts.contains_key(*txid))
+        .map(|(txid, tx)| (txid.clone(), tx.clone()))
+        .collect();
+    SharedTxState {
+        timed_txs,
+        reference_counts,
+        buffered_txs,
+        ..st.clone()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -696,6 +738,32 @@ mod tests {
         // `unknown_txs` is restricted to the live set (now empty).
         assert!(updated.unknown_txs.is_empty());
         assert_eq!(updated.requested_tx_ids_inflight, NumTxIdsToReq(req.0));
+    }
+
+    #[test]
+    fn tick_timed_txs_expires_past_deadlines() {
+        use crate::protocol::sig_submission::{SigHash, SigId};
+        let old = SigId(SigHash(vec![0x01]));
+        let fresh = SigId(SigHash(vec![0x02]));
+        let mut st: SharedTxState<String> = SharedTxState::default();
+        // `old` times out at t=5s; `fresh` at t=20s.
+        st.timed_txs
+            .insert(Duration::from_secs(5), vec![old.clone()]);
+        st.timed_txs
+            .insert(Duration::from_secs(20), vec![fresh.clone()]);
+        st.reference_counts.insert(old.clone(), 1);
+        st.reference_counts.insert(fresh.clone(), 1);
+        st.buffered_txs.insert(old.clone(), None);
+        st.buffered_txs.insert(fresh.clone(), None);
+        // Tick to t=10s — `old`'s 5 s deadline has passed.
+        let ticked = tick_timed_txs(Duration::from_secs(10), &st);
+        // `old` expired: ref count 1 - 1 = 0 -> dropped; buffered dropped.
+        assert!(!ticked.reference_counts.contains_key(&old));
+        assert!(!ticked.buffered_txs.contains_key(&old));
+        assert!(!ticked.timed_txs.values().flatten().any(|t| *t == old));
+        // `fresh` survives — its deadline is still in the future.
+        assert_eq!(ticked.reference_counts.get(&fresh), Some(&1));
+        assert!(ticked.buffered_txs.contains_key(&fresh));
     }
 
     #[test]
