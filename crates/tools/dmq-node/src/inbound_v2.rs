@@ -319,6 +319,52 @@ pub fn split_acknowledged_tx_ids<P: Ord>(
     )
 }
 
+/// Filter the governor's peers to those that can currently either
+/// download a `tx` or acknowledge `txid`s.
+///
+/// Mirror of upstream `filterActivePeers` (`Decision.hs`). A peer is
+/// active when it can request more txids (no txid request in flight,
+/// the unacknowledged count is under the limit, and there is request
+/// capacity) or it can download a tx (under the per-peer in-flight
+/// size limit and with at least one requestable available txid).
+pub fn filter_active_peers<P: Ord + Clone>(
+    policy: &SigDecisionPolicy,
+    shared: &SharedTxState<P>,
+) -> BTreeMap<P, PeerTxState> {
+    // Txids that cannot be requested: already in-flight from at least
+    // `tx_inflight_multiplicity` peers, or already buffered.
+    let mut unrequestable: BTreeSet<SigId> = shared
+        .inflight_txs
+        .iter()
+        .filter(|(_, count)| **count >= policy.tx_inflight_multiplicity as i64)
+        .map(|(id, _)| id.clone())
+        .collect();
+    unrequestable.extend(shared.buffered_txs.keys().cloned());
+
+    shared
+        .peer_tx_states
+        .iter()
+        .filter(|(_, peer)| {
+            let num_of_unacked = peer.unacknowledged_tx_ids.len() as i64;
+            let requested_inflight = i64::from(peer.requested_tx_ids_inflight.0);
+            let (tx_ids_to_request, _, _) = split_acknowledged_tx_ids(policy, shared, peer);
+            let can_request_ids = requested_inflight == 0
+                && requested_inflight + num_of_unacked <= policy.max_unacknowledged_tx_ids as i64
+                && tx_ids_to_request.0 > 0;
+            let under_size_limit =
+                u64::from(peer.requested_txs_inflight_size) <= policy.txs_size_inflight_per_peer;
+            let has_downloadable = peer.available_tx_ids.keys().any(|id| {
+                !peer.requested_txs_inflight.contains(id)
+                    && !peer.unknown_txs.contains(id)
+                    && !unrequestable.contains(id)
+                    && !shared.in_submission_to_mempool_txs.contains_key(id)
+            });
+            can_request_ids || (under_size_limit && has_downloadable)
+        })
+        .map(|(addr, peer)| (addr.clone(), peer.clone()))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -472,6 +518,28 @@ mod tests {
         let (_, acked, unacked) = split_acknowledged_tx_ids(&sig_decision_policy(), &shared, &peer);
         assert!(acked.is_empty());
         assert_eq!(unacked, VecDeque::from(vec![a]));
+    }
+
+    #[test]
+    fn filter_active_peers_keeps_only_the_active_ones() {
+        use crate::policy::sig_decision_policy;
+        let mut shared: SharedTxState<String> = SharedTxState::default();
+        // A fresh peer with no requests in flight can request txids —
+        // it is active.
+        shared
+            .peer_tx_states
+            .insert("active".to_string(), PeerTxState::default());
+        // An idle peer with a txid request already in flight and
+        // nothing available cannot do anything — it is inactive.
+        let idle = PeerTxState {
+            requested_tx_ids_inflight: NumTxIdsToReq(5),
+            ..Default::default()
+        };
+        shared.peer_tx_states.insert("idle".to_string(), idle);
+        let active = filter_active_peers(&sig_decision_policy(), &shared);
+        assert_eq!(active.len(), 1);
+        assert!(active.contains_key("active"));
+        assert!(!active.contains_key("idle"));
     }
 
     #[test]
