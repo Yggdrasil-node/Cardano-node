@@ -39,6 +39,33 @@ pub const HELP_TEXT: &str = include_str!("../tests/fixtures/upstream-help.txt");
 /// Byte-for-byte mirror of upstream `cardano-testnet --version` (captured at R335).
 pub const VERSION_TEXT: &str = include_str!("../tests/fixtures/upstream-version.txt");
 
+use crate::types::{PraosCredentialsSource, RpcSupport, TestnetRuntimeOptions};
+
+/// Parse the `TestnetRuntimeOptions` flags from a `cardano` /
+/// `create-env` argument list.
+///
+/// Mirror of upstream `pRuntimeOptions` (`Parsers/Cardano.hs`): the
+/// `--enable-new-epoch-state-logging` switch, the `--enable-grpc`
+/// flag (`RpcEnabled` when present, else `RpcDisabled`), and the
+/// `--use-kes-agent` flag (`UseKesSocket` when present, else
+/// `UseKesKeyFile`). Each defaults to off when its flag is absent.
+pub fn parse_runtime_options(args: &[String]) -> TestnetRuntimeOptions {
+    let has = |flag: &str| args.iter().any(|arg| arg == flag);
+    TestnetRuntimeOptions {
+        runtime_enable_new_epoch_state_logging: has("--enable-new-epoch-state-logging"),
+        runtime_enable_rpc: if has("--enable-grpc") {
+            RpcSupport::RpcEnabled
+        } else {
+            RpcSupport::RpcDisabled
+        },
+        runtime_kes_source: if has("--use-kes-agent") {
+            PraosCredentialsSource::UseKesSocket
+        } else {
+            PraosCredentialsSource::UseKesKeyFile
+        },
+    }
+}
+
 /// Top-level subcommand dispatch — partial mirror of upstream
 /// `data CardanoTestnetCommands`.
 ///
@@ -141,6 +168,36 @@ mod tests {
     #[test]
     fn detects_help_long_at_top_level() {
         assert_eq!(parse_args(["--help"]), Err(ParseError::HelpRequested));
+    }
+
+    #[test]
+    fn runtime_options_default_when_no_flags() {
+        let opts = parse_runtime_options(&[]);
+        assert!(!opts.runtime_enable_new_epoch_state_logging);
+        assert_eq!(opts.runtime_enable_rpc, RpcSupport::RpcDisabled);
+        assert_eq!(
+            opts.runtime_kes_source,
+            PraosCredentialsSource::UseKesKeyFile
+        );
+    }
+
+    #[test]
+    fn runtime_options_pick_up_each_flag() {
+        let args: Vec<String> = [
+            "--enable-new-epoch-state-logging",
+            "--enable-grpc",
+            "--use-kes-agent",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let opts = parse_runtime_options(&args);
+        assert!(opts.runtime_enable_new_epoch_state_logging);
+        assert_eq!(opts.runtime_enable_rpc, RpcSupport::RpcEnabled);
+        assert_eq!(
+            opts.runtime_kes_source,
+            PraosCredentialsSource::UseKesSocket
+        );
     }
 
     #[test]
