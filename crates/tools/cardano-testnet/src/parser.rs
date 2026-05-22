@@ -15,16 +15,17 @@
 //! | `version VersionOptions`     | [`Command::Version`]                     |
 //! | `help ...`                   | [`ParseError::HelpRequested`] short-circuit |
 //!
-//! Carve-outs (NOT ported in R367; tracked under `remaining_work`):
+//! The era-aware option parsers of `Parsers/Cardano.hs` land
+//! incrementally from R818 (`parse_runtime_options`,
+//! `parse_genesis_options` so far) — the earlier "blocked on
+//! yggdrasil-ledger's era surface" carve-out was resolved by the
+//! R783-R786 era-type ports (`CardanoEra` / `ShelleyBasedEra` and
+//! the option records). The `Command` variants still carry
+//! `PassthroughArgs` until those parsers compose into the full
+//! `CardanoTestnetCliOptions` / `CardanoTestnetCreateEnvOptions`.
 //!
-//! - **`CardanoTestnetCliOptions` payload** (era-aware): the deep
-//!   record carries `Cardano.Api.AnyShelleyBasedEra` / cluster
-//!   topology / per-era genesis options. Yggdrasil's port stops at
-//!   the subcommand-recognition layer; the era-aware payload lands
-//!   when yggdrasil-ledger's era surface is exposed at crate
-//!   boundaries.
-//! - **`CardanoTestnetCreateEnvOptions` payload** (era-aware): same
-//!   carve-out as above.
+//! Carve-out:
+//!
 //! - **`Cardano.CLI.Environment.EnvCli`** (env-var threading): the
 //!   Yggdrasil port is environment-blind for this binary; future
 //!   rounds can layer env-var threading on top.
@@ -39,7 +40,67 @@ pub const HELP_TEXT: &str = include_str!("../tests/fixtures/upstream-help.txt");
 /// Byte-for-byte mirror of upstream `cardano-testnet --version` (captured at R335).
 pub const VERSION_TEXT: &str = include_str!("../tests/fixtures/upstream-version.txt");
 
-use crate::types::{PraosCredentialsSource, RpcSupport, TestnetRuntimeOptions};
+use std::str::FromStr;
+
+use crate::types::{GenesisOptions, PraosCredentialsSource, RpcSupport, TestnetRuntimeOptions};
+
+/// Look up the value following a `--flag` in an argument list.
+///
+/// Returns `Ok(None)` when the flag is absent, `Ok(Some(value))` when
+/// it is present with a following value, and
+/// [`ParseError::MissingFlagValue`] when the flag is the last
+/// argument (present with no value).
+fn flag_with_value<'a>(args: &'a [String], flag: &str) -> Result<Option<&'a str>, ParseError> {
+    match args.iter().position(|arg| arg == flag) {
+        None => Ok(None),
+        Some(idx) => args
+            .get(idx + 1)
+            .map(|value| Some(value.as_str()))
+            .ok_or_else(|| ParseError::MissingFlagValue {
+                flag: flag.to_string(),
+            }),
+    }
+}
+
+/// Parse a `--flag value` option, falling back to `default` when the
+/// flag is absent.
+fn flag_or_default<T: FromStr>(args: &[String], flag: &str, default: T) -> Result<T, ParseError> {
+    match flag_with_value(args, flag)? {
+        None => Ok(default),
+        Some(value) => value.parse().map_err(|_| ParseError::InvalidFlagValue {
+            flag: flag.to_string(),
+            value: value.to_string(),
+        }),
+    }
+}
+
+/// Parse the `GenesisOptions` flags from a `cardano` / `create-env`
+/// argument list — `--testnet-magic`, `--epoch-length`,
+/// `--slot-length`, and `--active-slots-coeff`, each defaulting to
+/// `GenesisOptions::default()`.
+///
+/// Mirror of upstream `pGenesisOptions` (`Parsers/Cardano.hs`).
+pub fn parse_genesis_options(args: &[String]) -> Result<GenesisOptions, ParseError> {
+    let default = GenesisOptions::default();
+    Ok(GenesisOptions {
+        genesis_testnet_magic: flag_or_default(
+            args,
+            "--testnet-magic",
+            default.genesis_testnet_magic,
+        )?,
+        genesis_epoch_length: flag_or_default(
+            args,
+            "--epoch-length",
+            default.genesis_epoch_length,
+        )?,
+        genesis_slot_length: flag_or_default(args, "--slot-length", default.genesis_slot_length)?,
+        genesis_active_slots_coeff: flag_or_default(
+            args,
+            "--active-slots-coeff",
+            default.genesis_active_slots_coeff,
+        )?,
+    })
+}
 
 /// Parse the `TestnetRuntimeOptions` flags from a `cardano` /
 /// `create-env` argument list.
@@ -119,6 +180,20 @@ pub enum ParseError {
     /// An unknown subcommand was supplied.
     #[error("unknown subcommand: {0}")]
     UnknownSubcommand(String),
+    /// A flag was given a value that could not be parsed.
+    #[error("invalid value for {flag}: {value}")]
+    InvalidFlagValue {
+        /// The flag whose value could not be parsed.
+        flag: String,
+        /// The offending value.
+        value: String,
+    },
+    /// A flag that requires a value was supplied without one.
+    #[error("missing value for {flag}")]
+    MissingFlagValue {
+        /// The flag missing its value.
+        flag: String,
+    },
 }
 
 /// Parse a slice of command-line arguments into a [`Command`]. R367
@@ -178,6 +253,59 @@ mod tests {
         assert_eq!(
             opts.runtime_kes_source,
             PraosCredentialsSource::UseKesKeyFile
+        );
+    }
+
+    #[test]
+    fn genesis_options_default_when_no_flags() {
+        assert_eq!(parse_genesis_options(&[]), Ok(GenesisOptions::default()));
+    }
+
+    #[test]
+    fn genesis_options_parse_each_flag() {
+        let args: Vec<String> = [
+            "--testnet-magic",
+            "7",
+            "--epoch-length",
+            "600",
+            "--slot-length",
+            "0.2",
+            "--active-slots-coeff",
+            "0.1",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let opts = parse_genesis_options(&args).expect("valid flags");
+        assert_eq!(opts.genesis_testnet_magic, 7);
+        assert_eq!(opts.genesis_epoch_length, 600);
+        assert_eq!(opts.genesis_slot_length, 0.2);
+        assert_eq!(opts.genesis_active_slots_coeff, 0.1);
+    }
+
+    #[test]
+    fn genesis_options_reject_a_bad_value() {
+        let args: Vec<String> = ["--testnet-magic", "not-a-number"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(
+            parse_genesis_options(&args),
+            Err(ParseError::InvalidFlagValue {
+                flag: "--testnet-magic".to_string(),
+                value: "not-a-number".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn genesis_options_reject_a_flag_without_a_value() {
+        let args: Vec<String> = ["--epoch-length"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(
+            parse_genesis_options(&args),
+            Err(ParseError::MissingFlagValue {
+                flag: "--epoch-length".to_string(),
+            })
         );
     }
 
