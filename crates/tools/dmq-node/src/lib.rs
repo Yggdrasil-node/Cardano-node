@@ -29,6 +29,7 @@ pub mod configuration;
 pub mod delta_q;
 pub mod diffusion;
 pub mod inbound_v2;
+pub mod keep_alive;
 pub mod mempool;
 pub mod node_to_client;
 pub mod node_to_node;
