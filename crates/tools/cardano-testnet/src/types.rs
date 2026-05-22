@@ -8,11 +8,12 @@
 //! the numeric newtypes, the option enums, the era tags
 //! (`CardanoEra` / `ShelleyBasedEra`), and the option records
 //! (`GenesisOptions`, `NodeOption`, `TestnetRuntimeOptions`,
-//! `TestnetEnvOptions`, `TestnetCreationOptions`). The top-level
-//! CLI-options records that compose these
-//! (`CardanoTestnetCliOptions`, `NoUserProvidedEnvOptions`,
-//! `StartFromEnvOptions`, `CardanoTestnetCreateEnvOptions`) land in
-//! a subsequent round.
+//! `TestnetEnvOptions`, `TestnetCreationOptions`) and the top-level
+//! CLI-options records that compose them (`CardanoTestnetCliOptions`,
+//! `NoUserProvidedEnvOptions`, `StartFromEnvOptions`,
+//! `CardanoTestnetCreateEnvOptions`). The remaining `Start/Types.hs`
+//! surface — `Conf` / `mkConf` directory setup, `UserProvidedGeneses`
+//! — is IO- or era-genesis-coupled.
 //!
 //! Carve-outs:
 //!
@@ -458,6 +459,57 @@ impl TestnetCreationOptions {
     }
 }
 
+/// Options for `cardano-testnet cardano` when no user-provided
+/// environment is given — create a new environment, then start the
+/// testnet.
+///
+/// Mirror of upstream `data NoUserProvidedEnvOptions`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct NoUserProvidedEnvOptions {
+    /// How to create the environment.
+    pub no_env_creation_options: TestnetCreationOptions,
+    /// `--output-dir`; a temporary directory is used if absent.
+    pub no_env_output_dir: Option<PathBuf>,
+    /// How to run the testnet nodes once created.
+    pub no_env_runtime_options: TestnetRuntimeOptions,
+}
+
+/// Options for `cardano-testnet cardano --node-env` — start the
+/// testnet from a pre-existing environment (created by `create-env`).
+///
+/// Mirror of upstream `data StartFromEnvOptions`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct StartFromEnvOptions {
+    /// The pre-existing environment to start from.
+    pub from_env_options: TestnetEnvOptions,
+    /// How to run the testnet nodes.
+    pub from_env_runtime_options: TestnetRuntimeOptions,
+}
+
+/// Command-line options for the `cardano-testnet cardano` command —
+/// either create a new testnet environment or use a pre-existing one.
+///
+/// Mirror of upstream `data CardanoTestnetCliOptions`.
+#[derive(Clone, Debug, PartialEq)]
+pub enum CardanoTestnetCliOptions {
+    /// Create a new environment, then start the testnet.
+    NoUserProvidedEnv(NoUserProvidedEnvOptions),
+    /// Start from a pre-existing (`create-env`-created) environment.
+    StartFromEnv(StartFromEnvOptions),
+}
+
+/// Command-line options for the `cardano-testnet create-env`
+/// subcommand — create a sandbox environment without starting nodes.
+///
+/// Mirror of upstream `data CardanoTestnetCreateEnvOptions`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CardanoTestnetCreateEnvOptions {
+    /// How to create the environment.
+    pub create_env_creation_options: TestnetCreationOptions,
+    /// The required `--output` directory.
+    pub create_env_output_dir: PathBuf,
+}
+
 /// Errors from parsing operator-supplied option strings.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum ParseError {
@@ -618,6 +670,42 @@ mod tests {
         // The default node set is one SPO and two relays.
         assert_eq!(d.creation_num_pools(), NumPools(1));
         assert_eq!(d.creation_num_relays(), NumRelays(2));
+    }
+
+    #[test]
+    fn cardano_testnet_cli_options_variants() {
+        let no_env = CardanoTestnetCliOptions::NoUserProvidedEnv(NoUserProvidedEnvOptions {
+            no_env_creation_options: TestnetCreationOptions::default(),
+            no_env_output_dir: None,
+            no_env_runtime_options: TestnetRuntimeOptions::default(),
+        });
+        let from_env = CardanoTestnetCliOptions::StartFromEnv(StartFromEnvOptions {
+            from_env_options: TestnetEnvOptions {
+                env_path: PathBuf::from("/tmp/env"),
+                env_update_timestamps: UpdateTimestamps::DontUpdateTimestamps,
+            },
+            from_env_runtime_options: TestnetRuntimeOptions::default(),
+        });
+        assert_ne!(no_env, from_env);
+        match from_env {
+            CardanoTestnetCliOptions::StartFromEnv(o) => {
+                assert_eq!(o.from_env_options.env_path, PathBuf::from("/tmp/env"));
+            }
+            CardanoTestnetCliOptions::NoUserProvidedEnv(_) => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn create_env_options_requires_output_dir() {
+        let opts = CardanoTestnetCreateEnvOptions {
+            create_env_creation_options: TestnetCreationOptions::default(),
+            create_env_output_dir: PathBuf::from("/tmp/sandbox"),
+        };
+        assert_eq!(opts.create_env_output_dir, PathBuf::from("/tmp/sandbox"));
+        assert_eq!(
+            opts.create_env_creation_options.creation_era,
+            ShelleyBasedEra::Conway
+        );
     }
 
     #[test]
