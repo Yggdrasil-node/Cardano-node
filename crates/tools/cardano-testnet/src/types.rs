@@ -4,14 +4,15 @@
 //!
 //! **Strict mirror:** cardano-testnet/src/Testnet/Start/Types.hs.
 //!
-//! R359 ports the simple operator-facing knobs from upstream's
-//! Start/Types.hs: numeric newtypes, enum variants, and small helper
-//! types that don't pull in the deeper `Cardano.Api` /
-//! `Cardano.Ledger.*` machinery. The full record types
-//! (`CardanoTestnetCliOptions`, `TestnetCreationOptions`,
-//! `GenesisOptions`, `NodeOption`, etc.) carry era-aware fields whose
-//! Rust port depends on yggdrasil-ledger's era-aware genesis and
-//! protocol-parameter surface — those land in subsequent rounds.
+//! Ports the operator-facing surface of upstream `Start/Types.hs`:
+//! the numeric newtypes, the option enums, the era tags
+//! (`CardanoEra` / `ShelleyBasedEra`), and the option records
+//! (`GenesisOptions`, `NodeOption`, `TestnetRuntimeOptions`,
+//! `TestnetEnvOptions`, `TestnetCreationOptions`). The top-level
+//! CLI-options records that compose these
+//! (`CardanoTestnetCliOptions`, `NoUserProvidedEnvOptions`,
+//! `StartFromEnvOptions`, `CardanoTestnetCreateEnvOptions`) land in
+//! a subsequent round.
 //!
 //! Carve-outs:
 //!
@@ -405,6 +406,58 @@ pub fn cardano_default_testnet_node_options() -> Vec<NodeOption> {
     ]
 }
 
+/// Options for creating a testnet environment — used by both the
+/// `cardano` and `create-env` subcommands.
+///
+/// Mirror of upstream `data TestnetCreationOptions` with
+/// `instance Default`. `PartialEq` only — upstream derives `Eq` but
+/// `GenesisOptions` carries `f64` fields.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TestnetCreationOptions {
+    /// How many nodes to create and of which kind (upstream's
+    /// `NonEmpty NodeOption`).
+    pub creation_nodes: Vec<NodeOption>,
+    /// The era to start the testnet at.
+    pub creation_era: ShelleyBasedEra,
+    /// Starting Lovelace supply (forwarded to the Shelley genesis).
+    pub creation_max_supply: u64,
+    /// The number of DReps to generate at creation.
+    pub creation_num_dreps: NumDReps,
+    /// The Shelley-genesis knobs.
+    pub creation_genesis_options: GenesisOptions,
+    /// The on-chain protocol parameters to start with.
+    pub creation_on_chain_params: TestnetOnChainParams,
+}
+
+impl Default for TestnetCreationOptions {
+    fn default() -> Self {
+        TestnetCreationOptions {
+            creation_nodes: cardano_default_testnet_node_options(),
+            creation_era: ShelleyBasedEra::Conway,
+            creation_max_supply: 100_000_020_000_000,
+            creation_num_dreps: NumDReps(3),
+            creation_genesis_options: GenesisOptions::default(),
+            creation_on_chain_params: TestnetOnChainParams::default(),
+        }
+    }
+}
+
+impl TestnetCreationOptions {
+    /// The number of stake-pool-operator nodes.
+    ///
+    /// Mirror of upstream `creationNumPools`.
+    pub fn creation_num_pools(&self) -> NumPools {
+        NumPools(self.creation_nodes.iter().filter(|n| n.is_spo()).count() as i32)
+    }
+
+    /// The number of relay nodes.
+    ///
+    /// Mirror of upstream `creationNumRelays`.
+    pub fn creation_num_relays(&self) -> NumRelays {
+        NumRelays(self.creation_nodes.iter().filter(|n| n.is_relay()).count() as i32)
+    }
+}
+
 /// Errors from parsing operator-supplied option strings.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum ParseError {
@@ -544,6 +597,27 @@ mod tests {
         assert_eq!(nodes.len(), 3);
         assert_eq!(nodes.iter().filter(|n| n.is_spo()).count(), 1);
         assert_eq!(nodes.iter().filter(|n| n.is_relay()).count(), 2);
+    }
+
+    #[test]
+    fn testnet_creation_options_default_matches_upstream() {
+        let d = TestnetCreationOptions::default();
+        assert_eq!(d.creation_era, ShelleyBasedEra::Conway);
+        assert_eq!(d.creation_max_supply, 100_000_020_000_000);
+        assert_eq!(d.creation_num_dreps, NumDReps(3));
+        assert_eq!(d.creation_genesis_options, GenesisOptions::default());
+        assert_eq!(
+            d.creation_on_chain_params,
+            TestnetOnChainParams::DefaultParams
+        );
+    }
+
+    #[test]
+    fn testnet_creation_options_count_pools_and_relays() {
+        let d = TestnetCreationOptions::default();
+        // The default node set is one SPO and two relays.
+        assert_eq!(d.creation_num_pools(), NumPools(1));
+        assert_eq!(d.creation_num_relays(), NumRelays(2));
     }
 
     #[test]
