@@ -533,6 +533,124 @@ pub fn tick_timed_txs<P: Ord + Clone>(now: Duration, st: &SharedTxState<P>) -> S
     }
 }
 
+/// Internal accumulator state threaded through [`pick_peer_step`] by
+/// the (forthcoming) `pick_txs_to_download` fold.
+///
+/// Mirror of upstream `data St peeraddr txid tx` (`Decision.hs`).
+#[derive(Clone, Debug, Eq, PartialEq, Default)]
+pub struct PickTxsState {
+    /// Txids in-flight, with multiplicity.
+    pub st_inflight: BTreeMap<SigId, i64>,
+    /// Acknowledged txids with multiplicity — used to update the
+    /// shared reference counts.
+    pub st_acknowledged: BTreeMap<SigId, i64>,
+    /// Txs on their way to the mempool — blocks new fetch requests
+    /// for them.
+    pub st_in_submission_to_mempool_txs: BTreeSet<SigId>,
+}
+
+/// Pick the txs one peer should download, acknowledge its txids, and
+/// advance the cross-peer [`PickTxsState`] accumulator.
+///
+/// Mirror of the per-peer `accumFn` of upstream `pickTxsToDownload`
+/// (`Decision.hs`). Txs are picked from the peer's available txids
+/// (in txid order) until the per-peer in-flight size limit is reached
+/// (it may be exceeded by one tx) or a txid is already in-flight from
+/// the maximum number of peers. Returns
+/// `(updated_state, updated_peer, decision)`.
+pub fn pick_peer_step<P: Ord>(
+    policy: &SigDecisionPolicy,
+    shared: &SharedTxState<P>,
+    st: PickTxsState,
+    peer: &PeerTxState,
+) -> (PickTxsState, PeerTxState, TxDecision) {
+    // Pick a prefix of the peer's available txids — skipping those
+    // buffered / in-flight / unknown / in submission to the mempool —
+    // until the size or multiplicity limit stops us.
+    let mut size_inflight = u64::from(peer.requested_txs_inflight_size);
+    let mut txs_to_request: BTreeMap<SigId, u32> = BTreeMap::new();
+    for (txid, &tx_size) in &peer.available_tx_ids {
+        if shared.buffered_txs.contains_key(txid)
+            || peer.requested_txs_inflight.contains(txid)
+            || peer.unknown_txs.contains(txid)
+            || st.st_in_submission_to_mempool_txs.contains(txid)
+        {
+            continue;
+        }
+        let multiplicity = st.st_inflight.get(txid).copied().unwrap_or(0);
+        if size_inflight <= policy.txs_size_inflight_per_peer
+            && multiplicity < policy.tx_inflight_multiplicity as i64
+        {
+            size_inflight += u64::from(tx_size);
+            txs_to_request.insert(txid.clone(), tx_size);
+        } else {
+            break;
+        }
+    }
+    let txs_to_request_set: BTreeSet<SigId> = txs_to_request.keys().cloned().collect();
+
+    // Record the new in-flight requests on the peer, then acknowledge.
+    let mut requested_txs_inflight = peer.requested_txs_inflight.clone();
+    requested_txs_inflight.extend(txs_to_request_set.iter().cloned());
+    let peer_prime = PeerTxState {
+        requested_txs_inflight_size: size_inflight as u32,
+        requested_txs_inflight,
+        ..peer.clone()
+    };
+    let (num_ids_to_ack, num_ids_to_req, txs_to_mempool, ref_diff, peer_dprime) =
+        acknowledge_tx_ids(policy, shared, &peer_prime);
+
+    // Thread the accumulator: acknowledged-txid multiplicities, the
+    // newly in-flight txids, and the to-mempool txids.
+    let mut st_acknowledged = st.st_acknowledged.clone();
+    for (txid, count) in &ref_diff.tx_ids_to_ack {
+        *st_acknowledged.entry(txid.clone()).or_insert(0) += count;
+    }
+    let mut st_inflight = st.st_inflight.clone();
+    for txid in &txs_to_request_set {
+        *st_inflight.entry(txid.clone()).or_insert(0) += 1;
+    }
+    let mut st_in_submission = st.st_in_submission_to_mempool_txs.clone();
+    for (txid, _) in &txs_to_mempool.list_of_txs_to_mempool {
+        st_in_submission.insert(txid.clone());
+    }
+
+    if peer_dprime.requested_tx_ids_inflight.0 > 0 {
+        let decision = TxDecision {
+            txd_tx_ids_to_acknowledge: num_ids_to_ack,
+            txd_tx_ids_to_request: num_ids_to_req,
+            txd_pipeline_tx_ids: !peer_dprime.unacknowledged_tx_ids.is_empty(),
+            txd_txs_to_request: txs_to_request,
+            txd_txs_to_mempool: txs_to_mempool,
+        };
+        (
+            PickTxsState {
+                st_inflight,
+                st_acknowledged,
+                st_in_submission_to_mempool_txs: st_in_submission,
+            },
+            peer_dprime,
+            decision,
+        )
+    } else {
+        // No txids to request — only txs. `st_acknowledged` is
+        // unchanged from the incoming accumulator.
+        let decision = TxDecision {
+            txd_txs_to_request: txs_to_request,
+            ..TxDecision::empty()
+        };
+        (
+            PickTxsState {
+                st_inflight,
+                st_acknowledged: st.st_acknowledged,
+                st_in_submission_to_mempool_txs: st_in_submission,
+            },
+            peer_dprime,
+            decision,
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -764,6 +882,60 @@ mod tests {
         // `fresh` survives — its deadline is still in the future.
         assert_eq!(ticked.reference_counts.get(&fresh), Some(&1));
         assert!(ticked.buffered_txs.contains_key(&fresh));
+    }
+
+    #[test]
+    fn pick_peer_step_picks_available_txs_under_the_limits() {
+        use crate::policy::sig_decision_policy;
+        use crate::protocol::sig_submission::{SigHash, SigId};
+        let a = SigId(SigHash(vec![0xa1]));
+        let b = SigId(SigHash(vec![0xb2]));
+        let peer = PeerTxState {
+            available_tx_ids: BTreeMap::from([(a.clone(), 100u32), (b.clone(), 200u32)]),
+            ..Default::default()
+        };
+        let shared: SharedTxState<String> = SharedTxState::default();
+        let (st, _peer, decision) = pick_peer_step(
+            &sig_decision_policy(),
+            &shared,
+            PickTxsState::default(),
+            &peer,
+        );
+        // Both available txs are picked into the request map.
+        assert_eq!(decision.txd_txs_to_request.get(&a), Some(&100));
+        assert_eq!(decision.txd_txs_to_request.get(&b), Some(&200));
+        // The accumulator records them as newly in-flight.
+        assert_eq!(st.st_inflight.get(&a), Some(&1));
+        assert_eq!(st.st_inflight.get(&b), Some(&1));
+    }
+
+    #[test]
+    fn pick_peer_step_skips_buffered_and_inflight_txs() {
+        use crate::policy::sig_decision_policy;
+        use crate::protocol::sig_submission::{SigHash, SigId};
+        let buffered = SigId(SigHash(vec![0x01]));
+        let inflight = SigId(SigHash(vec![0x02]));
+        let pickable = SigId(SigHash(vec![0x03]));
+        let peer = PeerTxState {
+            available_tx_ids: BTreeMap::from([
+                (buffered.clone(), 50u32),
+                (inflight.clone(), 50u32),
+                (pickable.clone(), 50u32),
+            ]),
+            requested_txs_inflight: BTreeSet::from([inflight.clone()]),
+            ..Default::default()
+        };
+        let mut shared: SharedTxState<String> = SharedTxState::default();
+        shared.buffered_txs.insert(buffered.clone(), None);
+        let (_st, _peer, decision) = pick_peer_step(
+            &sig_decision_policy(),
+            &shared,
+            PickTxsState::default(),
+            &peer,
+        );
+        // Only the un-excluded txid is requested.
+        assert_eq!(decision.txd_txs_to_request.len(), 1);
+        assert!(decision.txd_txs_to_request.contains_key(&pickable));
     }
 
     #[test]
