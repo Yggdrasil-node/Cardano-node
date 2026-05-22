@@ -1,9 +1,12 @@
 # Guidance for the pure-Rust port of upstream `dmq-node`.
 
-**Status:** `partial`. The DMQ protocol-definition surface is
-**complete** (R717-R754 — see *Current functional surface*); the
-remaining runtime / diffusion sub-arc is a deliberate carve-out.
-Scope band: **MEDIUM**.
+**Status:** `partial`. The DMQ pure-logic surface is **complete** —
+the protocol definitions, all six peer drivers, the NtN/NtC version
+surfaces, the `MempoolSeq` signature store, and the full inbound-V2
+tx-submission governor (R717-R801 — see *Current functional
+surface*). The remaining `NodeKernel` / `Diffusion/*` / `run()` mux
+event-loop integration is a deliberate carve-out. Scope band:
+**MEDIUM**.
 
 ## Strict 1:1 file-mirror policy (R274+)
 
@@ -22,7 +25,7 @@ Vendored at: `.reference-haskell-cardano-node/deps/dmq-node/` (51 `.hs` files).
 
 Delegated Mempool Queue diffusion-layer node (sister project for Mithril). Phase D.1 mini-arc R450-R459 (10 rounds, MEDIUM). R453-R454 port the DMQ wire protocol + mempool queue logic; R455 reuses the local-socket pattern from `crates/network/src/local_state_query_server.rs`; R456 reuses `crates/network` mux for the cardano-node connection.
 
-## Current functional surface (post-R768)
+## Current functional surface (post-R801)
 
 ### CLI surface
 
@@ -94,6 +97,22 @@ following the `crates/network` mini-protocol-driver pattern
   `Acceptable` negotiation, and the CBOR-term codecs.
 - ✅ The NtN / NtC mux mini-protocol numbers (`node_to_node.rs` /
   `node_to_client.rs`) and `NTC_MAX_SIGS_TO_ACK`.
+
+### Signature mempool + inbound-V2 governor — complete (R787-R801)
+
+- ✅ `mempool.rs` — `MempoolSeq` / `WithIndex`: the in-memory
+  signature mempool the DMQ `NodeKernel` holds (port of the pure core
+  of `Ouroboros.Network.TxSubmission.Mempool.Simple`).
+- ✅ `inbound_v2.rs` — the complete inbound-V2 tx-submission governor
+  (port of `Ouroboros.Network.TxSubmission.Inbound.V2.{Types,State,
+  Decision}`): the state surface (`TxDecision`, `PeerTxState`,
+  `SharedTxState`), the seven decision-path functions
+  (`split_acknowledged_tx_ids`, `acknowledge_tx_ids`,
+  `pick_peer_step`, `pick_txs_to_download`, `make_decisions`,
+  `filter_active_peers`, `update_ref_counts` / `tick_timed_txs`), and
+  both inbound handlers (`received_tx_ids_impl`, `collect_txs_impl`).
+  dmq-node-local — `crates/consensus`'s governor is concrete over
+  ledger txs.
 
 ### Deferred — the mux / diffusion event-loop integration
 
