@@ -14,11 +14,12 @@
 //!
 //! Ports the inbound-V2 state surface — the foundational types,
 //! `TxDecision`, `PeerTxState`, `SharedTxState` — and the governor
-//! functions incrementally (`update_ref_counts`, `tick_timed_txs`,
+//! functions: `update_ref_counts`, `tick_timed_txs`,
 //! `split_acknowledged_tx_ids`, `filter_active_peers`,
-//! `acknowledge_tx_ids`, `pick_txs_to_download` so far). The remaining
-//! `State.hs` / `Decision.hs` functions (`receivedTxIdsImpl`,
-//! `collectTxsImpl`, `makeDecisions`) land in subsequent rounds.
+//! `acknowledge_tx_ids`, `pick_txs_to_download`, and the
+//! `make_decisions` orchestrator. The remaining `State.hs`
+//! state-mutation functions (`receivedTxIdsImpl`, `collectTxsImpl`)
+//! land in subsequent rounds.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::time::Duration;
@@ -736,6 +737,60 @@ pub fn pick_txs_to_download<P: Ord + Clone>(
     (updated_shared, decisions)
 }
 
+/// A salted hash of a peer address, used as the tie-breaker in
+/// [`order_by_rejections`].
+fn hash_with_salt<P: std::hash::Hash>(salt: u64, peer: &P) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    salt.hash(&mut hasher);
+    peer.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Order peers by how useful their delivered txs have been — the
+/// lower-`score` (more useful) peers first — with a salted
+/// `peeraddr` hash as the tie-breaker.
+///
+/// Mirror of upstream `orderByRejections` (`Decision.hs`).
+pub fn order_by_rejections<P: Ord + Clone + std::hash::Hash>(
+    salt: u64,
+    peers: &BTreeMap<P, PeerTxState>,
+) -> Vec<(P, PeerTxState)> {
+    let mut ordered: Vec<(P, PeerTxState)> =
+        peers.iter().map(|(a, p)| (a.clone(), p.clone())).collect();
+    ordered.sort_by(|(a_addr, a_ps), (b_addr, b_ps)| {
+        a_ps.score
+            .total_cmp(&b_ps.score)
+            .then_with(|| hash_with_salt(salt, a_addr).cmp(&hash_with_salt(salt, b_addr)))
+    });
+    ordered
+}
+
+/// Make download decisions for a set of active peers.
+///
+/// Mirror of upstream `makeDecisions` (`Decision.hs`): draws a salt
+/// from the governor PRNG (advancing it), orders the peers by
+/// usefulness via [`order_by_rejections`], runs
+/// [`pick_txs_to_download`], and collects the per-peer decisions into
+/// a map. The `peer_rng` step is a yggdrasil-side splitmix increment
+/// — not byte-identical to upstream's `StdGen`; the salt only
+/// randomises tie-breaking and has no wire effect.
+pub fn make_decisions<P: Ord + Clone + std::hash::Hash>(
+    policy: &SigDecisionPolicy,
+    st: &SharedTxState<P>,
+    peers: &BTreeMap<P, PeerTxState>,
+) -> (SharedTxState<P>, BTreeMap<P, TxDecision>) {
+    let salt = st.peer_rng;
+    let next_rng = st.peer_rng.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    let st_with_rng = SharedTxState {
+        peer_rng: next_rng,
+        ..st.clone()
+    };
+    let ordered = order_by_rejections(salt, peers);
+    let (updated_shared, decisions) = pick_txs_to_download(policy, &st_with_rng, &ordered);
+    (updated_shared, decisions.into_iter().collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1050,6 +1105,41 @@ mod tests {
         // The shared state retains both peers and records the request.
         assert_eq!(updated.peer_tx_states.len(), 2);
         assert_eq!(updated.inflight_txs.get(&x), Some(&1));
+    }
+
+    #[test]
+    fn order_by_rejections_sorts_lower_score_first() {
+        let high = PeerTxState {
+            score: 9.0,
+            ..Default::default()
+        };
+        let low = PeerTxState {
+            score: 1.0,
+            ..Default::default()
+        };
+        let peers = BTreeMap::from([("high".to_string(), high), ("low".to_string(), low)]);
+        let ordered = order_by_rejections(42, &peers);
+        assert_eq!(ordered[0].0, "low");
+        assert_eq!(ordered[1].0, "high");
+    }
+
+    #[test]
+    fn make_decisions_advances_rng_and_decides() {
+        use crate::policy::sig_decision_policy;
+        use crate::protocol::sig_submission::{SigHash, SigId};
+        let x = SigId(SigHash(vec![0x42]));
+        let peer = PeerTxState {
+            available_tx_ids: BTreeMap::from([(x.clone(), 250u32)]),
+            ..Default::default()
+        };
+        let st: SharedTxState<String> = SharedTxState::default();
+        let peers = BTreeMap::from([("p".to_string(), peer)]);
+        let (updated, decisions) = make_decisions(&sig_decision_policy(), &st, &peers);
+        // The peer-ordering PRNG advanced.
+        assert_ne!(updated.peer_rng, st.peer_rng);
+        // The peer received a decision requesting its available tx.
+        assert!(decisions.contains_key("p"));
+        assert!(decisions["p"].txd_txs_to_request.contains_key(&x));
     }
 
     #[test]
