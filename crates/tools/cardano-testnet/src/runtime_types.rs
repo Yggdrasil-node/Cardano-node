@@ -8,8 +8,9 @@
 //! `lib.rs` layout table maps `Testnet/Types.hs` to this
 //! `runtime_types.rs`.
 //!
-//! This slice ports the portable key-file types — `KeyPair` and the
-//! key-kind markers. The process-handle-backed runtime types
+//! Ports the portable types: `KeyPair` and the key-kind markers, the
+//! SPO / payment / delegator key records, `LeadershipSlot`, and the
+//! default testnet IPv4. The process-handle-backed runtime types
 //! (`TestnetRuntime`, `TestnetNode`, `TestnetKesAgent`) land with the
 //! testnet-harness rounds. Upstream's `VKey` / `SKey` are `File`-tag
 //! phantoms with no Rust counterpart — yggdrasil's `KeyPair` stores
@@ -112,6 +113,46 @@ impl<K> KeyPair<K> {
     }
 }
 
+/// The cold, VRF, and staking key pairs of a stake-pool-operator
+/// (SPO) node.
+///
+/// Mirror of upstream `data SpoNodeKeys` (`Testnet/Types.hs`).
+/// Upstream's `MonoFunctor` instance — a typeclass for mapping a
+/// function over the contained file paths — is Haskell-specific
+/// machinery with no Rust counterpart; only the record is ported.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SpoNodeKeys {
+    /// The pool's cold (operator) key pair.
+    pub pool_node_keys_cold: KeyPair<StakePoolKey>,
+    /// The pool's VRF key pair.
+    pub pool_node_keys_vrf: KeyPair<VrfKey>,
+    /// The pool's staking key pair.
+    pub pool_node_keys_staking: KeyPair<StakeKey>,
+}
+
+/// A payment key pair together with its derived address.
+///
+/// Mirror of upstream `data PaymentKeyInfo` (`Testnet/Types.hs`).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PaymentKeyInfo {
+    /// The payment key pair.
+    pub payment_key_info_pair: KeyPair<PaymentKey>,
+    /// The address derived from the payment key.
+    pub payment_key_info_addr: String,
+}
+
+/// A stake delegator — a payment key pair and the staking key pair it
+/// delegates with.
+///
+/// Mirror of upstream `data Delegator` (`Testnet/Types.hs`).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Delegator {
+    /// The delegator's payment key pair.
+    pub payment_key_pair: KeyPair<PaymentKey>,
+    /// The delegator's staking key pair.
+    pub staking_key_pair: KeyPair<StakeKey>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -156,5 +197,39 @@ mod tests {
         let slot: LeadershipSlot = serde_json::from_str(json).expect("parses");
         assert_eq!(slot.slot_number, 4_492_800);
         assert_eq!(slot.slot_time, "2021-03-01T21:47:51Z");
+    }
+
+    #[test]
+    fn spo_node_keys_holds_the_three_kinded_pairs() {
+        let keys = SpoNodeKeys {
+            pool_node_keys_cold: KeyPair::new("cold.vkey", "cold.skey"),
+            pool_node_keys_vrf: KeyPair::new("vrf.vkey", "vrf.skey"),
+            pool_node_keys_staking: KeyPair::new("stake.vkey", "stake.skey"),
+        };
+        assert_eq!(
+            keys.pool_node_keys_cold.verification_key_fp().to_str(),
+            Some("cold.vkey")
+        );
+        assert_eq!(keys.clone(), keys);
+    }
+
+    #[test]
+    fn payment_key_info_carries_pair_and_address() {
+        let info = PaymentKeyInfo {
+            payment_key_info_pair: KeyPair::new("pay.vkey", "pay.skey"),
+            payment_key_info_addr: "addr_test1abc".to_string(),
+        };
+        assert_eq!(info.payment_key_info_addr, "addr_test1abc");
+    }
+
+    #[test]
+    fn delegator_pairs_payment_and_staking_keys() {
+        let a = Delegator {
+            payment_key_pair: KeyPair::new("p.vkey", "p.skey"),
+            staking_key_pair: KeyPair::new("s.vkey", "s.skey"),
+        };
+        let b = a.clone();
+        assert_eq!(a, b);
+        assert_eq!(a.staking_key_pair.signing_key_fp().to_str(), Some("s.skey"));
     }
 }
