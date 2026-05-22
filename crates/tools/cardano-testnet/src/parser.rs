@@ -45,8 +45,8 @@ use std::str::FromStr;
 
 use crate::types::{
     GenesisOptions, NodeOption, NumDReps, PraosCredentialsSource, RpcSupport,
-    TestnetCreationOptions, TestnetOnChainParams, TestnetRuntimeOptions,
-    cardano_default_testnet_node_options,
+    TestnetCreationOptions, TestnetEnvOptions, TestnetOnChainParams, TestnetRuntimeOptions,
+    UpdateTimestamps, cardano_default_testnet_node_options,
 };
 
 /// Look up the value following a `--flag` in an argument list.
@@ -146,6 +146,39 @@ pub fn parse_on_chain_params(args: &[String]) -> Result<TestnetOnChainParams, Pa
     } else {
         Ok(TestnetOnChainParams::DefaultParams)
     }
+}
+
+/// Parse the genesis-timestamp policy from a `cardano` / `create-env`
+/// argument list.
+///
+/// Mirror of upstream `pUpdateTimestamps` (`Parsers/Cardano.hs`):
+/// `--preserve-timestamps` yields `DontUpdateTimestamps`;
+/// `--update-time` or neither flag yields `UpdateTimestamps` (the
+/// parser default, kept for backward compatibility — note this
+/// differs from the `UpdateTimestamps` type's own `Default`, which
+/// is `DontUpdateTimestamps`).
+pub fn parse_update_timestamps(args: &[String]) -> UpdateTimestamps {
+    if args.iter().any(|arg| arg == "--preserve-timestamps") {
+        UpdateTimestamps::DontUpdateTimestamps
+    } else {
+        UpdateTimestamps::UpdateTimestamps
+    }
+}
+
+/// Parse a `TestnetEnvOptions` — a pre-existing testnet environment —
+/// from a `cardano` argument list.
+///
+/// Mirror of upstream `pFromEnv` (`Parsers/Cardano.hs`): the required
+/// `--node-env FILEPATH` plus the genesis-timestamp policy.
+pub fn parse_from_env(args: &[String]) -> Result<TestnetEnvOptions, ParseError> {
+    let env_path =
+        flag_with_value(args, "--node-env")?.ok_or_else(|| ParseError::MissingRequiredFlag {
+            flag: "--node-env".to_string(),
+        })?;
+    Ok(TestnetEnvOptions {
+        env_path: PathBuf::from(env_path),
+        env_update_timestamps: parse_update_timestamps(args),
+    })
 }
 
 /// Parse the `TestnetCreationOptions` from a `cardano` / `create-env`
@@ -269,6 +302,12 @@ pub enum ParseError {
         /// The flag missing its value.
         flag: String,
     },
+    /// A required flag was not supplied.
+    #[error("missing required flag {flag}")]
+    MissingRequiredFlag {
+        /// The required flag that was absent.
+        flag: String,
+    },
 }
 
 /// Parse a slice of command-line arguments into a [`Command`]. R367
@@ -369,6 +408,44 @@ mod tests {
         assert_eq!(
             parse_on_chain_params(&mainnet_args),
             Ok(TestnetOnChainParams::OnChainParamsMainnet)
+        );
+    }
+
+    #[test]
+    fn update_timestamps_flag_branches() {
+        assert_eq!(
+            parse_update_timestamps(&[]),
+            UpdateTimestamps::UpdateTimestamps
+        );
+        let preserve: Vec<String> = ["--preserve-timestamps".to_string()].to_vec();
+        assert_eq!(
+            parse_update_timestamps(&preserve),
+            UpdateTimestamps::DontUpdateTimestamps
+        );
+        let update: Vec<String> = ["--update-time".to_string()].to_vec();
+        assert_eq!(
+            parse_update_timestamps(&update),
+            UpdateTimestamps::UpdateTimestamps
+        );
+    }
+
+    #[test]
+    fn from_env_requires_node_env() {
+        assert_eq!(
+            parse_from_env(&[]),
+            Err(ParseError::MissingRequiredFlag {
+                flag: "--node-env".to_string(),
+            })
+        );
+        let args: Vec<String> = ["--node-env", "/tmp/env", "--preserve-timestamps"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let env = parse_from_env(&args).expect("node-env supplied");
+        assert_eq!(env.env_path, PathBuf::from("/tmp/env"));
+        assert_eq!(
+            env.env_update_timestamps,
+            UpdateTimestamps::DontUpdateTimestamps
         );
     }
 
