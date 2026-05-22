@@ -668,6 +668,21 @@ concurrency primitives (`Inbound/V2/Registry.hs`), the
 final assembly, so it lands as one coherent arc, not standalone
 pure-logic slices.
 
+R805-R806 ported the arc's clean leaf components: `registry.rs`
+(`TxChannels` / `TxChannelsVar` / `TxMempoolSem` — the
+`Inbound/V2/Registry.hs` channel registry) and `StakePools` (the
+`Diffusion/NodeKernel/Types.hs` stake-pool monitoring record,
+reusing `yggdrasil_network::LedgerPeerSnapshot`). R807 verified the
+next step — the `NodeKernel` composition — is blocked behind deeper
+`ouroboros-network` runtime-infrastructure subsystems: its
+`fetchClientRegistry` field needs the BlockFetch `FetchClientRegistry`
+(a multi-field record over `FetchClientStateVars` / `FetchClientPolicy`
+/ `bracketSyncWithFetchClient`), and `peerSharingRegistry` /
+`peerSharingAPI` need the peer-sharing registry/API infrastructure —
+neither exported by `crates/network`. Those are subsystem ports, not
+bounded slices; the `NodeKernel` assembly and the `run()` event loop
+follow them.
+
 **Scope:** ~5–8 rounds per tool. **Exit:** each
 reaches `implemented_needs_11_0_1_evidence` in `parity-matrix.json`.
 
