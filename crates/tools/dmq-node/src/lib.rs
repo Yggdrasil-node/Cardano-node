@@ -27,6 +27,7 @@ use std::process::ExitCode;
 
 pub mod configuration;
 pub mod diffusion;
+pub mod inbound_v2;
 pub mod mempool;
 pub mod node_to_client;
 pub mod node_to_node;
