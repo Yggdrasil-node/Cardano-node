@@ -1,10 +1,9 @@
 # Guidance for the pure-Rust port of upstream `cardano-testnet`.
 
-**Status:** `partial` (post-R335-pattern skeleton plus typed command
-dispatch and simple option types). The old cardano-cli CLI-MVS
-prerequisite is closed; concrete work here is now the cardano-testnet
-era-aware parser/runtime/process implementation arc plus upstream
-comparison evidence. Scope band: **LARGE**.
+**Status:** `partial`. The CLI skeleton plus the **era-free portable
+type surface is complete** (R772-R785 — see *Current functional
+surface*); what remains is the runtime / era-genesis / process-harness
+layer. Scope band: **LARGE**.
 
 ## Strict 1:1 file-mirror policy (R274+)
 
@@ -27,19 +26,53 @@ closed. The next implementation slices should start from the vendored
 `Testnet/Process/Cli/*` surfaces, while preserving the approved
 Hedgehog Process/Property carve-out (`tokio::process` + `proptest`).
 
-## Current functional surface (post-R445)
+## Current functional surface (post-R785)
 
-- ✅ `<binary> --help` byte-equivalent to upstream (golden test pinned
-  in `tests/cli_help_golden.rs`).
-- ✅ `<binary> --version` byte-equivalent to upstream.
-- ✅ Typed `parser::Command` dispatch — 3 subcommands recognized
-  (`cardano`, `create-env`, `version`).
+### CLI surface
+
+- ✅ `<binary> --help` / `--version` byte-equivalent to upstream
+  (golden tests in `tests/`).
+- ✅ Typed `parser::Command` dispatch — 3 subcommands (`cardano`,
+  `create-env`, `version`).
+
+### Era-free portable type surface — complete (R772-R785)
+
+- ✅ `types.rs` — the full `Testnet/Start/Types.hs` operator surface:
+  the numeric newtypes (`NodeId`, `NumPools`, `NumRelays`,
+  `NumDReps`), the option enums (`UpdateTimestamps`,
+  `TestnetOnChainParams`, `RpcSupport`, `NodeLoggingFormat`,
+  `GenesisHashesPolicy`, `PraosCredentialsSource`, `UserProvidedData`),
+  the era tags (`CardanoEra`, `ShelleyBasedEra` with `era_to_string`),
+  and every option record (`GenesisOptions`, `NodeOption`,
+  `TestnetRuntimeOptions`, `TestnetEnvOptions`, `TestnetCreationOptions`,
+  `NoUserProvidedEnvOptions`, `StartFromEnvOptions`,
+  `CardanoTestnetCliOptions`, `CardanoTestnetCreateEnvOptions`). R772
+  fixed an inverted `UpdateTimestamps` `Default` (parity bug).
+- ✅ `runtime_types.rs` — `Testnet/Types.hs` portable types:
+  `KeyPair<K>` + the six key-kind markers, `SpoNodeKeys`,
+  `PaymentKeyInfo`, `Delegator`, `LeadershipSlot`,
+  `TESTNET_DEFAULT_IPV4_ADDRESS`.
+- ✅ `paths.rs` — the `Cardano.Node.Testnet.Paths` directory
+  conventions.
+- ✅ `filepath.rs` — `Testnet/Filepath.hs`: `TmpAbsolutePath`,
+  `Sprocket`, the temp-path helpers.
+- ✅ `defaults.rs` — `Testnet/Defaults.hs` era-free scripts
+  (`simple_script`, the Plutus test scripts).
+- ✅ `components/` — `TestnetWaitPeriod` (`Query.hs`) and the
+  `Configuration.hs` constants.
+
+### Deferred — runtime / era-genesis / harness
+
 - ❌ Per-subcommand era-aware dispatch — returns
-  `RunError::SubcommandEraDispatchDeferred { subcommand: status::Subcommand }`
-  (R445 structured deferral). See **Carve-out inventory** below.
-- ❌ End-to-end behavioral tests against upstream binary — pending
-  the cardano-testnet implementation arc + yggdrasil-ledger era
-  surface being exposed at crate boundaries.
+  `RunError::SubcommandEraDispatchDeferred`. See **Carve-out
+  inventory** below.
+- ❌ The process-handle runtime types (`TestnetNode`,
+  `TestnetRuntime`, `TestnetKesAgent` — they hold OS process / stdio
+  handles), the per-era genesis records (`Defaults.hs`), the
+  `Components/` node-query / genesis-creation bodies, the `Start/*`
+  era startup, and the `Process/*` Hedgehog→tokio harness carve-out.
+- ❌ End-to-end behavioral tests against the upstream binary —
+  pending that runtime layer.
 
 ## Carve-out inventory (R445 structured deferral surface)
 
