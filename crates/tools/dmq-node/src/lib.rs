@@ -32,6 +32,7 @@ pub mod mempool;
 pub mod node_to_client;
 pub mod node_to_node;
 pub mod parser;
+pub mod peer_sharing;
 pub mod policy;
 pub mod protocol;
 pub mod registry;
