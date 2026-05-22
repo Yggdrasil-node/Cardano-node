@@ -40,9 +40,13 @@ pub const HELP_TEXT: &str = include_str!("../tests/fixtures/upstream-help.txt");
 /// Byte-for-byte mirror of upstream `cardano-testnet --version` (captured at R335).
 pub const VERSION_TEXT: &str = include_str!("../tests/fixtures/upstream-version.txt");
 
+use std::path::PathBuf;
 use std::str::FromStr;
 
-use crate::types::{GenesisOptions, PraosCredentialsSource, RpcSupport, TestnetRuntimeOptions};
+use crate::types::{
+    GenesisOptions, NodeOption, PraosCredentialsSource, RpcSupport, TestnetOnChainParams,
+    TestnetRuntimeOptions, cardano_default_testnet_node_options,
+};
 
 /// Look up the value following a `--flag` in an argument list.
 ///
@@ -100,6 +104,47 @@ pub fn parse_genesis_options(args: &[String]) -> Result<GenesisOptions, ParseErr
             default.genesis_active_slots_coeff,
         )?,
     })
+}
+
+/// Parse the testnet node set from the `--num-pool-nodes` flag.
+///
+/// Mirror of upstream `pTestnetNodeOptions` (`Parsers/Cardano.hs`):
+/// `--num-pool-nodes N` yields `N` stake-pool-operator nodes; absent,
+/// the default one-SPO / two-relay set. At least one SPO node is
+/// required.
+pub fn parse_testnet_node_options(args: &[String]) -> Result<Vec<NodeOption>, ParseError> {
+    match flag_with_value(args, "--num-pool-nodes")? {
+        None => Ok(cardano_default_testnet_node_options()),
+        Some(value) => {
+            let invalid = || ParseError::InvalidFlagValue {
+                flag: "--num-pool-nodes".to_string(),
+                value: value.to_string(),
+            };
+            let count: i64 = value.parse().map_err(|_| invalid())?;
+            if count < 1 {
+                return Err(invalid());
+            }
+            Ok((0..count)
+                .map(|_| NodeOption::SpoNodeOptions(Vec::new()))
+                .collect())
+        }
+    }
+}
+
+/// Parse the testnet's starting on-chain protocol parameters.
+///
+/// Mirror of upstream `pOnChainParams` (`Parsers/Cardano.hs`):
+/// `--params-file FILEPATH` yields `OnChainParamsFile`,
+/// `--params-mainnet` yields `OnChainParamsMainnet`, and absent both,
+/// `DefaultParams`.
+pub fn parse_on_chain_params(args: &[String]) -> Result<TestnetOnChainParams, ParseError> {
+    if let Some(path) = flag_with_value(args, "--params-file")? {
+        Ok(TestnetOnChainParams::OnChainParamsFile(PathBuf::from(path)))
+    } else if args.iter().any(|arg| arg == "--params-mainnet") {
+        Ok(TestnetOnChainParams::OnChainParamsMainnet)
+    } else {
+        Ok(TestnetOnChainParams::DefaultParams)
+    }
 }
 
 /// Parse the `TestnetRuntimeOptions` flags from a `cardano` /
@@ -243,6 +288,58 @@ mod tests {
     #[test]
     fn detects_help_long_at_top_level() {
         assert_eq!(parse_args(["--help"]), Err(ParseError::HelpRequested));
+    }
+
+    #[test]
+    fn testnet_node_options_default_when_no_flag() {
+        let nodes = parse_testnet_node_options(&[]).expect("default node set");
+        assert_eq!(nodes, cardano_default_testnet_node_options());
+    }
+
+    #[test]
+    fn testnet_node_options_count_yields_spo_nodes() {
+        let args: Vec<String> = ["--num-pool-nodes", "3"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let nodes = parse_testnet_node_options(&args).expect("three nodes");
+        assert_eq!(nodes.len(), 3);
+        assert!(nodes.iter().all(|n| n.is_spo()));
+    }
+
+    #[test]
+    fn testnet_node_options_reject_zero() {
+        let args: Vec<String> = ["--num-pool-nodes", "0"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert!(matches!(
+            parse_testnet_node_options(&args),
+            Err(ParseError::InvalidFlagValue { .. })
+        ));
+    }
+
+    #[test]
+    fn on_chain_params_default_file_and_mainnet() {
+        assert_eq!(
+            parse_on_chain_params(&[]),
+            Ok(TestnetOnChainParams::DefaultParams)
+        );
+        let file_args: Vec<String> = ["--params-file", "/tmp/p.json"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(
+            parse_on_chain_params(&file_args),
+            Ok(TestnetOnChainParams::OnChainParamsFile(PathBuf::from(
+                "/tmp/p.json"
+            )))
+        );
+        let mainnet_args: Vec<String> = ["--params-mainnet".to_string()].to_vec();
+        assert_eq!(
+            parse_on_chain_params(&mainnet_args),
+            Ok(TestnetOnChainParams::OnChainParamsMainnet)
+        );
     }
 
     #[test]
