@@ -26,6 +26,7 @@ use std::io::Write;
 use std::process::ExitCode;
 
 pub mod configuration;
+pub mod delta_q;
 pub mod diffusion;
 pub mod inbound_v2;
 pub mod mempool;
