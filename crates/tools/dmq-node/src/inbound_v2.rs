@@ -14,11 +14,11 @@
 //!
 //! Ports the inbound-V2 state surface — the foundational types,
 //! `TxDecision`, `PeerTxState`, `SharedTxState` — and the governor
-//! functions incrementally (`update_ref_counts`,
+//! functions incrementally (`update_ref_counts`, `tick_timed_txs`,
 //! `split_acknowledged_tx_ids`, `filter_active_peers`,
-//! `acknowledge_tx_ids` so far). The remaining `Decision.hs` /
-//! `State.hs` functions (`receivedTxIdsImpl`, `collectTxsImpl`,
-//! `pickTxsToDownload`, `makeDecisions`) land in subsequent rounds.
+//! `acknowledge_tx_ids`, `pick_txs_to_download` so far). The remaining
+//! `State.hs` / `Decision.hs` functions (`receivedTxIdsImpl`,
+//! `collectTxsImpl`, `makeDecisions`) land in subsequent rounds.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::time::Duration;
@@ -651,6 +651,91 @@ pub fn pick_peer_step<P: Ord>(
     }
 }
 
+/// Distribute txs to download among the given peers, advancing the
+/// shared governor state.
+///
+/// Mirror of upstream `pickTxsToDownload` (`Decision.hs`). Peers are
+/// considered in the given order; each [`pick_peer_step`] threads the
+/// cross-peer accumulator. Returns the updated [`SharedTxState`] and
+/// the per-peer [`TxDecision`]s, with fully-empty decisions excluded.
+pub fn pick_txs_to_download<P: Ord + Clone>(
+    policy: &SigDecisionPolicy,
+    shared: &SharedTxState<P>,
+    peers: &[(P, PeerTxState)],
+) -> (SharedTxState<P>, Vec<(P, TxDecision)>) {
+    let mut st = PickTxsState {
+        st_inflight: shared.inflight_txs.clone(),
+        st_acknowledged: BTreeMap::new(),
+        st_in_submission_to_mempool_txs: shared
+            .in_submission_to_mempool_txs
+            .keys()
+            .cloned()
+            .collect(),
+    };
+    // `mapAccumR` — fold the peers right-to-left, threading `st`; the
+    // decisions are then restored to the input order.
+    let mut stepped: Vec<(P, PeerTxState, TxDecision)> = Vec::with_capacity(peers.len());
+    for (addr, peer) in peers.iter().rev() {
+        let (st_next, peer_updated, decision) = pick_peer_step(policy, shared, st, peer);
+        st = st_next;
+        stepped.push((addr.clone(), peer_updated, decision));
+    }
+    stepped.reverse();
+
+    // `gn` — finalize the shared state.
+    let mut peer_tx_states = shared.peer_tx_states.clone();
+    for (addr, peer_updated, _) in &stepped {
+        peer_tx_states.insert(addr.clone(), peer_updated.clone());
+    }
+    let reference_counts = update_ref_counts(
+        &shared.reference_counts,
+        &RefCountDiff {
+            tx_ids_to_ack: st.st_acknowledged,
+        },
+    );
+    let buffered_txs: BTreeMap<SigId, Option<Sig>> = shared
+        .buffered_txs
+        .iter()
+        .filter(|(txid, _)| reference_counts.contains_key(*txid))
+        .map(|(txid, tx)| (txid.clone(), tx.clone()))
+        .collect();
+    let mut in_submission_to_mempool_txs = shared.in_submission_to_mempool_txs.clone();
+    for (_, _, decision) in &stepped {
+        for (txid, _) in &decision.txd_txs_to_mempool.list_of_txs_to_mempool {
+            *in_submission_to_mempool_txs
+                .entry(txid.clone())
+                .or_insert(0) += 1;
+        }
+    }
+    let updated_shared = SharedTxState {
+        peer_tx_states,
+        inflight_txs: st.st_inflight,
+        buffered_txs,
+        reference_counts,
+        in_submission_to_mempool_txs,
+        ..shared.clone()
+    };
+    // Exclude fully-empty decisions.
+    let decisions: Vec<(P, TxDecision)> = stepped
+        .into_iter()
+        .filter_map(|(addr, _, decision)| {
+            let is_empty = decision.txd_tx_ids_to_acknowledge.0 == 0
+                && decision.txd_tx_ids_to_request.0 == 0
+                && decision.txd_txs_to_request.is_empty()
+                && decision
+                    .txd_txs_to_mempool
+                    .list_of_txs_to_mempool
+                    .is_empty();
+            if is_empty {
+                None
+            } else {
+                Some((addr, decision))
+            }
+        })
+        .collect();
+    (updated_shared, decisions)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -936,6 +1021,35 @@ mod tests {
         // Only the un-excluded txid is requested.
         assert_eq!(decision.txd_txs_to_request.len(), 1);
         assert!(decision.txd_txs_to_request.contains_key(&pickable));
+    }
+
+    #[test]
+    fn pick_txs_to_download_decides_per_peer_and_drops_empty() {
+        use crate::policy::sig_decision_policy;
+        use crate::protocol::sig_submission::{SigHash, SigId};
+        let x = SigId(SigHash(vec![0x11]));
+        // One peer has a tx available; one peer has nothing.
+        let busy = PeerTxState {
+            available_tx_ids: BTreeMap::from([(x.clone(), 300u32)]),
+            ..Default::default()
+        };
+        // The idle peer already has the maximum txid requests in
+        // flight (33 = MAX_SIGS_INFLIGHT), so it has no capacity to
+        // request more and nothing available to download.
+        let idle = PeerTxState {
+            requested_tx_ids_inflight: NumTxIdsToReq(33),
+            ..Default::default()
+        };
+        let shared: SharedTxState<String> = SharedTxState::default();
+        let peers = vec![("busy".to_string(), busy), ("idle".to_string(), idle)];
+        let (updated, decisions) = pick_txs_to_download(&sig_decision_policy(), &shared, &peers);
+        // The idle peer's fully-empty decision is excluded.
+        assert_eq!(decisions.len(), 1);
+        assert_eq!(decisions[0].0, "busy");
+        assert!(decisions[0].1.txd_txs_to_request.contains_key(&x));
+        // The shared state retains both peers and records the request.
+        assert_eq!(updated.peer_tx_states.len(), 2);
+        assert_eq!(updated.inflight_txs.get(&x), Some(&1));
     }
 
     #[test]
