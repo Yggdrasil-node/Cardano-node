@@ -44,9 +44,10 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 use crate::types::{
-    GenesisOptions, NodeOption, NumDReps, PraosCredentialsSource, RpcSupport,
-    TestnetCreationOptions, TestnetEnvOptions, TestnetOnChainParams, TestnetRuntimeOptions,
-    UpdateTimestamps, cardano_default_testnet_node_options,
+    CardanoTestnetCliOptions, CardanoTestnetCreateEnvOptions, GenesisOptions,
+    NoUserProvidedEnvOptions, NodeOption, NumDReps, PraosCredentialsSource, RpcSupport,
+    StartFromEnvOptions, TestnetCreationOptions, TestnetEnvOptions, TestnetOnChainParams,
+    TestnetRuntimeOptions, UpdateTimestamps, cardano_default_testnet_node_options,
 };
 
 /// Look up the value following a `--flag` in an argument list.
@@ -233,6 +234,47 @@ pub fn parse_runtime_options(args: &[String]) -> TestnetRuntimeOptions {
             PraosCredentialsSource::UseKesKeyFile
         },
     }
+}
+
+/// Parse the full `cardano`-subcommand options.
+///
+/// Mirror of upstream `optsTestnet` (`Parsers/Cardano.hs`): the
+/// presence of `--node-env` selects the start-from-environment mode;
+/// otherwise a new environment is created (with an optional
+/// `--output-dir`). Either mode carries the runtime options.
+pub fn opts_testnet(args: &[String]) -> Result<CardanoTestnetCliOptions, ParseError> {
+    let runtime = parse_runtime_options(args);
+    if args.iter().any(|arg| arg == "--node-env") {
+        Ok(CardanoTestnetCliOptions::StartFromEnv(
+            StartFromEnvOptions {
+                from_env_options: parse_from_env(args)?,
+                from_env_runtime_options: runtime,
+            },
+        ))
+    } else {
+        Ok(CardanoTestnetCliOptions::NoUserProvidedEnv(
+            NoUserProvidedEnvOptions {
+                no_env_creation_options: parse_creation_options(args)?,
+                no_env_output_dir: flag_with_value(args, "--output-dir")?.map(PathBuf::from),
+                no_env_runtime_options: runtime,
+            },
+        ))
+    }
+}
+
+/// Parse the full `create-env`-subcommand options.
+///
+/// Mirror of upstream `optsCreateTestnet` (`Parsers/Cardano.hs`): the
+/// creation options plus the required `--output` directory.
+pub fn opts_create_testnet(args: &[String]) -> Result<CardanoTestnetCreateEnvOptions, ParseError> {
+    let output =
+        flag_with_value(args, "--output")?.ok_or_else(|| ParseError::MissingRequiredFlag {
+            flag: "--output".to_string(),
+        })?;
+    Ok(CardanoTestnetCreateEnvOptions {
+        create_env_creation_options: parse_creation_options(args)?,
+        create_env_output_dir: PathBuf::from(output),
+    })
 }
 
 /// Top-level subcommand dispatch — partial mirror of upstream
@@ -447,6 +489,51 @@ mod tests {
             env.env_update_timestamps,
             UpdateTimestamps::DontUpdateTimestamps
         );
+    }
+
+    #[test]
+    fn opts_testnet_new_env_mode_by_default() {
+        let opts = opts_testnet(&[]).expect("default new-env");
+        match opts {
+            CardanoTestnetCliOptions::NoUserProvidedEnv(o) => {
+                assert_eq!(o.no_env_creation_options, TestnetCreationOptions::default());
+                assert_eq!(o.no_env_output_dir, None);
+            }
+            CardanoTestnetCliOptions::StartFromEnv(_) => panic!("expected new-env mode"),
+        }
+    }
+
+    #[test]
+    fn opts_testnet_from_env_mode_with_node_env() {
+        let args: Vec<String> = ["--node-env", "/tmp/env"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let opts = opts_testnet(&args).expect("from-env");
+        match opts {
+            CardanoTestnetCliOptions::StartFromEnv(o) => {
+                assert_eq!(o.from_env_options.env_path, PathBuf::from("/tmp/env"));
+            }
+            CardanoTestnetCliOptions::NoUserProvidedEnv(_) => {
+                panic!("expected from-env mode")
+            }
+        }
+    }
+
+    #[test]
+    fn opts_create_testnet_requires_output() {
+        assert_eq!(
+            opts_create_testnet(&[]),
+            Err(ParseError::MissingRequiredFlag {
+                flag: "--output".to_string(),
+            })
+        );
+        let args: Vec<String> = ["--output", "/tmp/sandbox"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let opts = opts_create_testnet(&args).expect("output supplied");
+        assert_eq!(opts.create_env_output_dir, PathBuf::from("/tmp/sandbox"));
     }
 
     #[test]
