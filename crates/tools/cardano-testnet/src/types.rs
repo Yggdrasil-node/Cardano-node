@@ -220,6 +220,110 @@ impl<A> UserProvidedData<A> {
     }
 }
 
+/// Runtime options for testnet nodes — independent of how the
+/// environment was created (from scratch or from a `--node-env` path).
+///
+/// Mirror of upstream `data TestnetRuntimeOptions` with
+/// `instance Default` (`runtimeEnableNewEpochStateLogging = True`,
+/// `runtimeEnableRpc = RpcDisabled`, `runtimeKESSource = def`).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TestnetRuntimeOptions {
+    /// Whether new-epoch-state logging is enabled.
+    pub runtime_enable_new_epoch_state_logging: bool,
+    /// Whether to enable gRPC endpoints on testnet nodes.
+    pub runtime_enable_rpc: RpcSupport,
+    /// Where forging nodes source their KES credentials.
+    pub runtime_kes_source: PraosCredentialsSource,
+}
+
+impl Default for TestnetRuntimeOptions {
+    fn default() -> Self {
+        TestnetRuntimeOptions {
+            runtime_enable_new_epoch_state_logging: true,
+            runtime_enable_rpc: RpcSupport::RpcDisabled,
+            runtime_kes_source: PraosCredentialsSource::default(),
+        }
+    }
+}
+
+/// Options for the `--node-env` path — start a testnet from a
+/// pre-existing environment directory.
+///
+/// Mirror of upstream `data TestnetEnvOptions`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TestnetEnvOptions {
+    /// Path to the pre-existing testnet environment.
+    pub env_path: PathBuf,
+    /// Whether to rewrite genesis timestamps before starting.
+    pub env_update_timestamps: UpdateTimestamps,
+}
+
+/// Options realized by writing fields into the Shelley genesis file.
+///
+/// Mirror of upstream `data GenesisOptions` with `instance Default`
+/// (magic 42, epoch length 500 slots, slot length 0.1 s, active-slot
+/// coefficient 0.05). Upstream derives `Eq`; the Rust port can only
+/// derive `PartialEq` because two fields are `f64`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GenesisOptions {
+    /// The testnet network magic.
+    pub genesis_testnet_magic: i64,
+    /// An epoch's duration, in slots.
+    pub genesis_epoch_length: i64,
+    /// Slot length, in seconds.
+    pub genesis_slot_length: f64,
+    /// The active-slot coefficient.
+    pub genesis_active_slots_coeff: f64,
+}
+
+impl Default for GenesisOptions {
+    fn default() -> Self {
+        GenesisOptions {
+            genesis_testnet_magic: DEFAULT_TESTNET_MAGIC,
+            genesis_epoch_length: 500,
+            genesis_slot_length: 0.1,
+            genesis_active_slots_coeff: 0.05,
+        }
+    }
+}
+
+/// Whether a testnet node is a stake-pool operator or a relay. The
+/// string list is extra CLI arguments appended when starting the node.
+///
+/// Mirror of upstream `data NodeOption`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum NodeOption {
+    /// A stake-pool-operator (block-producing) node, with extra args.
+    SpoNodeOptions(Vec<String>),
+    /// A relay node, with extra args.
+    RelayNodeOptions(Vec<String>),
+}
+
+impl NodeOption {
+    /// Whether this is an SPO node. Mirror of upstream
+    /// `isSpoNodeOptions`.
+    pub fn is_spo(&self) -> bool {
+        matches!(self, NodeOption::SpoNodeOptions(_))
+    }
+
+    /// Whether this is a relay node. Mirror of upstream
+    /// `isRelayNodeOptions`.
+    pub fn is_relay(&self) -> bool {
+        matches!(self, NodeOption::RelayNodeOptions(_))
+    }
+}
+
+/// The default testnet node set — one SPO and two relays.
+///
+/// Mirror of upstream `cardanoDefaultTestnetNodeOptions`.
+pub fn cardano_default_testnet_node_options() -> Vec<NodeOption> {
+    vec![
+        NodeOption::SpoNodeOptions(Vec::new()),
+        NodeOption::RelayNodeOptions(Vec::new()),
+        NodeOption::RelayNodeOptions(Vec::new()),
+    ]
+}
+
 /// Errors from parsing operator-supplied option strings.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum ParseError {
@@ -302,6 +406,48 @@ mod tests {
     fn mainnet_params_url_is_the_blockfrost_file() {
         assert!(MAINNET_PARAMS_URL.starts_with("https://"));
         assert!(MAINNET_PARAMS_URL.ends_with("parameters.json"));
+    }
+
+    #[test]
+    fn testnet_runtime_options_default_matches_upstream() {
+        let d = TestnetRuntimeOptions::default();
+        assert!(d.runtime_enable_new_epoch_state_logging);
+        assert_eq!(d.runtime_enable_rpc, RpcSupport::RpcDisabled);
+        assert_eq!(d.runtime_kes_source, PraosCredentialsSource::UseKesKeyFile);
+    }
+
+    #[test]
+    fn genesis_options_default_matches_upstream() {
+        let d = GenesisOptions::default();
+        assert_eq!(d.genesis_testnet_magic, 42);
+        assert_eq!(d.genesis_epoch_length, 500);
+        assert_eq!(d.genesis_slot_length, 0.1);
+        assert_eq!(d.genesis_active_slots_coeff, 0.05);
+    }
+
+    #[test]
+    fn node_option_spo_relay_predicates() {
+        let spo = NodeOption::SpoNodeOptions(vec!["--foo".to_string()]);
+        let relay = NodeOption::RelayNodeOptions(Vec::new());
+        assert!(spo.is_spo() && !spo.is_relay());
+        assert!(relay.is_relay() && !relay.is_spo());
+    }
+
+    #[test]
+    fn default_node_options_are_one_spo_two_relays() {
+        let nodes = cardano_default_testnet_node_options();
+        assert_eq!(nodes.len(), 3);
+        assert_eq!(nodes.iter().filter(|n| n.is_spo()).count(), 1);
+        assert_eq!(nodes.iter().filter(|n| n.is_relay()).count(), 2);
+    }
+
+    #[test]
+    fn testnet_env_options_carries_path_and_timestamp_policy() {
+        let opts = TestnetEnvOptions {
+            env_path: PathBuf::from("/tmp/env"),
+            env_update_timestamps: UpdateTimestamps::UpdateTimestamps,
+        };
+        assert_eq!(opts.env_path.to_str(), Some("/tmp/env"));
     }
 
     #[test]
