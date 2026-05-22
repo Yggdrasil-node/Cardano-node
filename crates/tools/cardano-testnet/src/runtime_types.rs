@@ -16,7 +16,32 @@
 //! `PathBuf` directly rather than a typed `File`.
 
 use std::marker::PhantomData;
+use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
+
+/// The hard-coded testnet IPv4 address — the local host.
+///
+/// Mirror of upstream `testnetDefaultIpv4Address =
+/// tupleToHostAddress (127, 0, 0, 1)`. Upstream's separate
+/// `showIpv4Address` renderer has no Rust counterpart — `Ipv4Addr`'s
+/// `Display` already produces the dotted `127.0.0.1` form.
+pub const TESTNET_DEFAULT_IPV4_ADDRESS: Ipv4Addr = Ipv4Addr::new(127, 0, 0, 1);
+
+/// One slot in a stake pool's leadership schedule.
+///
+/// Mirror of upstream `data LeadershipSlot` (`Testnet/Types.hs`) —
+/// parsed from a `cardano-cli query leadership-schedule` JSON record.
+/// Upstream derives Aeson `FromJSON`, which keys on the record-field
+/// names (`slotNumber` / `slotTime`); `serde(rename_all = camelCase)`
+/// reproduces those keys.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LeadershipSlot {
+    /// The absolute slot number.
+    pub slot_number: i64,
+    /// The wall-clock time of the slot, as an ISO-8601 string.
+    pub slot_time: String,
+}
 
 /// Key-kind marker — a VRF key. Mirror of upstream `data VrfKey`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
@@ -117,5 +142,19 @@ mod tests {
         let _pay: KeyPair<PaymentKey> = KeyPair::new("v", "s");
         let _kes: KeyPair<KesKey> = KeyPair::new("v", "s");
         let _drep: KeyPair<DRepKey> = KeyPair::new("v", "s");
+    }
+
+    #[test]
+    fn testnet_default_ipv4_is_localhost() {
+        assert_eq!(TESTNET_DEFAULT_IPV4_ADDRESS, Ipv4Addr::new(127, 0, 0, 1));
+        assert_eq!(TESTNET_DEFAULT_IPV4_ADDRESS.to_string(), "127.0.0.1");
+    }
+
+    #[test]
+    fn leadership_slot_parses_upstream_json_keys() {
+        let json = r#"{"slotNumber": 4492800, "slotTime": "2021-03-01T21:47:51Z"}"#;
+        let slot: LeadershipSlot = serde_json::from_str(json).expect("parses");
+        assert_eq!(slot.slot_number, 4_492_800);
+        assert_eq!(slot.slot_time, "2021-03-01T21:47:51Z");
     }
 }
