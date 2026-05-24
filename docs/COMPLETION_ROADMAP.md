@@ -41,10 +41,16 @@ one session.
 
 ## Status snapshot
 
-- **Build health baseline (verified 2026-05-17):** all four cargo gates green on Rust 1.95.0 — `cargo fmt`,
-  `cargo check-all`, `cargo lint`, `cargo test-all` (**6,519 tests passing,
-  0 failing, 3 ignored**). `check-strict-mirror.py` + `check-fixture-manifest.py`
-  clean.
+## Current verification baseline
+
+- **Date:** 2026-05-17 (Rust 1.95.0)
+- **Command set (exact):** `cargo fmt --all -- --check`, `cargo check-all`, `cargo lint`, `cargo test-all`
+- **Result snapshot:** all four commands passed; `cargo test-all` reported **6,519 passing, 0 failing, 3 ignored**.
+- **Authoritative status-first source:** update `docs/parity-matrix.json` first for parity-status changes, then synchronize roadmap prose.
+
+## Historical baseline (not current status)
+
+- Earlier build-health and test-count statements in this roadmap are retained as audit context only and are not the current release-status source.
 - **Core node:** crypto, ledger, storage, consensus, mempool, network, plutus,
   and the `crates/node/*` runtime crates are feature-complete for syncing and
   validating the official networks (code-level parity closure, v0.2.0).

@@ -47,7 +47,7 @@ This document tracks concrete parity alignment against official IntersectMBO rep
 
 ## Verification Baseline
 
-### Current baseline
+### Current verification baseline
 
 - Latest broad workspace baseline (2026-05-17, Rust 1.95.0):
   `cargo fmt --all -- --check`, `cargo check-all`, `cargo lint`, and
@@ -61,7 +61,7 @@ This document tracks concrete parity alignment against official IntersectMBO rep
   `.reference-haskell-cardano-node/install/` tree when that 1.3 GB local
   artifact is present.
 
-### Historical R244–R249 closure evidence
+### Historical baseline (not current status) — R244–R249 closure evidence
 
 - `cargo fmt --all -- --check`: passing after the latest R248 patches
 - Focused R246 Plutus/ledger/node tests and `cargo build -p yggdrasil-node --release`: passing
