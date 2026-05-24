@@ -7,6 +7,8 @@ nav_order: 5
 
 # Upstream Parity Matrix
 
+
+> Quick view: [`PARITY_DASHBOARD.md`](PARITY_DASHBOARD.md)
 > **Document classification:** operational.
 
 ## Canonical Status Header

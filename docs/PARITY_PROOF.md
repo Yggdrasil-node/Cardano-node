@@ -7,6 +7,8 @@ nav_order: 1
 
 # Yggdrasil Parity Proof Report
 
+> Quick view: [`PARITY_DASHBOARD.md`](PARITY_DASHBOARD.md)
+
 **Document round**: §1-§9 evidence captured at R248 (2026-05-02);
 header refreshed R308 (2026-05-09); R313-R320 docstring-classification
 arc note added R321 (2026-05-09); live-status header refreshed after
