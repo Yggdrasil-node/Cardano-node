@@ -7,6 +7,9 @@ nav_order: 6
 
 # Completion Roadmap
 
+
+> Quick view: [`PARITY_DASHBOARD.md`](PARITY_DASHBOARD.md)
+
 **Created:** 2026-05-17 · **Status reference:** R503 + post-R503 commit-level work
 
 ## Purpose

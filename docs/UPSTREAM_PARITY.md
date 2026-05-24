@@ -7,6 +7,9 @@ nav_order: 5
 
 # Upstream Parity Matrix
 
+
+> Quick view: [`PARITY_DASHBOARD.md`](PARITY_DASHBOARD.md)
+
 Last updated: 2026-05-20; post-reorganization status and verification-baseline header refreshed after R517-R529 cleanup
 
 This document tracks concrete parity alignment against official IntersectMBO repositories and highlights remaining gaps that block a full parity claim.
