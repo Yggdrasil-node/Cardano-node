@@ -7,6 +7,16 @@ nav_order: 3
 
 # PARITY & FUNCTION SUMMARY FOR MANAGEMENT
 
+> **Document classification:** current.
+
+## Canonical Status Header
+- **As of date:** 2026-05-24
+- **Round ceiling:** R688
+- **Parity tag:** 11.0.1
+- **Test baseline date:** 2026-05-17
+- **Source of truth:** [`docs/parity-matrix.json`](parity-matrix.json)
+
+
 **Prepared**: April 2, 2026 (updated May 21, 2026 - post-R688 cardano-submit-api typed-rejection decoder arc)
 **For**: Yggdrasil Rust Cardano Node Team
 **Status**: **R688 implementation journal current through the cardano-submit-api typed predicate-failure decoder arc.** The core node remains code-level parity-closed for syncing and validating the official networks, while full completion still depends on the open operator/evidence gates listed below. Since the older R394/R497 summaries, the workspace closed the retired node-local binary-crate placement, moved operator configuration to root `configuration/`, moved operator scripts to root `scripts/`, kept sister tools under `crates/tools/`, closed the `cardano-cli` C-arc Rust implementation (40 standalone commands / 27 LSQ queries), and added `scripts/check-stale-placement.py` to guard those placements and stale current-status claims.
