@@ -9,6 +9,15 @@ nav_order: 5
 
 
 > Quick view: [`PARITY_DASHBOARD.md`](PARITY_DASHBOARD.md)
+> **Document classification:** operational.
+
+## Canonical Status Header
+- **As of date:** 2026-05-24
+- **Round ceiling:** R688
+- **Parity tag:** 11.0.1
+- **Test baseline date:** 2026-05-17
+- **Source of truth:** [`docs/parity-matrix.json`](parity-matrix.json)
+
 
 Last updated: 2026-05-20; post-reorganization status and verification-baseline header refreshed after R517-R529 cleanup
 
@@ -40,7 +49,7 @@ This document tracks concrete parity alignment against official IntersectMBO rep
 
 ## Verification Baseline
 
-### Current baseline
+### Current verification baseline
 
 - Latest broad workspace baseline (2026-05-17, Rust 1.95.0):
   `cargo fmt --all -- --check`, `cargo check-all`, `cargo lint`, and
@@ -54,7 +63,7 @@ This document tracks concrete parity alignment against official IntersectMBO rep
   `.reference-haskell-cardano-node/install/` tree when that 1.3 GB local
   artifact is present.
 
-### Historical R244–R249 closure evidence
+### Historical baseline (not current status) — R244–R249 closure evidence
 
 - `cargo fmt --all -- --check`: passing after the latest R248 patches
 - Focused R246 Plutus/ledger/node tests and `cargo build -p yggdrasil-node --release`: passing
