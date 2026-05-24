@@ -21,11 +21,17 @@ nav_order: 3
 
 **R313–R320 docstring-classification cleanup** (2026-05-09): R313 census surfaced 41 `(c) docstring present (unspecified)` files with the non-canonical `**Strict mirror (partial):**` form. R314 fixed the audit regex + promoted 24 files to canonical `**Strict mirror:** <upstream/path.hs>` declarations. R315–R316 reclassified 11 files to canonical `**Strict mirror:** none.` synthesis form after content-vs-name audit (Yggdrasil-specific concerns where basename match was misleading). R317 merged `multiplexer.rs` into `mux.rs` as a 1:1 mirror of upstream `Mux.hs` (eliminated 1 `.rs` file, +1 (a) DIRECT_MIRROR). R318 split `handshake.rs` into `handshake/{type,version,codec}.rs` matching upstream `Handshake/{Type,Version,Codec}.hs` (+3 leaves, all (a) DIRECT_MIRROR). R319 split `inbound_governor.rs` to mirror upstream `InboundGovernor.hs` + `InboundGovernor/State.hs` (+1 leaf, both (a) DIRECT_MIRROR). R320 promoted the last 2 plutus partials (`builtins.rs`, `machine.rs`) to direct mirrors via docstring tighten with sibling-file rationale documented as implementation detail.
 
-Workspace baseline: **6,519 passing, 0 failing, 3 ignored** as of the 2026-05-17 Rust 1.95.0 baseline. The post-R529 cleanup has focused verification around placement/status drift (`scripts/check-stale-placement.py`), parity-matrix path validity, filetree descriptions, and formatting/diff hygiene; the broad cargo gates must still be rerun before any release claim.
+## Current verification baseline
 
-Historical R326-R394 detail remains below for audit continuity, but the current sister-tool status is no longer the older "10 partial tools" snapshot. Use `docs/COMPLETION_ROADMAP.md`, `docs/parity-matrix.json`, and the top-of-file status block above for the live state.
+- **Date:** 2026-05-17 (Rust 1.95.0)
+- **Command set (exact):** `cargo fmt --all -- --check`, `cargo check-all`, `cargo lint`, `cargo test-all`
+- **Result snapshot:** all four commands passed; `cargo test-all` reported **6,519 passing, 0 failing, 3 ignored**.
 
-> **Structured parity inventory**: [`docs/parity-matrix.json`](parity-matrix.json) is the machine-readable Rust ↔ Haskell feature inventory; validate with `python3 scripts/check-parity-matrix.py`. The `reference.tag` tracks the latest IntersectMBO/cardano-node release (currently `11.0.1`). The R-round narrative below remains the canonical operational history; the matrix is the at-a-glance per-feature status board.
+## Historical baseline (not current status)
+
+Historical R326-R394 detail remains below for audit continuity, but the current sister-tool status is no longer the older "10 partial tools" snapshot. Historical baseline claims are retained for audit traceability only and are not the live release status.
+
+> **Authoritative status-first source**: Update [`docs/parity-matrix.json`](parity-matrix.json) first when parity status changes, then synchronize summary wording here.
 
 **R249 live-sync verification of fees + pparam updates** (2026-05-05): a 30-minute preview sync against the IOG bootstrap peer advanced from `Origin` through 1,462,057 slots and 16 epoch boundaries with **zero `FeeTooSmall` rejections** and **automatic protocol-parameter updates auto-applied** at three epochs (`newEpoch=2`/`3`/`9` reporting `pparamUpdatesApplied=1`/`1`/`5` from real on-chain PPUP proposals). Alonzo → Babbage hardfork crossed cleanly mid-run; pool retirement at `newEpoch=9` processed a 500 M-lovelace deposit refund without error. The fee-validation hot path (`validate_fee` / `validate_conway_fee`) and the PPUP→active-pparam wiring are confirmed correct on real preview chain data well past R248's slot `868,687` and R246's slot `901,725` evidence ceilings.
 
