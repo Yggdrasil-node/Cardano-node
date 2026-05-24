@@ -7,6 +7,16 @@ nav_order: 5
 
 # Upstream Parity Matrix
 
+> **Document classification:** operational.
+
+## Canonical Status Header
+- **As of date:** 2026-05-24
+- **Round ceiling:** R688
+- **Parity tag:** 11.0.1
+- **Test baseline date:** 2026-05-17
+- **Source of truth:** [`docs/parity-matrix.json`](parity-matrix.json)
+
+
 Last updated: 2026-05-20; post-reorganization status and verification-baseline header refreshed after R517-R529 cleanup
 
 This document tracks concrete parity alignment against official IntersectMBO repositories and highlights remaining gaps that block a full parity claim.

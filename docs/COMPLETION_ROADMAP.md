@@ -7,6 +7,16 @@ nav_order: 6
 
 # Completion Roadmap
 
+> **Document classification:** operational.
+
+## Canonical Status Header
+- **As of date:** 2026-05-24
+- **Round ceiling:** R688
+- **Parity tag:** 11.0.1
+- **Test baseline date:** 2026-05-17
+- **Source of truth:** [`docs/parity-matrix.json`](parity-matrix.json)
+
+
 **Created:** 2026-05-17 · **Status reference:** R503 + post-R503 commit-level work
 
 ## Purpose
