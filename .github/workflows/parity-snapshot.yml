@@ -198,7 +198,7 @@ jobs:
 
       - name: Upload tip snapshots on divergence
         if: failure() || cancelled()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: tip-snapshots-${{ inputs.network }}
           path: |
