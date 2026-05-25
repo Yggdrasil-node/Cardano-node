@@ -30,7 +30,7 @@ workspace = true
 # goal is to establish the infrastructure so future hot-path work has
 # a regression-checking surface.
 [dev-dependencies]
-criterion = { version = "0.7", default-features = false, features = ["cargo_bench_support"] }
+criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
 # Wave 9 PR 28 follow-on: proptest property-based tests covering the
 # Sum-KES sign/verify roundtrip across all evolution levels. Pinned at
 # 1.x (default-features stay enabled so the test reporter works).
