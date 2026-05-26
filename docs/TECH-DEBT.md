@@ -188,42 +188,6 @@ closed (wired); the 4 drifted flags and the 3 genuinely-inert flags
 (`ntn` R591, `yggdrasil-ledger/plutus` R592, `ntc` R770) are closed by
 removal. No feature-flag debt remains.
 
-## cardano-submit-api validation error: structured mapping (Phase 1 — raw-bytes carrier landed)
-
-**Owner:** sister-tools (Wave 6 PR 18 / cardano-submit-api web round, Phase 4.A)
-
-**State today.** `TxCmdError::TxCmdTxSubmitValidationError` now carries
-a `TxSubmitValidationError` struct (in
-`crates/tools/cardano-submit-api/src/types.rs`) holding BOTH the raw
-CBOR-encoded era-specific `ApplyTxError` payload AND a string
-rendering. The custom `Serialize` impl on `TxSubmitValidationError`
-emits only the rendered string so the upstream JSON wire shape
-(`{"tag":"...","contents":"<rendered>"}`) stays byte-equivalent.
-The `LocalTxSubmissionClientError::TransactionRejected(reason)` path
-in `web.rs` now plumbs the raw reject bytes through.
-
-**Remaining work** (Phase 2 — structured-enum decoder, deferred):
-the rendered string is still a hex-dump of the reject bytes; the
-structured `ApplyTxError` enum mirroring upstream's per-era variant
-sum (`FeeTooSmall`, `ValueNotConservedUTxO`, `OutsideValidityInterval`,
-`BadInputsUTxO`, `OutputTooSmall`, `WrongNetwork`, …; multiplied by
-6 eras Shelley→Conway) is not yet built. Once it lands, the
-renderer becomes a `Display` impl on the structured form and
-operators can pattern-match on individual rejection variants
-without a CBOR re-walk.
-
-**Scope of Phase 2.** ~400 lines of new enum (per-era ApplyTxError
-sum + UtxoErr/UtxowErr/DelegsErr sub-sums + Conway governance
-errors), the per-era CBOR decoders that map the wire shape to
-the typed enum, and the `Display` impl that re-renders. Best
-landed when a sister tool actually needs to pattern-match (e.g.,
-tx-generator surfacing typed rejection reasons in its 1-hour TPS
-soak summary).
-
-**Tracking.** Also referenced from `docs/parity-matrix.json` under
-the cardano-submit-api entry's `next_milestone` field; the doc-
-comment in `types.rs` points here.
-
 ## Tracking conventions
 
 - New tech-debt entries follow this header structure: **Owner**,

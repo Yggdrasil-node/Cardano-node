@@ -32,14 +32,13 @@
 //!   socket; Yggdrasil delegates that check to cardano-node, which
 //!   returns `MsgRejectTx` for malformed bytes. Equivalent observable
 //!   behavior, simpler code path.
-//! - `Cardano.Api.getTxId` (returning the TxId on accept) — upstream
-//!   returns the parsed TxId in the 202 Accepted body. Yggdrasil
-//!   currently returns an empty success body (`"OK"`) — operators
-//!   wanting the tx-id can compute it client-side from the same bytes
-//!   they submitted (`Blake2b-256` of the body). Adding TxId derivation
-//!   here is a future enhancement that would require multi-era CBOR
-//!   awareness; tracked in `docs/parity-matrix.json`'s `remaining_work`.
+//! - `Cardano.Api.deserialiseFromCBOR`'s full per-era typed decode table
+//!   — Yggdrasil only extracts the first raw transaction-body CBOR item
+//!   to derive the accepted-response TxId. Full typed pre-decode remains
+//!   unnecessary for submission because the local node validates the raw
+//!   transaction bytes and returns `MsgRejectTx` for malformed payloads.
 
+use std::future::Future;
 use std::sync::Arc;
 
 #[cfg(unix)]
@@ -50,7 +49,7 @@ use crate::metrics::{MetricsRegistry, register_metrics_server};
 use crate::rest::types::WebserverConfig;
 use crate::rest::web::{Handler, HttpRequest, HttpResponse, Tracer, run_settings};
 use crate::tracing::trace_submit_api::TraceSubmitApi;
-use crate::types::{TxCmdError, TxSubmitWebApiError};
+use crate::types::{DecoderError, RawCborDecodeError, TxCmdError, TxSubmitWebApiError};
 
 /// Cardano mainnet network magic. Mirrors the constant baked into
 /// upstream's `cardano-cli`/`cardano-node` runtime defaults.
@@ -180,12 +179,8 @@ pub fn tx_submit_app(
 /// | NtC connect failure                      | 503         | `EndpointFailedToSubmitTransaction`      |
 /// | NtC protocol violation                   | 503         | `EndpointFailedToSubmitTransaction`      |
 ///
-/// Successful (202) response body is the empty `"OK"` placeholder
-/// because Yggdrasil does not currently parse the multi-era CBOR to
-/// derive the TxId — upstream's `getTxBody >>= getTxId` chain has no
-/// per-era equivalent under our raw-bytes pass-through. Operators
-/// needing the tx-id can compute it client-side via Blake2b-256 of
-/// the same bytes they submitted.
+/// Successful (202) response body is the hex transaction id, matching
+/// upstream `Handler TxId` / `PostAccepted '[JSON] TxId`.
 pub async fn tx_submit_post(
     tracer: &Tracer,
     _protocol: ConsensusModeParams,
@@ -193,18 +188,49 @@ pub async fn tx_submit_post(
     socket_path: &SocketPath,
     body: Vec<u8>,
 ) -> HttpResponse {
+    tx_submit_post_with_submitter(tracer, body, |body| {
+        submit_via_ntc(socket_path, network_id, body)
+    })
+    .await
+}
+
+async fn tx_submit_post_with_submitter<F, Fut>(
+    tracer: &Tracer,
+    body: Vec<u8>,
+    submit: F,
+) -> HttpResponse
+where
+    F: FnOnce(Vec<u8>) -> Fut,
+    Fut: Future<Output = Result<(), TxCmdError>>,
+{
     if body.is_empty() {
         let err = TxSubmitWebApiError::TxSubmitEmpty;
         let json = serde_json::to_vec(&err).unwrap_or_else(|_| b"{}".to_vec());
         return HttpResponse::bad_request_json(json);
     }
 
-    match submit_via_ntc(socket_path, network_id, body).await {
+    let tx_id = match yggdrasil_ledger::compute_tx_id_from_tx_cbor(&body) {
+        Ok(tx_id) => tx_id,
+        Err(err) => {
+            let cmd_err = TxCmdError::TxCmdTxReadError(RawCborDecodeError(vec![DecoderError(
+                format!("failed to compute TxId from submitted transaction CBOR: {err}"),
+            )]));
+            tracer(TraceSubmitApi::EndpointFailedToSubmitTransaction(
+                cmd_err.clone(),
+            ));
+            let api_err = TxSubmitWebApiError::TxSubmitFail(cmd_err);
+            let json = serde_json::to_vec(&api_err).unwrap_or_else(|_| b"{}".to_vec());
+            return HttpResponse::bad_request_json(json);
+        }
+    };
+
+    match submit(body).await {
         Ok(()) => {
             tracer(TraceSubmitApi::EndpointSubmittedTransaction(
-                crate::tracing::trace_submit_api::MediumTxId::from_rendered(""),
+                crate::tracing::trace_submit_api::MediumTxId::from_hash_bytes(&tx_id.0),
             ));
-            HttpResponse::accepted_json(b"\"OK\"".to_vec())
+            let json = serde_json::to_vec(&hex::encode(tx_id.0)).unwrap_or_else(|_| b"{}".to_vec());
+            HttpResponse::accepted_json(json)
         }
         Err(cmd_err) => {
             tracer(TraceSubmitApi::EndpointFailedToSubmitTransaction(
@@ -377,6 +403,33 @@ mod tests {
         assert!(matches!(
             events.first(),
             Some(TraceSubmitApi::EndpointFailedToSubmitTransaction(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn tx_submit_post_success_returns_tx_id_json_and_traces_medium_id() {
+        use std::sync::Mutex;
+        let events: Arc<Mutex<Vec<TraceSubmitApi>>> = Arc::new(Mutex::new(Vec::new()));
+        let events_clone = Arc::clone(&events);
+        let tracer: Tracer = Arc::new(move |evt| {
+            events_clone.lock().expect("lock").push(evt);
+        });
+
+        let tx = vec![0x83, 0xa0, 0xa0, 0xf6];
+        let expected_tx_id = hex::encode(yggdrasil_ledger::compute_tx_id(&[0xa0]).0);
+
+        let resp = tx_submit_post_with_submitter(&tracer, tx, |_submitted| async { Ok(()) }).await;
+
+        assert_eq!(resp.status, 202);
+        assert_eq!(
+            resp.body,
+            serde_json::to_vec(&expected_tx_id).expect("json txid")
+        );
+        let events = events.lock().expect("lock");
+        assert!(matches!(
+            events.first(),
+            Some(TraceSubmitApi::EndpointSubmittedTransaction(tx_id))
+                if tx_id.to_string() == expected_tx_id[..16]
         ));
     }
 

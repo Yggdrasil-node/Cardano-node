@@ -9,7 +9,7 @@ nav_order: 2
 
 Compact status board sourced from [`docs/parity-matrix.json`](parity-matrix.json) and the living parity/operator docs.
 
-_Last updated: 2026-05-24._
+_Last updated: 2026-05-26._
 
 | Metric | Current value | Detail link |
 | --- | ---: | --- |

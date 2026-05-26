@@ -29,7 +29,7 @@ description: "Yggdrasil — a pure-Rust Cardano node. Operator manual: install, 
 </div>
 
 <div class="yg-stats" markdown="0">
-  <div class="yg-stat yg-stat-accent"><span class="yg-stat-value">4.7K+</span><span class="yg-stat-label">Tests passing</span></div>
+  <div class="yg-stat yg-stat-accent"><span class="yg-stat-value">7,251</span><span class="yg-stat-label">Tests passing</span></div>
   <div class="yg-stat"><span class="yg-stat-value">0</span><span class="yg-stat-label">Tests failing</span></div>
   <div class="yg-stat"><span class="yg-stat-value">Byron→Conway</span><span class="yg-stat-label">Era coverage</span></div>
   <div class="yg-stat"><span class="yg-stat-value">5 / 5</span><span class="yg-stat-label">Mini-protocols</span></div>
@@ -85,7 +85,7 @@ description: "Yggdrasil — a pure-Rust Cardano node. Operator manual: install, 
 
 ## What's implemented
 
-Every confirmed-active code-level parity slice is closed, including the R273-rename strict naming-parity fix-up, the R274–R288 strict 1:1 file-mirror arc, the R285 Phase 6 multi-peer BlockFetch closure, and the R289–R297 cardano-cli surface expansion. See the [parity proof]({{ "/PARITY_PROOF/" | relative_url }}) for operational verification (25/25 cardano-cli LSQ subcommands, consensus sidecar persistence, runbook) and the [parity summary]({{ "/PARITY_SUMMARY/" | relative_url }}) for the subsystem status table. The [2026-Q2 audit]({{ "/AUDIT_VERIFICATION_2026Q2/" | relative_url }}) (archived) drove the original closure cycle and is preserved as audit-trail evidence.
+Every confirmed-active core-node code-level parity slice is closed, including the R273-rename strict naming-parity fix-up, the R274-R288 strict 1:1 file-mirror arc, the R285 Phase 6 multi-peer BlockFetch closure, and the R289-R839 sister-tool continuation through cardano-cli, tx-generator, db-analyser, dmq-node, cardano-testnet, and audit hygiene. See the [parity proof]({{ "/PARITY_PROOF/" | relative_url }}) for operational verification (25/25 cardano-cli LSQ subcommands, consensus sidecar persistence, runbook) and the [parity summary]({{ "/PARITY_SUMMARY/" | relative_url }}) for the subsystem status table. The [2026-Q2 audit]({{ "/AUDIT_VERIFICATION_2026Q2/" | relative_url }}) (archived) drove the original closure cycle and is preserved as audit-trail evidence.
 
 | Subsystem | Status |
 |-----------|--------|

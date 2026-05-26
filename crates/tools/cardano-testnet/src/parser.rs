@@ -10,19 +10,17 @@
 //!
 //! | Upstream                     | Yggdrasil                                |
 //! |------------------------------|------------------------------------------|
-//! | `cardano CardanoTestnetCliOptions` | [`Command::Cardano`] (era-aware payload deferred) |
-//! | `create-env CardanoTestnetCreateEnvOptions` | [`Command::CreateEnv`] (era-aware payload deferred) |
+//! | `cardano CardanoTestnetCliOptions` | [`Command::Cardano`] via [`opts_testnet`] |
+//! | `create-env CardanoTestnetCreateEnvOptions` | [`Command::CreateEnv`] via [`opts_create_testnet`] |
 //! | `version VersionOptions`     | [`Command::Version`]                     |
 //! | `help ...`                   | [`ParseError::HelpRequested`] short-circuit |
 //!
-//! The era-aware option parsers of `Parsers/Cardano.hs` land
-//! incrementally from R818 (`parse_runtime_options`,
-//! `parse_genesis_options` so far) — the earlier "blocked on
-//! yggdrasil-ledger's era surface" carve-out was resolved by the
-//! R783-R786 era-type ports (`CardanoEra` / `ShelleyBasedEra` and
-//! the option records). The `Command` variants still carry
-//! `PassthroughArgs` until those parsers compose into the full
-//! `CardanoTestnetCliOptions` / `CardanoTestnetCreateEnvOptions`.
+//! The era-aware option parsers of `Parsers/Cardano.hs` landed through
+//! R823: runtime, genesis, node, on-chain-params, from-env, creation, and
+//! top-level `optsTestnet` / `optsCreateTestnet` composition. The earlier
+//! "blocked on yggdrasil-ledger's era surface" carve-out was resolved by the
+//! R783-R786 era-type ports (`CardanoEra` / `ShelleyBasedEra` and the option
+//! records). The top-level `Command` variants now carry those typed payloads.
 //!
 //! Carve-out:
 //!
@@ -280,37 +278,23 @@ pub fn opts_create_testnet(args: &[String]) -> Result<CardanoTestnetCreateEnvOpt
 /// Top-level subcommand dispatch — partial mirror of upstream
 /// `data CardanoTestnetCommands`.
 ///
-/// Each variant currently carries an opaque [`PassthroughArgs`] —
-/// the deep era-aware option records (`CardanoTestnetCliOptions`,
-/// `CardanoTestnetCreateEnvOptions`, `VersionOptions`) live in
-/// upstream's `Testnet.Start.Types` and depend on `Cardano.Api`
-/// era machinery that yggdrasil-ledger has not yet exposed at
-/// crate boundaries. Subsequent rounds will replace
-/// `PassthroughArgs` with the typed records.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Command {
     /// `cardano` subcommand — run a testnet using era-aware options
     /// (mirror of upstream `StartCardanoTestnet CardanoTestnetCliOptions`).
-    Cardano(PassthroughArgs),
+    Cardano(CardanoTestnetCliOptions),
     /// `create-env` subcommand — create a testnet environment for
     /// later use (mirror of upstream `CreateTestnetEnv
     /// CardanoTestnetCreateEnvOptions`).
-    CreateEnv(PassthroughArgs),
+    CreateEnv(CardanoTestnetCreateEnvOptions),
     /// `version` subcommand — emit the version banner (mirror of
     /// upstream `GetVersion VersionOptions`).
-    Version(PassthroughArgs),
+    Version(VersionOptions),
 }
 
-/// Opaque passthrough wrapping the post-subcommand argv tail. R367
-/// preserves the operator-supplied flags verbatim so they can be
-/// passed through to the era-aware parser when it lands. Each
-/// variant will replace this with its typed record in subsequent
-/// rounds.
-#[derive(Clone, Debug, Default, Eq, PartialEq, Hash)]
-pub struct PassthroughArgs {
-    /// Raw post-subcommand flags + values, in order.
-    pub raw: Vec<String>,
-}
+/// Mirror of upstream `Parsers.Version.VersionOptions`.
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+pub struct VersionOptions;
 
 /// Errors from CLI argument parsing.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
@@ -355,8 +339,8 @@ pub enum ParseError {
 /// Parse a slice of command-line arguments into a [`Command`]. R367
 /// implementation: top-level `--help`/`--version` short-circuit;
 /// otherwise locate the first non-flag positional and treat it as
-/// the subcommand keyword. Everything after the subcommand is
-/// captured verbatim in [`PassthroughArgs::raw`].
+/// the subcommand keyword. Everything after the subcommand is parsed
+/// into the upstream-shaped typed payload for that command.
 pub fn parse_args<I, S>(args: I) -> Result<Command, ParseError>
 where
     I: IntoIterator<Item = S>,
@@ -381,12 +365,11 @@ where
 
     let subcommand = &argv[subcommand_idx];
     let after = argv[subcommand_idx + 1..].to_vec();
-    let passthrough = PassthroughArgs { raw: after };
 
     match subcommand.as_str() {
-        "cardano" => Ok(Command::Cardano(passthrough)),
-        "create-env" => Ok(Command::CreateEnv(passthrough)),
-        "version" => Ok(Command::Version(passthrough)),
+        "cardano" => Ok(Command::Cardano(opts_testnet(&after)?)),
+        "create-env" => Ok(Command::CreateEnv(opts_create_testnet(&after)?)),
+        "version" => Ok(Command::Version(VersionOptions)),
         "help" => Err(ParseError::HelpRequested),
         other => Err(ParseError::UnknownSubcommand(other.to_string())),
     }
@@ -688,7 +671,7 @@ mod tests {
 
     #[test]
     fn dispatches_create_env_subcommand() {
-        let cmd = parse_args(["create-env"]).expect("parses");
+        let cmd = parse_args(["create-env", "--output", "/tmp/testnet-env"]).expect("parses");
         assert!(matches!(cmd, Command::CreateEnv(_)));
     }
 
@@ -704,33 +687,25 @@ mod tests {
     }
 
     #[test]
-    fn cardano_subcommand_captures_passthrough_args() {
+    fn cardano_subcommand_carries_typed_options() {
         let cmd = parse_args(["cardano", "--num-pool-nodes", "3", "--num-relay-nodes", "2"])
             .expect("parses");
         match cmd {
-            Command::Cardano(p) => {
-                assert_eq!(
-                    p.raw,
-                    vec![
-                        "--num-pool-nodes".to_string(),
-                        "3".to_string(),
-                        "--num-relay-nodes".to_string(),
-                        "2".to_string(),
-                    ]
-                );
+            Command::Cardano(CardanoTestnetCliOptions::NoUserProvidedEnv(opts)) => {
+                assert_eq!(opts.no_env_creation_options.creation_nodes.len(), 3);
             }
             _ => panic!("wrong variant"),
         }
     }
 
     #[test]
-    fn create_env_subcommand_captures_passthrough_args() {
-        let cmd = parse_args(["create-env", "--output-dir", "/tmp/testnet-env"]).expect("parses");
+    fn create_env_subcommand_carries_typed_options() {
+        let cmd = parse_args(["create-env", "--output", "/tmp/testnet-env"]).expect("parses");
         match cmd {
-            Command::CreateEnv(p) => {
+            Command::CreateEnv(opts) => {
                 assert_eq!(
-                    p.raw,
-                    vec!["--output-dir".to_string(), "/tmp/testnet-env".to_string()]
+                    opts.create_env_output_dir,
+                    PathBuf::from("/tmp/testnet-env")
                 );
             }
             _ => panic!("wrong variant"),
@@ -738,10 +713,10 @@ mod tests {
     }
 
     #[test]
-    fn version_subcommand_with_no_args_yields_empty_passthrough() {
+    fn version_subcommand_with_no_args_yields_version_options() {
         let cmd = parse_args(["version"]).expect("parses");
         match cmd {
-            Command::Version(p) => assert!(p.raw.is_empty()),
+            Command::Version(opts) => assert_eq!(opts, VersionOptions),
             _ => panic!("wrong variant"),
         }
     }
@@ -758,11 +733,8 @@ mod tests {
     }
 
     #[test]
-    fn passthrough_args_default_is_empty() {
-        assert_eq!(
-            PassthroughArgs::default(),
-            PassthroughArgs { raw: Vec::new() }
-        );
+    fn version_options_is_unit_payload() {
+        assert_eq!(VersionOptions, VersionOptions);
     }
 
     #[test]

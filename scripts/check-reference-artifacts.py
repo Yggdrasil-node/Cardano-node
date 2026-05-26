@@ -11,7 +11,7 @@ Concretely:
 
   1. The `install/bin/cardano-node --version` reports the policy
      reference tag tracked in `docs/parity-matrix.json::reference.tag`
-     (currently `11.0.1`).
+     at runtime.
   2. Every required binary (cardano-node, cardano-cli, db-analyser,
      db-synthesizer, db-truncater, cardano-tracer, ...) is present
      and executable.
@@ -33,7 +33,6 @@ from __future__ import annotations
 
 import json
 import re
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -163,8 +162,6 @@ def main() -> None:
         path = BIN_DIR / name
         if not path.is_file():
             fail(f"missing required binary: {path.relative_to(ROOT)}")
-        # Check executable bit. Use shutil.which against the install
-        # directory rather than os.access for portability.
         if not (path.stat().st_mode & 0o111):
             fail(
                 f"binary is not executable: {path.relative_to(ROOT)} "

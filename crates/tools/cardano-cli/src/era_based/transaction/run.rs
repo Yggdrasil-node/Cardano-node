@@ -527,17 +527,9 @@ pub fn decode_tx_hex_arg(raw: &str) -> Result<Vec<u8>> {
 /// captured verbatim via `Decoder::raw_value` rather than
 /// re-encoded. Delegates the hash to `yggdrasil_ledger::compute_tx_id`.
 pub fn compute_txid_from_tx_cbor(tx_bytes: &[u8]) -> Result<[u8; 32]> {
-    use yggdrasil_ledger::cbor::Decoder;
-    use yggdrasil_ledger::compute_tx_id;
-
-    let mut dec = Decoder::new(tx_bytes);
-    let _array_len = dec
-        .array()
-        .map_err(|e| eyre::eyre!("transaction CBOR does not start with an array: {e}"))?;
-    let body_bytes = dec
-        .raw_value()
-        .map_err(|e| eyre::eyre!("failed to extract the transaction body bytes: {e}"))?;
-    Ok(compute_tx_id(body_bytes).0)
+    yggdrasil_ledger::compute_tx_id_from_tx_cbor(tx_bytes)
+        .map(|tx_id| tx_id.0)
+        .map_err(|err| eyre::eyre!("{err}"))
 }
 
 #[cfg(test)]

@@ -4,8 +4,8 @@
 > Update descriptions in the manifest, then run `python .claude/scripts/filetree.py accept-current`.
 
 - Schema version: 1
-- Generated at: 2026-05-21T23:54:15Z
-- Files described: 1659
+- Generated at: 2026-05-26T18:14:23Z
+- Files described: 1748
 
 ## Workspace
 
@@ -65,7 +65,7 @@
 - `crates/consensus/src/AGENTS.md`
   - Guidance for consensus source modules implementing typed chain selection and nonce evolution logic.: This directory owns consensus implementation modules, not integration glue.
 - `crates/consensus/src/chain_selection.rs`
-  - chain_selection - module-level docstring. ## Naming parity **Strict mirror:** none. VRF tiebreaker logic for chain selection — mirrors `VRFTiebreakerFlavor` from upstream.
+  - chain_selection - module-level docstring.
 - `crates/consensus/src/chain_state.rs`
   - Volatile chain state tracking with rollback depth enforcement. The `ChainState` tracks a sliding window of recent chain points and enforces the Ouroboros security parameter `k` — t
 - `crates/consensus/src/diffusion_pipelining.rs`
@@ -75,9 +75,9 @@
 - `crates/consensus/src/diffusion_pipelining/state.rs`
   - Diffusion-pipelining state machine — feature flag, tentative-tip tracking, pipelining-event log, and per-peer state. Mirrors upstream `Ouroboros.Consensus.Block.SupportsDiffusionPi
 - `crates/consensus/src/epoch.rs`
-  - epoch - module-level docstring. ## Naming parity **Strict mirror:** none. Era-aware epoch schedule covering the Byron→Shelley hard-fork. Mirrors upstream.
+  - epoch - module-level docstring.
 - `crates/consensus/src/error.rs`
-  - error - module-level docstring. ## Naming parity **Strict mirror:** none. Yggdrasil-side error enum aggregating consensus-facing failure cases (VRF proof, opcert signature,.
+  - error - module-level docstring.
 - `crates/consensus/src/genesis_density.rs`
   - Genesis density tracking for ChainSync header observation. Implements a sliding-window header-density estimator over chain slots. Mirrors the upstream `Ouroboros.Consensus.Genesis.
 - `crates/consensus/src/header.rs`
@@ -91,7 +91,7 @@
 - `crates/consensus/src/mempool/AGENTS.md`
   - Guidance for mempool queue, snapshot, and admission implementation modules.: Epoch revalidation implemented: `Mempool::purge_invalid_for_params(current_slot, params)` sweeps all en
 - `crates/consensus/src/mempool/queue.rs`
-  - Mempool queue, transaction entry type, and error types. ## Naming parity **Strict mirror:** none. Yggdrasil-side aggregation of upstream `Ouroboros.Consensus.Mempool.{API, Capacity
+  - Mempool queue, transaction entry type, and error types.
 - `crates/consensus/src/mempool/queue/inner.rs`
   - Fee-ordered mempool queue policy. Mirrors upstream `Ouroboros.Consensus.Mempool.API::Mempool` and the `Impl.Update` insert / remove / purge logic.
 - `crates/consensus/src/mempool/queue/shared.rs`
@@ -132,19 +132,19 @@
   - Cargo manifest for the crypto crate.
   - Declares crate metadata, dependencies, features, and local lint behavior.
 - `crates/crypto/benches/blake2b_hash.rs`
-  - Wave 9 PR 28 — criterion microbenchmark for `yggdrasil_crypto::blake2b`. ## Naming parity **Strict mirror:** none. Yggdrasil-side benchmark scaffold; upstream.
+  - Wave 9 PR 28 — criterion microbenchmark for `yggdrasil_crypto::blake2b`.
 - `crates/crypto/src/AGENTS.md`
   - Guidance for cryptographic implementation modules in the crypto crate.: This directory is for pure Rust cryptographic implementation code and protocol-facing encodings.
 - `crates/crypto/src/blake2b.rs`
-  - Blake2b hash digests (Blake2b-512, Blake2b-256, Blake2b-224). ## Naming parity **Strict mirror:** Cardano/Crypto/Hash/Blake2b.hs. Filename matches upstream basename; the module is.
+  - Blake2b hash digests (Blake2b-512, Blake2b-256, Blake2b-224).
 - `crates/crypto/src/bls12_381.rs`
   - BLS12-381 elliptic curve operations for PlutusV3 builtins. Provides G1/G2 group arithmetic, serialization (compress/uncompress), hash-to-curve, and pairing (Miller loop + final ver
 - `crates/crypto/src/ed25519.rs`
-  - Ed25519 DSIGN primitives (signing key, verification key, signature, sign/verify). ## Naming parity **Strict mirror:** Cardano/Crypto/DSIGN/Ed25519.hs.
+  - Ed25519 DSIGN primitives (signing key, verification key, signature, sign/verify).
 - `crates/crypto/src/error.rs`
-  - error - module-level docstring. ## Naming parity **Strict mirror:** none. Yggdrasil-side error enum for the crypto crate (Ed25519 / KES / VRF / BLS / SHA / Blake2b.
+  - error - module-level docstring.
 - `crates/crypto/src/kes.rs`
-  - Single-period Key-Evolving Signatures (Single + CompactSingle + Simple variants). ## Naming parity **Strict mirror:** none. Yggdrasil-side single-period KES aggregator. Carries the
+  - Single-period Key-Evolving Signatures (Single + CompactSingle + Simple variants).
 - `crates/crypto/src/lib.rs`
   - Cryptographic primitives and compatibility fixtures used across the workspace. Blake2b hashing helpers.
 - `crates/crypto/src/secp256k1.rs`
@@ -154,15 +154,15 @@
 - `crates/crypto/src/sum_kes.rs`
   - Sum-composition Key-Evolving Signatures (SumKES). Implements the binary sum composition from Section 3.1 of: > "Composition and Efficiency Tradeoffs for Forward-Secure Digital.
 - `crates/crypto/src/test_vectors.rs`
-  - test_vectors - module-level docstring. ## Naming parity **Strict mirror:** none. Yggdrasil-side compatibility-vector harness consumed by Ed25519 / VRF / KES / BLS round-trip.
+  - test_vectors - module-level docstring.
 - `crates/crypto/src/vrf.rs`
-  - VRF (Verifiable Random Function) primitives — Praos VRF (ietfdraft03/13) + std/batchcompat variants. ## Naming parity **Strict mirror:** Cardano/Crypto/VRF.hs.
+  - VRF (Verifiable Random Function) primitives — Praos VRF (ietfdraft03/13) + std/batchcompat variants.
 - `crates/crypto/tests/AGENTS.md`
   - Guidance for cryptographic vector and regression tests in the crypto crate.: Use this directory for deterministic vector-backed crypto validation.
 - `crates/crypto/tests/integration.rs`
   - Rust integration or regression tests for integration behavior.
 - `crates/crypto/tests/proptest_kes.rs`
-  - Wave 9 PR 28 follow-on — property-based tests for Sum-KES sign/verify roundtrip. ## Naming parity **Strict mirror:** none. Yggdrasil-side property-test harness;.
+  - Wave 9 PR 28 follow-on — property-based tests for Sum-KES sign/verify roundtrip.
 - `crates/crypto/tests/upstream_vectors.rs`
   - Rust integration or regression tests for upstream vectors behavior.
 - `crates/error/AGENTS.md`
@@ -171,7 +171,7 @@
   - Cargo manifest for the error crate.
   - Declares crate metadata, dependencies, features, and local lint behavior.
 - `crates/error/src/lib.rs`
-  - yggdrasil-error — workspace-wide error envelope. ## Naming parity **Strict mirror:** none. Yggdrasil-side synthesis crate that unifies the per-crate error enums from `yggdrasil-{cr
+  - yggdrasil-error — workspace-wide error envelope.
 - `crates/ledger/AGENTS.md`
   - Guidance for era-aware ledger work: Focus on reusable state-transition interfaces and explicit era boundaries.
 - `crates/ledger/Cargo.toml`
@@ -208,7 +208,7 @@
 - `crates/ledger/src/eras/shelley.rs`
   - Shelley-era transaction and block types. Types match the Shelley CDDL specification: <https://github.com/IntersectMBO/cardano-ledger/blob/master/eras/shelley/impl/cddl/data/shelley
 - `crates/ledger/src/error.rs`
-  - error - module-level docstring. ## Naming parity **Strict mirror:** none. Yggdrasil-side error enum for the ledger crate (CBOR / era / fee / witness / phase-1 / etc.).
+  - error - module-level docstring.
 - `crates/ledger/src/fees.rs`
   - Fee calculation and validation. Implements the Cardano fee formula for all eras: - **Shelley–Mary**: `min_fee = min_fee_a × tx_size + min_fee_b`.
 - `crates/ledger/src/lib.rs`
@@ -230,7 +230,7 @@
 - `crates/ledger/src/stake.rs`
   - Stake distribution snapshots and epoch-boundary snapshot rotation. Implements the three-snapshot mechanism described in the Shelley formal ledger specification (Section 11 — SNAP r
 - `crates/ledger/src/state.rs`
-  - state - module-level docstring. ## Naming parity **Strict mirror:** none. Yggdrasil-side `LedgerState` orchestrator + per-era apply-path entry points. The.
+  - state - module-level docstring.
 - `crates/ledger/src/state/cbor.rs`
   - `LedgerState` CBOR encoder + decoder. Mirrors upstream EncCBOR/DecCBOR instance separation for `Cardano.Ledger.Shelley.LedgerState`. Yggdrasil's codec lives in its own.
 - `crates/ledger/src/state/chain_dep.rs`
@@ -284,7 +284,7 @@
 - `crates/ledger/src/state/treasury.rs`
   - `AccountingState` — treasury and reserves accounting tracked by the ledger. Mirrors upstream [`Cardano.Ledger.Shelley.LedgerState::esAccountState`](https://github.com/IntersectMBO/
 - `crates/ledger/src/tx.rs`
-  - tx - module-level docstring. ## Naming parity **Strict mirror:** none. Yggdrasil-side `compute_tx_id` helper plus per-era TxBody / WitnessSet re-export shell.
+  - tx - module-level docstring.
 - `crates/ledger/src/types.rs`
   - Core protocol-level types shared across ledger, storage, and consensus. These newtypes match upstream Cardano naming from `cardano-slotting` and.
 - `crates/ledger/src/utxo.rs`
@@ -292,7 +292,7 @@
 - `crates/ledger/src/witnesses.rs`
   - Witness sufficiency checks. Validates that a transaction carries the required VKey witnesses for all spending inputs, certificate actions, and withdrawals.
 - `crates/ledger/tests/AGENTS.md`
-  - Scope: ---.
+  - Scope: Keep tests in this directory close to ledger rules and era-specific invariants.
 - `crates/ledger/tests/integration.rs`
   - Rust integration or regression tests for integration behavior.
 - `crates/ledger/tests/integration/AGENTS.md`
@@ -404,7 +404,7 @@
 - `crates/ledger/tests/integration/witness_validation.rs`
   - Integration tests for VKey witness and native script validation wired into the per-era `apply_block()` pipeline.
 - `crates/ledger/tests/proptest_cbor.rs`
-  - Wave 9 PR 28 follow-on — property-based CBOR roundtrip tests. ## Naming parity **Strict mirror:** none. Yggdrasil-side property-test harness;.
+  - Wave 9 PR 28 follow-on — property-based CBOR roundtrip tests.
 - `crates/network/AGENTS.md`
   - Guidance for Cardano mini-protocol and peer networking work: Focus on typed protocol state machines, connection lifecycle, and exact wire-behavior boundaries.
 - `crates/network/Cargo.toml`
@@ -453,19 +453,19 @@
 - `crates/network/src/governor/types.rs`
   - Governor types — targets, peer-sharing flag, association mode, and sensitive-mode predicates. Mirrors upstream: - `Ouroboros.Network.PeerSelection.Governor.Types` (`PeerSelectionTa
 - `crates/network/src/handshake.rs`
-  - Handshake mini-protocol (umbrella module). ## Naming parity **Strict mirror:** none. Yggdrasil parent shell aggregating `handshake/{type,version,codec}.rs` (which mirror upstream.
+  - Handshake mini-protocol (umbrella module).
 - `crates/network/src/handshake/codec.rs`
-  - Handshake mini-protocol CBOR codec. ## Naming parity **Strict mirror:** Ouroboros/Network/Protocol/Handshake/Codec.hs. Filename flattens the upstream directory; the file carries th
+  - Handshake mini-protocol CBOR codec.
 - `crates/network/src/handshake/type.rs`
-  - Handshake mini-protocol type-level definitions. ## Naming parity **Strict mirror:** Ouroboros/Network/Protocol/Handshake/Type.hs. Filename flattens the upstream directory; the file
+  - Handshake mini-protocol type-level definitions.
 - `crates/network/src/handshake/version.rs`
-  - Handshake version-number type and per-version negotiation data. ## Naming parity **Strict mirror:** Ouroboros/Network/Protocol/Handshake/Version.hs.
+  - Handshake version-number type and per-version negotiation data.
 - `crates/network/src/handshake/wire.rs`
-  - Generic wire helpers for the Ouroboros handshake mini-protocol — shared across NodeToNode (NtN) and trace-forwarder variants. ## Naming parity.
+  - Generic wire helpers for the Ouroboros handshake mini-protocol — shared across NodeToNode (NtN) and trace-forwarder variants.
 - `crates/network/src/inbound_governor.rs`
   - Inbound governor decision engine. This module implements the upstream `Ouroboros.Network.InboundGovernor` state machine as a pure step function. Each call to.
 - `crates/network/src/inbound_governor/state.rs`
-  - Inbound governor state types. ## Naming parity **Strict mirror:** Ouroboros/Network/InboundGovernor/State.hs. Filename flattens the upstream directory; the file carries the.
+  - Inbound governor state types.
 - `crates/network/src/keepalive_client.rs`
   - KeepAlive mini-protocol client driver. Wraps a [`ProtocolHandle`] with typed send/receive methods that maintain the KeepAlive state machine invariants. The client periodically send
 - `crates/network/src/keepalive_server.rs`
@@ -513,11 +513,11 @@
 - `crates/network/src/protocols/AGENTS.md`
   - Guidance for mini-protocol state machine modules: Focus on explicit node-to-node and node-to-client protocol state machines, messages, and transition safety.
 - `crates/network/src/protocols/block_fetch.rs`
-  - BlockFetch mini-protocol type-level definitions (state machine + message types). ## Naming parity **Strict mirror:** Ouroboros/Network/Protocol/BlockFetch/Type.hs.
+  - BlockFetch mini-protocol type-level definitions (state machine + message types).
 - `crates/network/src/protocols/chain_sync.rs`
-  - chain_sync - module-level docstring. ## Naming parity **Strict mirror:** Ouroboros/Network/Protocol/ChainSync/Type.hs. (state-machine + message types). Yggdrasil's `protocols/chain
+  - chain_sync - module-level docstring.
 - `crates/network/src/protocols/data_point_forward.rs`
-  - DataPointForward mini-protocol type-level definitions (state machine + message types). ## Naming parity **Strict mirror:** trace-forward/src/Trace/Forward/Protocol/DataPoint/Type.h
+  - DataPointForward mini-protocol type-level definitions (state machine + message types).
 - `crates/network/src/protocols/data_point_forward_configuration.rs`
   - Configuration types for the trace-forwarder DataPoint mini- protocol — caller-supplied parameters that pin the stop-flag and (optional) tracing channel.
 - `crates/network/src/protocols/data_point_forward_utils.rs`
@@ -525,23 +525,23 @@
 - `crates/network/src/protocols/forward_sink.rs`
   - `ForwardSink` — bounded queue + overflow callback used by the forwarder side of the trace-forwarder mini-protocol to buffer outgoing trace objects until the acceptor requests them.
 - `crates/network/src/protocols/keep_alive.rs`
-  - KeepAlive mini-protocol type-level definitions (state machine + message types). ## Naming parity **Strict mirror:** Ouroboros/Network/Protocol/KeepAlive/Type.hs.
+  - KeepAlive mini-protocol type-level definitions (state machine + message types).
 - `crates/network/src/protocols/local_state_query.rs`
-  - LocalStateQuery mini-protocol type-level definitions (state machine + message types). ## Naming parity **Strict mirror:** Ouroboros/Network/Protocol/LocalStateQuery/Type.hs.
+  - LocalStateQuery mini-protocol type-level definitions (state machine + message types).
 - `crates/network/src/protocols/local_state_query_upstream.rs`
   - Upstream-faithful Cardano LocalStateQuery query/result codec. This module implements the wire-format query/result codec used by upstream `cardano-node` + `cardano-cli` over the Loc
 - `crates/network/src/protocols/local_state_query_upstream/tests.rs`
   - Tests for the parent module. Extracted from inline `#[cfg(test)] mod tests` block in R256 Phase H to keep the parent file readable. `use super::*;` still gives full access to the p
 - `crates/network/src/protocols/local_tx_monitor.rs`
-  - local_tx_monitor - module-level docstring. ## Naming parity **Strict mirror:** Ouroboros/Network/Protocol/LocalTxMonitor/Type.hs. States of the LocalTxMonitor mini-protocol state m
+  - local_tx_monitor - module-level docstring.
 - `crates/network/src/protocols/local_tx_submission.rs`
-  - local_tx_submission - module-level docstring. ## Naming parity **Strict mirror:** Ouroboros/Network/Protocol/LocalTxSubmission/Type.hs. States of the LocalTxSubmission mini-protoco
+  - local_tx_submission - module-level docstring.
 - `crates/network/src/protocols/mod.rs`
   - BlockFetch protocol state machine and messages.
 - `crates/network/src/protocols/peer_sharing.rs`
-  - peer_sharing - module-level docstring. ## Naming parity **Strict mirror:** Ouroboros/Network/Protocol/PeerSharing/Type.hs. States of the PeerSharing mini-protocol state machine.
+  - peer_sharing - module-level docstring.
 - `crates/network/src/protocols/trace_object_forward.rs`
-  - TraceObjectForward mini-protocol type-level definitions (state machine + message types). ## Naming parity **Strict mirror:** trace-forward/src/Trace/Forward/Protocol/TraceObject/Ty
+  - TraceObjectForward mini-protocol type-level definitions (state machine + message types).
 - `crates/network/src/protocols/trace_object_forward_configuration.rs`
   - Configuration types for the trace-forwarder TraceObject mini- protocol — caller-supplied parameters that pin the request-batch size, stop-flag, and (optional) tracing channel.
 - `crates/network/src/protocols/trace_object_forward_handshake.rs`
@@ -551,7 +551,7 @@
 - `crates/network/src/protocols/trace_object_forward_version.rs`
   - Trace-forwarder handshake version codec — version-number enum + version-data record used by the trace-forwarder mini-protocol's handshake exchange.
 - `crates/network/src/protocols/tx_submission.rs`
-  - TxSubmission2 mini-protocol type-level definitions (state machine + message types). ## Naming parity **Strict mirror:** Ouroboros/Network/Protocol/TxSubmission2/Type.hs.
+  - TxSubmission2 mini-protocol type-level definitions (state machine + message types).
 - `crates/network/src/root_peers.rs`
   - Topology root-peer domain types and resolved provider snapshots. This module keeps the topology-root model in the network crate so node code can remain focused on orchestration. It
 - `crates/network/src/root_peers_provider.rs`
@@ -738,19 +738,19 @@
   - Cargo manifest for the node crate.
   - Declares crate metadata, dependencies, features, and local lint behavior.
 - `crates/node/sync/src/block_fetch.rs`
-  - BlockFetch fetch primitives and ChainSync point/range helpers. ## Naming parity **Strict mirror:** none. Yggdrasil-side BlockFetch range adapters.
+  - BlockFetch fetch primitives and ChainSync point/range helpers.
 - `crates/node/sync/src/blockfetch_worker.rs`
   - Per-peer BlockFetch worker tasks (Phase 6 step 3 of the [architecture docs](../../docs/ARCHITECTURE.md)). Mirrors upstream `Ouroboros.Network.BlockFetch.ClientRegistry`.
 - `crates/node/sync/src/chain_sync.rs`
-  - Typed ChainSync sync-step API, intersection helpers, and volatile-store apply. ## Naming parity **Strict mirror:** none. Yggdrasil-side runtime adapter that.
+  - Typed ChainSync sync-step API, intersection helpers, and volatile-store apply.
 - `crates/node/sync/src/chainsync_worker.rs`
   - Per-peer ChainSync worker tasks (Finding A foundation). Mirrors upstream `Ouroboros.Network.BlockFetch.ClientRegistry` for ChainSync: each warm peer gets a long-lived task that own
 - `crates/node/sync/src/error.rs`
-  - `SyncError` aggregate error type for node sync orchestration. ## Naming parity **Strict mirror:** none. Yggdrasil-side aggregate error type for.
+  - `SyncError` aggregate error type for node sync orchestration.
 - `crates/node/sync/src/lib.rs`
   - Sync orchestration helpers for node-to-node ChainSync + BlockFetch. This module provides a thin runtime coordination layer between the `ChainSyncClient` and `BlockFetchClient` driv
 - `crates/node/sync/src/shelley_decoders.rs`
-  - Shelley-era block, header, and point CBOR decoders. ## Naming parity **Strict mirror:** none. Yggdrasil-side adapter functions that bridge node-to-node ChainSync / BlockFetch paylo
+  - Shelley-era block, header, and point CBOR decoders.
 - `crates/node/tracer/AGENTS.md`
   - yggdrasil-node-tracer — node tracer + metrics + cardano-tracer forwarder: Extracted from `yggdrasil-node` in Wave 5 PR 7 (alongside config /.
 - `crates/node/tracer/Cargo.toml`
@@ -765,25 +765,25 @@
 - `crates/node/tracer/src/trace_forwarder.rs`
   - Trace egress used by the `Forwarder` trace backend. # Layered design Upstream `cardano-tracer` forwarding has three distinct layers: 1. **Application codec** — each trace event is
 - `crates/node/tracer/src/trace_forwarder/bearer.rs`
-  - AF_UNIX SOCK_STREAM bearer for the cardano-tracer forwarder Mux. ## Naming parity **Strict mirror:** none. Yggdrasil-side `tokio`-backed bearer.
+  - AF_UNIX SOCK_STREAM bearer for the cardano-tracer forwarder Mux.
 - `crates/node/tracer/src/trace_forwarder/egress.rs`
-  - Egress scheduler for the cardano-tracer forwarder Mux — a Rust port of upstream `Network.Mux.Egress`. ## Naming parity **Strict mirror:** none. Yggdrasil-side Rust port of.
+  - Egress scheduler for the cardano-tracer forwarder Mux — a Rust port of upstream `Network.Mux.Egress`.
 - `crates/node/tracer/src/trace_forwarder/event_builder.rs`
-  - Convert a `tracing::Event` into a cardano-tracer-shaped [`super::TraceObject`]. ## Naming parity **Strict mirror:** none. Yggdrasil-side adapter that bridges the.
+  - Convert a `tracing::Event` into a cardano-tracer-shaped [`super::TraceObject`].
 - `crates/node/tracer/src/trace_forwarder/forwarding_task.rs`
-  - Background task that drains TraceObjects off a tokio channel and writes them to a cardano-tracer bearer. ## Naming parity **Strict mirror:** none. Yggdrasil-side synthesis that wir
+  - Background task that drains TraceObjects off a tokio channel and writes them to a cardano-tracer bearer.
 - `crates/node/tracer/src/trace_forwarder/handshake.rs`
-  - Network.Mux Handshake mini-protocol codec. ## Naming parity **Strict mirror:** none. Yggdrasil-side codec for the upstream `Ouroboros.Network.Protocol.Handshake.Codec` wire format
+  - Network.Mux Handshake mini-protocol codec.
 - `crates/node/tracer/src/trace_forwarder/handshake_driver.rs`
-  - Typed-protocol state-machine driver for the Network.Mux Handshake mini-protocol. ## Naming parity **Strict mirror:** none. Yggdrasil-side driver for the upstream.
+  - Typed-protocol state-machine driver for the Network.Mux Handshake mini-protocol.
 - `crates/node/tracer/src/trace_forwarder/layer.rs`
-  - `tracing-subscriber` Layer<S> adapter that forwards every `tracing::Event` to a cardano-tracer-compatible Unix socket. ## Naming parity **Strict mirror:** none. Yggdrasil-side adap
+  - `tracing-subscriber` Layer<S> adapter that forwards every `tracing::Event` to a cardano-tracer-compatible Unix socket.
 - `crates/node/tracer/src/trace_forwarder/mini_protocol.rs`
   - Layer 2 of the cardano-tracer forwarder — the `Trace.Forward.Protocol.TraceObject` mini-protocol codec. ## Wire format (per `trace-forward/src/Trace/Forward/Protocol/TraceObject/Co
 - `crates/node/tracer/src/trace_forwarder/mux.rs`
-  - Layer 3 of the cardano-tracer forwarder — `Network.Mux` SDU framing. ## Naming parity **Strict mirror:** none. Yggdrasil-side Rust port of the SDU.
+  - Layer 3 of the cardano-tracer forwarder — `Network.Mux` SDU framing.
 - `crates/node/tracer/src/trace_forwarder/mux_connection.rs`
-  - Minimal bidirectional Mux dispatcher. ## Naming parity **Strict mirror:** none. Yggdrasil-side bare-bones SDU demultiplexer for the upstream Network.Mux multiplexer at.
+  - Minimal bidirectional Mux dispatcher.
 - `crates/node/tracer/tests/cardano_tracer_conformance.rs`
   - Live conformance test — Yggdrasil trace-forwarder handshake against the upstream `cardano-tracer` binary. Task #19 (Phase 2.B closeout), remaining-work item 2. This test.
 - `crates/observability/yggdrasil-metrics/AGENTS.md`
@@ -792,7 +792,7 @@
   - Cargo manifest for the observability crate.
   - Declares crate metadata, dependencies, features, and local lint behavior.
 - `crates/observability/yggdrasil-metrics/src/lib.rs`
-  - yggdrasil-metrics — Prometheus metrics registry with EKG-parity names. ## Naming parity **Strict mirror:** none. Yggdrasil-side synthesis crate. Upstream.
+  - yggdrasil-metrics — Prometheus metrics registry with EKG-parity names.
 - `crates/plutus/AGENTS.md`
   - Guidance for the UPLC evaluator and Plutus script execution engine: Focus on deterministic CEK machine behavior, cost model accuracy, and upstream parity with the official Plutus e
 - `crates/plutus/Cargo.toml`
@@ -813,7 +813,7 @@
 - `crates/plutus/src/cost_model/tests.rs`
   - Tests for `crate::cost_model`. Extracted from the inline `#[cfg(test)] mod tests` block in R256 Phase H to keep `cost_model.rs` itself under 2 KLOC. `use super::*;` still gives us
 - `crates/plutus/src/error.rs`
-  - Error types for UPLC evaluation. ## Naming parity **Strict mirror:** none. Yggdrasil-side error enum for the Plutus crate (CEK budget exhaustion / builtin-arg shape /.
+  - Error types for UPLC evaluation.
 - `crates/plutus/src/flat.rs`
   - Flat binary format decoder for UPLC programs. The Flat encoding is a bit-level binary format used to serialize Plutus Core programs on the Cardano blockchain. This module implement
 - `crates/plutus/src/flat/default_universe.rs`
@@ -843,11 +843,11 @@
   - Cargo manifest for the storage crate.
   - Declares crate metadata, dependencies, features, and local lint behavior.
 - `crates/storage/src/AGENTS.md`
-  - Scope: ---.
+  - Scope: This directory owns storage interfaces and implementations, including rollback-aware persistence behavior.
 - `crates/storage/src/chain_db.rs`
-  - ChainDB coordinator — manages immutable + volatile + ledger stores together. ## Naming parity **Strict mirror:** Ouroboros/Consensus/Storage/ChainDB.hs.
+  - ChainDB coordinator — manages immutable + volatile + ledger stores together.
 - `crates/storage/src/error.rs`
-  - error - module-level docstring. ## Naming parity **Strict mirror:** none. Yggdrasil-side error enum for the storage crate (immutable / volatile / ledger-DB / chain-DB /.
+  - error - module-level docstring.
 - `crates/storage/src/file_immutable.rs`
   - File-backed implementation of [`ImmutableStore`]. Each finalized block is stored as a CBOR file named by its hex-encoded header hash. An in-memory index tracks insertion order for
 - `crates/storage/src/file_ledger.rs`
@@ -855,17 +855,17 @@
 - `crates/storage/src/file_volatile.rs`
   - File-backed implementation of [`VolatileStore`]. Each block in the volatile window is stored as a CBOR file named by its hex-encoded header hash. Rollback deletes files for blocks
 - `crates/storage/src/immutable_db.rs`
-  - Append-only store for immutable (finalized) blocks. ## Naming parity **Strict mirror:** Ouroboros/Consensus/Storage/ImmutableDB.hs. Filename matches upstream basename; the module i
+  - Append-only store for immutable (finalized) blocks.
 - `crates/storage/src/ledger_db.rs`
-  - LedgerDB — restorable ledger snapshots with file-backed persistence. ## Naming parity **Strict mirror:** Ouroboros/Consensus/Storage/LedgerDB.hs.
+  - LedgerDB — restorable ledger snapshots with file-backed persistence.
 - `crates/storage/src/lib.rs`
   - Storage-facing abstractions for immutable blocks, volatile rollback windows, and ledger snapshots. Each storage concern exposes a trait (`ImmutableStore`, `VolatileStore`,.
 - `crates/storage/src/ocert_sidecar.rs`
   - Sidecar persistence for opaque consensus-adjacent state files. The canonical nonce/OpCert path is the slot-indexed ChainDepState history under `chain_dep_state/<slot-hex>.cbor`. Th
 - `crates/storage/src/volatile_db.rs`
-  - Rollback-aware store for blocks that have not yet been finalized. ## Naming parity **Strict mirror:** Ouroboros/Consensus/Storage/VolatileDB.hs.
+  - Rollback-aware store for blocks that have not yet been finalized.
 - `crates/storage/tests/AGENTS.md`
-  - Scope: ---.
+  - Scope: Use this directory to pin persistence and rollback expectations for storage backends.
 - `crates/storage/tests/integration.rs`
   - Rust integration or regression tests for integration behavior.
 - `crates/telemetry/AGENTS.md`
@@ -874,9 +874,9 @@
   - Cargo manifest for the telemetry crate.
   - Declares crate metadata, dependencies, features, and local lint behavior.
 - `crates/telemetry/src/haskell_json.rs`
-  - Haskell-Katip JSON log formatter. ## Naming parity **Strict mirror:** none. Yggdrasil-side synthesis emitter that reproduces upstream `cardano-node`'s Katip JSON schema so an.
+  - Haskell-Katip JSON log formatter.
 - `crates/telemetry/src/lib.rs`
-  - yggdrasil-telemetry — observability scaffolding. ## Naming parity **Strict mirror:** none. Yggdrasil-side synthesis crate that centralises observability primitives (log format sele
+  - yggdrasil-telemetry — observability scaffolding.
 - `crates/telemetry/src/otlp.rs`
   - OTLP exporter wiring for the `--otlp-endpoint=<URL>` operator surface. Compiled in only when the `otlp` Cargo feature is enabled. The workspace default leaves it off so non-Tokio s
 - `crates/test-fixtures/AGENTS.md`
@@ -885,22 +885,22 @@
   - Cargo manifest for the test-fixtures crate.
   - Declares crate metadata, dependencies, features, and local lint behavior.
 - `crates/test-fixtures/src/lib.rs`
-  - yggdrasil-test-fixtures — shared test scaffolding. ## Naming parity **Strict mirror:** none. Yggdrasil-side synthesis crate that consolidates fixtures and helpers used across `node
+  - yggdrasil-test-fixtures — shared test scaffolding.
 - `crates/tools/bech32/AGENTS.md`
   - Guidance for the pure-Rust port of upstream `bech32`.: **Status (R334 closeout):** **deployment-ready**. Drop-in.
 - `crates/tools/bech32/Cargo.toml`
   - Cargo manifest for the tools crate.
   - Declares crate metadata, dependencies, features, and local lint behavior.
 - `crates/tools/bech32/src/internal.rs`
-  - Internal helpers for Bech32 encoding — character set, polynomial checksum, encoding-version selection (BIP-0173 vs Bech32m). ## Naming parity.
+  - Internal helpers for Bech32 encoding — character set, polynomial checksum, encoding-version selection (BIP-0173 vs Bech32m).
 - `crates/tools/bech32/src/lib.rs`
   - Pure-Rust port of upstream `Codec.Binary.Bech32` — BIP-0173 Bech32 + BIP-0350 Bech32m address-format encoding and decoding. Foundation: `bech32` v0.11+ (rust-bitcoin/rust-bech32, M
 - `crates/tools/bech32/src/main.rs`
-  - Binary entry point for the `bech32` deployable. ## Naming parity **Strict mirror:** bech32/app/Main.hs. The Rust `main.rs` is the canonical 1:1 mirror of upstream `bech32/bech32/ap
+  - Binary entry point for the `bech32` deployable.
 - `crates/tools/bech32/src/parser.rs`
-  - CLI argument parser for the `bech32` binary. ## Naming parity **Strict mirror:** none. Yggdrasil-side parser shell wrapping the upstream optparse-applicative parser embedded inline
+  - CLI argument parser for the `bech32` binary.
 - `crates/tools/bech32/tests/cli_help_golden.rs`
-  - Golden test: yggdrasil-bech32 `--help` and `--version` outputs are byte-equivalent to the upstream `bech32` binary. ## Naming parity **Strict mirror:** none. Yggdrasil-side accepta
+  - Golden test: yggdrasil-bech32 `--help` and `--version` outputs are byte-equivalent to the upstream `bech32` binary.
 - `crates/tools/bech32/tests/fixtures/upstream-help.txt`
   - Project file at crates/tools/bech32/tests/fixtures/upstream-help.txt.
 - `crates/tools/bech32/tests/fixtures/upstream-version.txt`
@@ -911,524 +911,524 @@
   - Cargo manifest for the tools crate.
   - Declares crate metadata, dependencies, features, and local lint behavior.
 - `crates/tools/cardano-cli/src/byron.rs`
-  - Byron-era cardano-cli command surface. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell over the 10 Byron sub-modules. Upstream `cardano-cli` does not have a.
+  - Byron-era cardano-cli command surface.
 - `crates/tools/cardano-cli/src/byron/command.rs`
-  - Byron-era byron-era command sum type (genesis / key / delegate / submit-tx / vote / update-proposal subcommands). ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/C
+  - Byron-era byron-era command sum type (genesis / key / delegate / submit-tx / vote / update-proposal subcommands).
 - `crates/tools/cardano-cli/src/byron/delegation.rs`
-  - Byron-era byron heavyweight-delegation certificate construction + verification. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Byron/Delegation.hs`.
+  - Byron-era byron heavyweight-delegation certificate construction + verification.
 - `crates/tools/cardano-cli/src/byron/genesis.rs`
-  - Byron-era byron genesis-config creation (`create-testnet-genesis`). ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Byron/Genesis.hs`.
+  - Byron-era byron genesis-config creation (`create-testnet-genesis`).
 - `crates/tools/cardano-cli/src/byron/key.rs`
-  - Byron-era byron-era key generation, conversion, and signing. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Byron/Key.hs`.
+  - Byron-era byron-era key generation, conversion, and signing.
 - `crates/tools/cardano-cli/src/byron/legacy.rs`
-  - Byron-era byron legacy operator-key conversion (byron-era format <-> shelley-era format). ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Byron/Legacy.
+  - Byron-era byron legacy operator-key conversion (byron-era format <-> shelley-era format).
 - `crates/tools/cardano-cli/src/byron/parser.rs`
-  - Byron-era byron-era clap parser shell. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Byron/Parser.hs`. R290 lands the file with the API skeleton; con
+  - Byron-era byron-era clap parser shell.
 - `crates/tools/cardano-cli/src/byron/run.rs`
-  - Byron-era byron-era command runner / dispatcher. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Byron/Run.hs`. R290 lands the file with the API skelet
+  - Byron-era byron-era command runner / dispatcher.
 - `crates/tools/cardano-cli/src/byron/tx.rs`
-  - Byron-era byron transaction construction, signing, and submission. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Byron/Tx.hs`.
+  - Byron-era byron transaction construction, signing, and submission.
 - `crates/tools/cardano-cli/src/byron/update_proposal.rs`
-  - Byron-era byron protocol-parameter update proposal creation + voting. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Byron/UpdateProposal.hs`.
+  - Byron-era byron protocol-parameter update proposal creation + voting.
 - `crates/tools/cardano-cli/src/byron/vote.rs`
-  - Byron-era byron update-proposal vote construction + submission. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Byron/Vote.hs`.
+  - Byron-era byron update-proposal vote construction + submission.
 - `crates/tools/cardano-cli/src/command.rs`
   - Top-level cardano-cli command type. Mirrors upstream `Cardano.CLI.Command` (the entry-point sum type that aggregates Byron / Compatible / per-era / Legacy / EraBased.
 - `crates/tools/cardano-cli/src/compatible.rs`
   - Compatible-cluster cardano-cli command surface. Mirrors upstream `Cardano.CLI.Compatible.*`. Compatible is the era-shared command surface that adapts upstream's per-era types.
 - `crates/tools/cardano-cli/src/compatible/command.rs`
-  - Compatible-cluster top-level Compatible command sum type. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Compatible/Command.hs`.
+  - Compatible-cluster top-level Compatible command sum type.
 - `crates/tools/cardano-cli/src/compatible/exception.rs`
-  - Compatible-cluster exception/error types for Compatible runners. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Compatible/Exception.hs`.
+  - Compatible-cluster exception/error types for Compatible runners.
 - `crates/tools/cardano-cli/src/compatible/governance.rs`
-  - Compatible-cluster Governance sub-tree. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell over the `compatible/governance/*` sub-modules. Upstream has no `Carda
+  - Compatible-cluster Governance sub-tree.
 - `crates/tools/cardano-cli/src/compatible/governance/command.rs`
-  - Compatible-cluster governance command sum type (vote / proposal / drep / committee). ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Compatible/Governa
+  - Compatible-cluster governance command sum type (vote / proposal / drep / committee).
 - `crates/tools/cardano-cli/src/compatible/governance/option.rs`
-  - Compatible-cluster governance option parsers. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Compatible/Governance/Option.hs`.
+  - Compatible-cluster governance option parsers.
 - `crates/tools/cardano-cli/src/compatible/governance/run.rs`
-  - Compatible-cluster governance runner. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Compatible/Governance/Run.hs`.
+  - Compatible-cluster governance runner.
 - `crates/tools/cardano-cli/src/compatible/governance/types.rs`
-  - Compatible-cluster governance command type definitions. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Compatible/Governance/Types.hs`.
+  - Compatible-cluster governance command type definitions.
 - `crates/tools/cardano-cli/src/compatible/json.rs`
-  - Compatible-cluster Json sub-tree. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell over the `compatible/json/*` sub-modules. Upstream has no `Cardano/CLI/.
+  - Compatible-cluster Json sub-tree.
 - `crates/tools/cardano-cli/src/compatible/json/friendly.rs`
-  - Compatible-cluster human-readable JSON renderer for query results. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Compatible/Json/Friendly.hs`.
+  - Compatible-cluster human-readable JSON renderer for query results.
 - `crates/tools/cardano-cli/src/compatible/option.rs`
-  - Compatible-cluster shared option parsers across Compatible subcommands. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Compatible/Option.hs`.
+  - Compatible-cluster shared option parsers across Compatible subcommands.
 - `crates/tools/cardano-cli/src/compatible/read.rs`
-  - Compatible-cluster envelope-file reader helpers (text-envelope CBOR + JSON). ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Compatible/Read.hs`.
+  - Compatible-cluster envelope-file reader helpers (text-envelope CBOR + JSON).
 - `crates/tools/cardano-cli/src/compatible/run.rs`
-  - Compatible-cluster top-level Compatible runner / dispatcher. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Compatible/Run.hs`.
+  - Compatible-cluster top-level Compatible runner / dispatcher.
 - `crates/tools/cardano-cli/src/compatible/stake_address.rs`
-  - Compatible-cluster StakeAddress sub-tree. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell over the `compatible/stake_address/*` sub-modules. Upstream has no `
+  - Compatible-cluster StakeAddress sub-tree.
 - `crates/tools/cardano-cli/src/compatible/stake_address/command.rs`
-  - Compatible-cluster stake-address command sum type. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Compatible/StakeAddress/Command.hs`.
+  - Compatible-cluster stake-address command sum type.
 - `crates/tools/cardano-cli/src/compatible/stake_address/option.rs`
-  - Compatible-cluster stake-address option parsers. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Compatible/StakeAddress/Option.hs`.
+  - Compatible-cluster stake-address option parsers.
 - `crates/tools/cardano-cli/src/compatible/stake_address/run.rs`
-  - Compatible-cluster stake-address runner. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Compatible/StakeAddress/Run.hs`.
+  - Compatible-cluster stake-address runner.
 - `crates/tools/cardano-cli/src/compatible/stake_pool.rs`
-  - Compatible-cluster StakePool sub-tree. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell over the `compatible/stake_pool/*` sub-modules. Upstream has no `Cardan
+  - Compatible-cluster StakePool sub-tree.
 - `crates/tools/cardano-cli/src/compatible/stake_pool/command.rs`
-  - Compatible-cluster stake-pool command sum type. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Compatible/StakePool/Command.hs`.
+  - Compatible-cluster stake-pool command sum type.
 - `crates/tools/cardano-cli/src/compatible/stake_pool/option.rs`
-  - Compatible-cluster stake-pool option parsers. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Compatible/StakePool/Option.hs`.
+  - Compatible-cluster stake-pool option parsers.
 - `crates/tools/cardano-cli/src/compatible/stake_pool/run.rs`
-  - Compatible-cluster stake-pool runner. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Compatible/StakePool/Run.hs`.
+  - Compatible-cluster stake-pool runner.
 - `crates/tools/cardano-cli/src/compatible/transaction.rs`
-  - Compatible-cluster Transaction sub-tree. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell over the `compatible/transaction/*` sub-modules. Upstream has no `Car
+  - Compatible-cluster Transaction sub-tree.
 - `crates/tools/cardano-cli/src/compatible/transaction/command.rs`
-  - Compatible-cluster transaction command sum type (build / sign / submit / witness). ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Compatible/Transacti
+  - Compatible-cluster transaction command sum type (build / sign / submit / witness).
 - `crates/tools/cardano-cli/src/compatible/transaction/option.rs`
-  - Compatible-cluster transaction option parsers. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Compatible/Transaction/Option.hs`.
+  - Compatible-cluster transaction option parsers.
 - `crates/tools/cardano-cli/src/compatible/transaction/run.rs`
-  - Compatible-cluster transaction runner. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Compatible/Transaction/Run.hs`.
+  - Compatible-cluster transaction runner.
 - `crates/tools/cardano-cli/src/compatible/transaction/script_witness.rs`
-  - Compatible-cluster Plutus script-witness construction helpers. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Compatible/Transaction/ScriptWitness.hs`
+  - Compatible-cluster Plutus script-witness construction helpers.
 - `crates/tools/cardano-cli/src/compatible/transaction/tx_out.rs`
-  - Compatible-cluster TxOut construction helpers (value + datum + reference-script). ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Compatible/Transactio
+  - Compatible-cluster TxOut construction helpers (value + datum + reference-script).
 - `crates/tools/cardano-cli/src/environment.rs`
   - Environment / config-path helpers. Mirrors upstream `Cardano.CLI.Environment` — discovery of `CARDANO_NODE_SOCKET_PATH`, `CARDANO_NODE_NETWORK_ID`, and the.
 - `crates/tools/cardano-cli/src/era_based.rs`
   - EraBased cardano-cli command surface. Mirrors upstream `Cardano.CLI.EraBased.*`. EraBased is the per- era-aware command surface that adapts upstream's.
 - `crates/tools/cardano-cli/src/era_based/command.rs`
-  - EraBased command. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraBased/Command.hs`. R292 lands the file with the API skeleton. Concrete EraBased.
+  - EraBased command.
 - `crates/tools/cardano-cli/src/era_based/common.rs`
-  - EraBased common sub-tree. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell over the `era_based/common/*` sub-modules. Upstream has no.
+  - EraBased common sub-tree.
 - `crates/tools/cardano-cli/src/era_based/common/option.rs`
-  - EraBased option. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraBased/Common/Option.hs`. R292 lands the file with the API skeleton. Concrete EraBas
+  - EraBased option.
 - `crates/tools/cardano-cli/src/era_based/genesis.rs`
-  - EraBased genesis sub-tree. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell over the `era_based/genesis/*` sub-modules. Upstream has no.
+  - EraBased genesis sub-tree.
 - `crates/tools/cardano-cli/src/era_based/genesis/command.rs`
-  - EraBased command. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraBased/Genesis/Command.hs`. R292 lands the file with the API skeleton. Concrete Era
+  - EraBased command.
 - `crates/tools/cardano-cli/src/era_based/genesis/create_testnet_data.rs`
-  - EraBased create testnet data sub-tree. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell over the `era_based/genesis/create_testnet_data/*` sub-modules. Upstrea
+  - EraBased create testnet data sub-tree.
 - `crates/tools/cardano-cli/src/era_based/genesis/create_testnet_data/run.rs`
-  - EraBased run. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraBased/Genesis/CreateTestnetData/Run.hs`. R292 lands the file with the API skeleton. Co
+  - EraBased run.
 - `crates/tools/cardano-cli/src/era_based/genesis/internal.rs`
-  - EraBased internal sub-tree. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell over the `era_based/genesis/internal/*` sub-modules. Upstream has no.
+  - EraBased internal sub-tree.
 - `crates/tools/cardano-cli/src/era_based/genesis/internal/byron.rs`
-  - EraBased byron. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraBased/Genesis/Internal/Byron.hs`. R292 lands the file with the API skeleton. Concret
+  - EraBased byron.
 - `crates/tools/cardano-cli/src/era_based/genesis/internal/common.rs`
-  - EraBased common. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraBased/Genesis/Internal/Common.hs`. R292 lands the file with the API skeleton. Concr
+  - EraBased common.
 - `crates/tools/cardano-cli/src/era_based/genesis/option.rs`
-  - EraBased option. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraBased/Genesis/Option.hs`. R292 lands the file with the API skeleton. Concrete EraBa
+  - EraBased option.
 - `crates/tools/cardano-cli/src/era_based/genesis/run.rs`
-  - EraBased run. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraBased/Genesis/Run.hs`. R292 lands the file with the API skeleton. Concrete EraBased.
+  - EraBased run.
 - `crates/tools/cardano-cli/src/era_based/governance.rs`
-  - EraBased governance sub-tree. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell over the `era_based/governance/*` sub-modules. Upstream has no.
+  - EraBased governance sub-tree.
 - `crates/tools/cardano-cli/src/era_based/governance/actions.rs`
-  - EraBased actions sub-tree. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell over the `era_based/governance/actions/*` sub-modules. Upstream has no.
+  - EraBased actions sub-tree.
 - `crates/tools/cardano-cli/src/era_based/governance/actions/command.rs`
-  - EraBased command. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraBased/Governance/Actions/Command.hs`. R292 lands the file with the API skeleton. C
+  - EraBased command.
 - `crates/tools/cardano-cli/src/era_based/governance/actions/option.rs`
-  - EraBased option. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraBased/Governance/Actions/Option.hs`. R292 lands the file with the API skeleton. Con
+  - EraBased option.
 - `crates/tools/cardano-cli/src/era_based/governance/actions/run.rs`
-  - EraBased run. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraBased/Governance/Actions/Run.hs`. R292 lands the file with the API skeleton. Concrete
+  - EraBased run.
 - `crates/tools/cardano-cli/src/era_based/governance/command.rs`
-  - EraBased command. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraBased/Governance/Command.hs`. R292 lands the file with the API skeleton. Concrete
+  - EraBased command.
 - `crates/tools/cardano-cli/src/era_based/governance/committee.rs`
-  - EraBased committee sub-tree. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell over the `era_based/governance/committee/*` sub-modules. Upstream has no.
+  - EraBased committee sub-tree.
 - `crates/tools/cardano-cli/src/era_based/governance/committee/command.rs`
-  - EraBased command. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraBased/Governance/Committee/Command.hs`. R292 lands the file with the API skeleton.
+  - EraBased command.
 - `crates/tools/cardano-cli/src/era_based/governance/committee/option.rs`
-  - EraBased option. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraBased/Governance/Committee/Option.hs`. R292 lands the file with the API skeleton. C
+  - EraBased option.
 - `crates/tools/cardano-cli/src/era_based/governance/committee/run.rs`
-  - EraBased run. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraBased/Governance/Committee/Run.hs`. R292 lands the file with the API skeleton. Concret
+  - EraBased run.
 - `crates/tools/cardano-cli/src/era_based/governance/d_rep.rs`
-  - EraBased d rep sub-tree. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell over the `era_based/governance/d_rep/*` sub-modules. Upstream has no.
+  - EraBased d rep sub-tree.
 - `crates/tools/cardano-cli/src/era_based/governance/d_rep/command.rs`
-  - EraBased command. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraBased/Governance/DRep/Command.hs`. R292 lands the file with the API skeleton. Conc
+  - EraBased command.
 - `crates/tools/cardano-cli/src/era_based/governance/d_rep/option.rs`
-  - EraBased option. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraBased/Governance/DRep/Option.hs`. R292 lands the file with the API skeleton. Concre
+  - EraBased option.
 - `crates/tools/cardano-cli/src/era_based/governance/d_rep/run.rs`
-  - EraBased run. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraBased/Governance/DRep/Run.hs`. R292 lands the file with the API skeleton. Concrete Era
+  - EraBased run.
 - `crates/tools/cardano-cli/src/era_based/governance/genesis_key_delegation_certificate.rs`
-  - EraBased genesis key delegation certificate sub-tree. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell over the `era_based/governance/genesis_key_delegation_ce
+  - EraBased genesis key delegation certificate sub-tree.
 - `crates/tools/cardano-cli/src/era_based/governance/genesis_key_delegation_certificate/run.rs`
-  - EraBased run. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraBased/Governance/GenesisKeyDelegationCertificate/Run.hs`.
+  - EraBased run.
 - `crates/tools/cardano-cli/src/era_based/governance/option.rs`
-  - EraBased option. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraBased/Governance/Option.hs`. R292 lands the file with the API skeleton. Concrete Er
+  - EraBased option.
 - `crates/tools/cardano-cli/src/era_based/governance/run.rs`
-  - EraBased run. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraBased/Governance/Run.hs`. R292 lands the file with the API skeleton. Concrete EraBased
+  - EraBased run.
 - `crates/tools/cardano-cli/src/era_based/governance/vote.rs`
-  - EraBased vote sub-tree. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell over the `era_based/governance/vote/*` sub-modules. Upstream has no.
+  - EraBased vote sub-tree.
 - `crates/tools/cardano-cli/src/era_based/governance/vote/command.rs`
-  - EraBased command. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraBased/Governance/Vote/Command.hs`. R292 lands the file with the API skeleton. Conc
+  - EraBased command.
 - `crates/tools/cardano-cli/src/era_based/governance/vote/option.rs`
-  - EraBased option. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraBased/Governance/Vote/Option.hs`. R292 lands the file with the API skeleton. Concre
+  - EraBased option.
 - `crates/tools/cardano-cli/src/era_based/governance/vote/run.rs`
-  - EraBased run. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraBased/Governance/Vote/Run.hs`. R292 lands the file with the API skeleton. Concrete Era
+  - EraBased run.
 - `crates/tools/cardano-cli/src/era_based/option.rs`
-  - EraBased option. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraBased/Option.hs`. R292 lands the file with the API skeleton. Concrete EraBased.
+  - EraBased option.
 - `crates/tools/cardano-cli/src/era_based/query.rs`
-  - EraBased query sub-tree. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell over the `era_based/query/*` sub-modules. Upstream has no.
+  - EraBased query sub-tree.
 - `crates/tools/cardano-cli/src/era_based/query/command.rs`
-  - EraBased command. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraBased/Query/Command.hs`. R292 lands the file with the API skeleton. Concrete EraBa
+  - EraBased command.
 - `crates/tools/cardano-cli/src/era_based/query/option.rs`
-  - EraBased option. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraBased/Query/Option.hs`. R292 lands the file with the API skeleton. Concrete EraBase
+  - EraBased option.
 - `crates/tools/cardano-cli/src/era_based/query/run.rs`
-  - EraBased run. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraBased/Query/Run.hs`. R292 lands the file with the API skeleton. Concrete EraBased.
+  - EraBased run.
 - `crates/tools/cardano-cli/src/era_based/run.rs`
-  - EraBased run. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraBased/Run.hs`. R292 lands the file with the API skeleton. Concrete EraBased.
+  - EraBased run.
 - `crates/tools/cardano-cli/src/era_based/script.rs`
-  - EraBased script sub-tree. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell over the `era_based/script/*` sub-modules. Upstream has no.
+  - EraBased script sub-tree.
 - `crates/tools/cardano-cli/src/era_based/script/certificate.rs`
-  - EraBased certificate sub-tree. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell over the `era_based/script/certificate/*` sub-modules. Upstream has no.
+  - EraBased certificate sub-tree.
 - `crates/tools/cardano-cli/src/era_based/script/certificate/read.rs`
-  - EraBased read. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraBased/Script/Certificate/Read.hs`. R292 lands the file with the API skeleton. Concret
+  - EraBased read.
 - `crates/tools/cardano-cli/src/era_based/script/certificate/type.rs`
-  - EraBased type. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraBased/Script/Certificate/Type.hs`. R292 lands the file with the API skeleton. Concret
+  - EraBased type.
 - `crates/tools/cardano-cli/src/era_based/script/mint.rs`
-  - EraBased mint sub-tree. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell over the `era_based/script/mint/*` sub-modules. Upstream has no.
+  - EraBased mint sub-tree.
 - `crates/tools/cardano-cli/src/era_based/script/mint/read.rs`
-  - EraBased read. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraBased/Script/Mint/Read.hs`. R292 lands the file with the API skeleton. Concrete EraBa
+  - EraBased read.
 - `crates/tools/cardano-cli/src/era_based/script/mint/type.rs`
-  - EraBased type. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraBased/Script/Mint/Type.hs`. R292 lands the file with the API skeleton. Concrete EraBa
+  - EraBased type.
 - `crates/tools/cardano-cli/src/era_based/script/proposal.rs`
-  - EraBased proposal sub-tree. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell over the `era_based/script/proposal/*` sub-modules. Upstream has no.
+  - EraBased proposal sub-tree.
 - `crates/tools/cardano-cli/src/era_based/script/proposal/read.rs`
-  - EraBased read. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraBased/Script/Proposal/Read.hs`. R292 lands the file with the API skeleton. Concrete E
+  - EraBased read.
 - `crates/tools/cardano-cli/src/era_based/script/proposal/type.rs`
-  - EraBased type. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraBased/Script/Proposal/Type.hs`. R292 lands the file with the API skeleton. Concrete E
+  - EraBased type.
 - `crates/tools/cardano-cli/src/era_based/script/read.rs`
-  - EraBased read sub-tree. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell over the `era_based/script/read/*` sub-modules. Upstream has no.
+  - EraBased read sub-tree.
 - `crates/tools/cardano-cli/src/era_based/script/read/common.rs`
-  - EraBased common. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraBased/Script/Read/Common.hs`. R292 lands the file with the API skeleton. Concrete E
+  - EraBased common.
 - `crates/tools/cardano-cli/src/era_based/script/spend.rs`
-  - EraBased spend sub-tree. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell over the `era_based/script/spend/*` sub-modules. Upstream has no.
+  - EraBased spend sub-tree.
 - `crates/tools/cardano-cli/src/era_based/script/spend/read.rs`
-  - EraBased read. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraBased/Script/Spend/Read.hs`. R292 lands the file with the API skeleton. Concrete EraB
+  - EraBased read.
 - `crates/tools/cardano-cli/src/era_based/script/spend/type.rs`
-  - EraBased type. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraBased/Script/Spend/Type.hs`. R292 lands the file with the API skeleton. Concrete EraB
+  - EraBased type.
 - `crates/tools/cardano-cli/src/era_based/script/type.rs`
-  - EraBased type. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraBased/Script/Type.hs`. R292 lands the file with the API skeleton. Concrete EraBased.
+  - EraBased type.
 - `crates/tools/cardano-cli/src/era_based/script/vote.rs`
-  - EraBased vote sub-tree. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell over the `era_based/script/vote/*` sub-modules. Upstream has no.
+  - EraBased vote sub-tree.
 - `crates/tools/cardano-cli/src/era_based/script/vote/read.rs`
-  - EraBased read. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraBased/Script/Vote/Read.hs`. R292 lands the file with the API skeleton. Concrete EraBa
+  - EraBased read.
 - `crates/tools/cardano-cli/src/era_based/script/vote/type.rs`
-  - EraBased type. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraBased/Script/Vote/Type.hs`. R292 lands the file with the API skeleton. Concrete EraBa
+  - EraBased type.
 - `crates/tools/cardano-cli/src/era_based/script/withdrawal.rs`
-  - EraBased withdrawal sub-tree. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell over the `era_based/script/withdrawal/*` sub-modules. Upstream has no.
+  - EraBased withdrawal sub-tree.
 - `crates/tools/cardano-cli/src/era_based/script/withdrawal/read.rs`
-  - EraBased read. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraBased/Script/Withdrawal/Read.hs`. R292 lands the file with the API skeleton. Concrete
+  - EraBased read.
 - `crates/tools/cardano-cli/src/era_based/script/withdrawal/type.rs`
-  - EraBased type. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraBased/Script/Withdrawal/Type.hs`. R292 lands the file with the API skeleton. Concrete
+  - EraBased type.
 - `crates/tools/cardano-cli/src/era_based/stake_address.rs`
-  - EraBased stake address sub-tree. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell over the `era_based/stake_address/*` sub-modules. Upstream has no.
+  - EraBased stake address sub-tree.
 - `crates/tools/cardano-cli/src/era_based/stake_address/command.rs`
-  - EraBased command. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraBased/StakeAddress/Command.hs`. R292 lands the file with the API skeleton. Concret
+  - EraBased command.
 - `crates/tools/cardano-cli/src/era_based/stake_address/option.rs`
-  - EraBased option. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraBased/StakeAddress/Option.hs`. R292 lands the file with the API skeleton. Concrete
+  - EraBased option.
 - `crates/tools/cardano-cli/src/era_based/stake_address/run.rs`
-  - EraBased stake-address run. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraBased/StakeAddress/Run.hs`. R292 landed the file as an API skeleton. R50
+  - EraBased stake-address run.
 - `crates/tools/cardano-cli/src/era_based/stake_pool.rs`
-  - EraBased stake pool sub-tree. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell over the `era_based/stake_pool/*` sub-modules. Upstream has no.
+  - EraBased stake pool sub-tree.
 - `crates/tools/cardano-cli/src/era_based/stake_pool/command.rs`
-  - EraBased command. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraBased/StakePool/Command.hs`. R292 lands the file with the API skeleton. Concrete E
+  - EraBased command.
 - `crates/tools/cardano-cli/src/era_based/stake_pool/internal.rs`
-  - EraBased internal sub-tree. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell over the `era_based/stake_pool/internal/*` sub-modules. Upstream has no.
+  - EraBased internal sub-tree.
 - `crates/tools/cardano-cli/src/era_based/stake_pool/internal/metadata.rs`
-  - EraBased metadata. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraBased/StakePool/Internal/Metadata.hs`. R292 lands the file with the API skeleton.
+  - EraBased metadata.
 - `crates/tools/cardano-cli/src/era_based/stake_pool/option.rs`
-  - EraBased option. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraBased/StakePool/Option.hs`. R292 lands the file with the API skeleton. Concrete Era
+  - EraBased option.
 - `crates/tools/cardano-cli/src/era_based/stake_pool/run.rs`
-  - EraBased run. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraBased/StakePool/Run.hs`. R292 lands the file with the API skeleton. Concrete EraBased.
+  - EraBased run.
 - `crates/tools/cardano-cli/src/era_based/text_view.rs`
-  - EraBased text view sub-tree. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell over the `era_based/text_view/*` sub-modules. Upstream has no.
+  - EraBased text view sub-tree.
 - `crates/tools/cardano-cli/src/era_based/text_view/command.rs`
-  - EraBased command. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraBased/TextView/Command.hs`. R292 lands the file with the API skeleton. Concrete Er
+  - EraBased command.
 - `crates/tools/cardano-cli/src/era_based/text_view/option.rs`
-  - EraBased option. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraBased/TextView/Option.hs`. R292 lands the file with the API skeleton. Concrete EraB
+  - EraBased option.
 - `crates/tools/cardano-cli/src/era_based/text_view/run.rs`
-  - EraBased run. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraBased/TextView/Run.hs`. R292 lands the file with the API skeleton. Concrete EraBased.
+  - EraBased run.
 - `crates/tools/cardano-cli/src/era_based/transaction.rs`
-  - EraBased transaction sub-tree. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell over the `era_based/transaction/*` sub-modules. Upstream has no.
+  - EraBased transaction sub-tree.
 - `crates/tools/cardano-cli/src/era_based/transaction/command.rs`
-  - EraBased command. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraBased/Transaction/Command.hs`. R292 lands the file with the API skeleton. Concrete
+  - EraBased command.
 - `crates/tools/cardano-cli/src/era_based/transaction/internal.rs`
-  - EraBased internal sub-tree. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell over the `era_based/transaction/internal/*` sub-modules. Upstream has no.
+  - EraBased internal sub-tree.
 - `crates/tools/cardano-cli/src/era_based/transaction/internal/hash_check.rs`
-  - EraBased hash check. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraBased/Transaction/Internal/HashCheck.hs`.
+  - EraBased hash check.
 - `crates/tools/cardano-cli/src/era_based/transaction/option.rs`
-  - EraBased option. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraBased/Transaction/Option.hs`. R292 lands the file with the API skeleton. Concrete E
+  - EraBased option.
 - `crates/tools/cardano-cli/src/era_based/transaction/run.rs`
-  - EraBased transaction run. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraBased/Transaction/Run.hs`. R292 landed the file as an API skeleton. R508–R
+  - EraBased transaction run.
 - `crates/tools/cardano-cli/src/era_independent.rs`
   - EraIndependent cardano-cli command surface. Mirrors upstream `Cardano.CLI.EraIndependent.*`. EraIndependent is the surface that does not vary across eras — node identity, key.
 - `crates/tools/cardano-cli/src/era_independent/address.rs`
-  - EraIndependent address sub-tree. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell over the `era_independent/address/*` sub-modules. Upstream has no.
+  - EraIndependent address sub-tree.
 - `crates/tools/cardano-cli/src/era_independent/address/command.rs`
-  - EraIndependent command. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraIndependent/Address/Command.hs`. R293 lands the file with the API skeleton.
+  - EraIndependent command.
 - `crates/tools/cardano-cli/src/era_independent/address/info.rs`
-  - EraIndependent info sub-tree. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell over the `era_independent/address/info/*` sub-modules. Upstream has no.
+  - EraIndependent info sub-tree.
 - `crates/tools/cardano-cli/src/era_independent/address/info/run.rs`
-  - EraIndependent run. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraIndependent/Address/Info/Run.hs`. R293 lands the file with the API skeleton. Con
+  - EraIndependent run.
 - `crates/tools/cardano-cli/src/era_independent/address/option.rs`
-  - EraIndependent option. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraIndependent/Address/Option.hs`. R293 lands the file with the API skeleton. Co
+  - EraIndependent option.
 - `crates/tools/cardano-cli/src/era_independent/address/run.rs`
-  - EraIndependent address run. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraIndependent/Address/Run.hs`. R293 landed the file as an API skeleton. R5
+  - EraIndependent address run.
 - `crates/tools/cardano-cli/src/era_independent/cip.rs`
-  - EraIndependent cip sub-tree. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell over the `era_independent/cip/*` sub-modules. Upstream has no.
+  - EraIndependent cip sub-tree.
 - `crates/tools/cardano-cli/src/era_independent/cip/cip129.rs`
-  - EraIndependent cip129 sub-tree. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell over the `era_independent/cip/cip129/*` sub-modules. Upstream has no.
+  - EraIndependent cip129 sub-tree.
 - `crates/tools/cardano-cli/src/era_independent/cip/cip129/command.rs`
-  - EraIndependent command. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraIndependent/Cip/Cip129/Command.hs`. R293 lands the file with the API skeleto
+  - EraIndependent command.
 - `crates/tools/cardano-cli/src/era_independent/cip/cip129/internal.rs`
-  - EraIndependent internal sub-tree. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell over the `era_independent/cip/cip129/internal/*` sub-modules. Upstream has n
+  - EraIndependent internal sub-tree.
 - `crates/tools/cardano-cli/src/era_independent/cip/cip129/internal/conversion.rs`
-  - EraIndependent conversion. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraIndependent/Cip/Cip129/Internal/Conversion.hs`.
+  - EraIndependent conversion.
 - `crates/tools/cardano-cli/src/era_independent/cip/cip129/option.rs`
-  - EraIndependent option. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraIndependent/Cip/Cip129/Option.hs`. R293 lands the file with the API skeleton.
+  - EraIndependent option.
 - `crates/tools/cardano-cli/src/era_independent/cip/cip129/run.rs`
-  - EraIndependent run. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraIndependent/Cip/Cip129/Run.hs`. R293 lands the file with the API skeleton. Concr
+  - EraIndependent run.
 - `crates/tools/cardano-cli/src/era_independent/cip/command.rs`
-  - EraIndependent command. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraIndependent/Cip/Command.hs`. R293 lands the file with the API skeleton. Conc
+  - EraIndependent command.
 - `crates/tools/cardano-cli/src/era_independent/cip/common.rs`
-  - EraIndependent common. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraIndependent/Cip/Common.hs`. R293 lands the file with the API skeleton. Concre
+  - EraIndependent common.
 - `crates/tools/cardano-cli/src/era_independent/cip/option.rs`
-  - EraIndependent option. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraIndependent/Cip/Option.hs`. R293 lands the file with the API skeleton. Concre
+  - EraIndependent option.
 - `crates/tools/cardano-cli/src/era_independent/cip/run.rs`
-  - EraIndependent run. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraIndependent/Cip/Run.hs`. R293 lands the file with the API skeleton. Concrete.
+  - EraIndependent run.
 - `crates/tools/cardano-cli/src/era_independent/debug.rs`
-  - EraIndependent debug sub-tree. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell over the `era_independent/debug/*` sub-modules. Upstream has no.
+  - EraIndependent debug sub-tree.
 - `crates/tools/cardano-cli/src/era_independent/debug/check_node_configuration.rs`
-  - EraIndependent check node configuration sub-tree. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell over the `era_independent/debug/check_node_configuration/*`
+  - EraIndependent check node configuration sub-tree.
 - `crates/tools/cardano-cli/src/era_independent/debug/check_node_configuration/command.rs`
-  - EraIndependent command. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraIndependent/Debug/CheckNodeConfiguration/Command.hs`.
+  - EraIndependent command.
 - `crates/tools/cardano-cli/src/era_independent/debug/check_node_configuration/run.rs`
-  - EraIndependent run. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraIndependent/Debug/CheckNodeConfiguration/Run.hs`.
+  - EraIndependent run.
 - `crates/tools/cardano-cli/src/era_independent/debug/command.rs`
-  - EraIndependent command. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraIndependent/Debug/Command.hs`. R293 lands the file with the API skeleton. Co
+  - EraIndependent command.
 - `crates/tools/cardano-cli/src/era_independent/debug/log_epoch_state.rs`
-  - EraIndependent log epoch state sub-tree. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell over the `era_independent/debug/log_epoch_state/*` sub-modules. Upstr
+  - EraIndependent log epoch state sub-tree.
 - `crates/tools/cardano-cli/src/era_independent/debug/log_epoch_state/command.rs`
-  - EraIndependent command. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraIndependent/Debug/LogEpochState/Command.hs`.
+  - EraIndependent command.
 - `crates/tools/cardano-cli/src/era_independent/debug/log_epoch_state/run.rs`
-  - EraIndependent run. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraIndependent/Debug/LogEpochState/Run.hs`. R293 lands the file with the API skelet
+  - EraIndependent run.
 - `crates/tools/cardano-cli/src/era_independent/debug/option.rs`
-  - EraIndependent option. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraIndependent/Debug/Option.hs`. R293 lands the file with the API skeleton. Conc
+  - EraIndependent option.
 - `crates/tools/cardano-cli/src/era_independent/debug/run.rs`
-  - EraIndependent run. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraIndependent/Debug/Run.hs`. R293 lands the file with the API skeleton. Concrete.
+  - EraIndependent run.
 - `crates/tools/cardano-cli/src/era_independent/debug/transaction_view.rs`
-  - EraIndependent transaction view sub-tree. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell over the `era_independent/debug/transaction_view/*` sub-modules. Ups
+  - EraIndependent transaction view sub-tree.
 - `crates/tools/cardano-cli/src/era_independent/debug/transaction_view/command.rs`
-  - EraIndependent command. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraIndependent/Debug/TransactionView/Command.hs`.
+  - EraIndependent command.
 - `crates/tools/cardano-cli/src/era_independent/debug/transaction_view/run.rs`
-  - EraIndependent run. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraIndependent/Debug/TransactionView/Run.hs`.
+  - EraIndependent run.
 - `crates/tools/cardano-cli/src/era_independent/hash.rs`
-  - EraIndependent hash sub-tree. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell over the `era_independent/hash/*` sub-modules. Upstream has no.
+  - EraIndependent hash sub-tree.
 - `crates/tools/cardano-cli/src/era_independent/hash/command.rs`
-  - EraIndependent command. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraIndependent/Hash/Command.hs`. R293 lands the file with the API skeleton. Con
+  - EraIndependent command.
 - `crates/tools/cardano-cli/src/era_independent/hash/internal.rs`
-  - EraIndependent internal sub-tree. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell over the `era_independent/hash/internal/*` sub-modules. Upstream has no.
+  - EraIndependent internal sub-tree.
 - `crates/tools/cardano-cli/src/era_independent/hash/internal/common.rs`
-  - EraIndependent common. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraIndependent/Hash/Internal/Common.hs`. R293 lands the file with the API skelet
+  - EraIndependent common.
 - `crates/tools/cardano-cli/src/era_independent/hash/option.rs`
-  - EraIndependent option. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraIndependent/Hash/Option.hs`. R293 lands the file with the API skeleton. Concr
+  - EraIndependent option.
 - `crates/tools/cardano-cli/src/era_independent/hash/run.rs`
-  - EraIndependent run. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraIndependent/Hash/Run.hs`. R293 lands the file with the API skeleton. Concrete.
+  - EraIndependent run.
 - `crates/tools/cardano-cli/src/era_independent/key.rs`
-  - EraIndependent key sub-tree. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell over the `era_independent/key/*` sub-modules. Upstream has no.
+  - EraIndependent key sub-tree.
 - `crates/tools/cardano-cli/src/era_independent/key/command.rs`
-  - EraIndependent command. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraIndependent/Key/Command.hs`. R293 lands the file with the API skeleton. Conc
+  - EraIndependent command.
 - `crates/tools/cardano-cli/src/era_independent/key/option.rs`
-  - EraIndependent option. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraIndependent/Key/Option.hs`. R293 lands the file with the API skeleton. Concre
+  - EraIndependent option.
 - `crates/tools/cardano-cli/src/era_independent/key/run.rs`
-  - EraIndependent run. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraIndependent/Key/Run.hs`. R293 lands the file with the API skeleton. Concrete.
+  - EraIndependent run.
 - `crates/tools/cardano-cli/src/era_independent/node.rs`
-  - EraIndependent node sub-tree. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell over the `era_independent/node/*` sub-modules. Upstream has no.
+  - EraIndependent node sub-tree.
 - `crates/tools/cardano-cli/src/era_independent/node/command.rs`
-  - EraIndependent command. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraIndependent/Node/Command.hs`. R293 lands the file with the API skeleton. Con
+  - EraIndependent command.
 - `crates/tools/cardano-cli/src/era_independent/node/option.rs`
-  - EraIndependent option. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraIndependent/Node/Option.hs`. R293 lands the file with the API skeleton. Concr
+  - EraIndependent option.
 - `crates/tools/cardano-cli/src/era_independent/node/run.rs`
-  - EraIndependent run. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraIndependent/Node/Run.hs`. R293 lands the file with the API skeleton. Concrete.
+  - EraIndependent run.
 - `crates/tools/cardano-cli/src/era_independent/ping.rs`
-  - EraIndependent ping sub-tree. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell over the `era_independent/ping/*` sub-modules. Upstream has no.
+  - EraIndependent ping sub-tree.
 - `crates/tools/cardano-cli/src/era_independent/ping/command.rs`
-  - EraIndependent command. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraIndependent/Ping/Command.hs`. R293 lands the file with the API skeleton. Con
+  - EraIndependent command.
 - `crates/tools/cardano-cli/src/era_independent/ping/option.rs`
-  - EraIndependent option. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraIndependent/Ping/Option.hs`. R293 lands the file with the API skeleton. Concr
+  - EraIndependent option.
 - `crates/tools/cardano-cli/src/era_independent/ping/run.rs`
-  - EraIndependent run. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraIndependent/Ping/Run.hs`. R293 lands the file with the API skeleton. Concrete.
+  - EraIndependent run.
 - `crates/tools/cardano-cli/src/helper.rs`
   - cardano-cli helper utilities. Mirrors upstream `Cardano.CLI.Helper` — assorted helpers used across multiple runners (text-envelope writers, hex encoders/.
 - `crates/tools/cardano-cli/src/io.rs`
-  - IO cardano-cli surface. Mirrors upstream `Cardano.CLI.IO.*`. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell over the IO sub-tree. Upstream has no top-level.
+  - IO cardano-cli surface. Mirrors upstream `Cardano.CLI.IO.*`.
 - `crates/tools/cardano-cli/src/io/lazy.rs`
-  - IO lazy. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/IO/Lazy.hs`. R294 lands the file with the API skeleton. Concrete.
+  - IO lazy.
 - `crates/tools/cardano-cli/src/json.rs`
-  - Json cardano-cli surface. Mirrors upstream `Cardano.CLI.Json.*`. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell over the.
+  - Json cardano-cli surface. Mirrors upstream `Cardano.CLI.Json.*`.
 - `crates/tools/cardano-cli/src/json/encode.rs`
-  - Json encode. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Json/Encode.hs`. R294 lands the file with the API skeleton. Concrete.
+  - Json encode.
 - `crates/tools/cardano-cli/src/legacy.rs`
-  - Legacy cardano-cli surface. Mirrors upstream `Cardano.CLI.Legacy.*`. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell over the.
+  - Legacy cardano-cli surface. Mirrors upstream `Cardano.CLI.Legacy.*`.
 - `crates/tools/cardano-cli/src/legacy/command.rs`
-  - Legacy command. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Legacy/Command.hs`. R294 lands the file with the API skeleton. Concrete.
+  - Legacy command.
 - `crates/tools/cardano-cli/src/legacy/genesis.rs`
-  - Legacy genesis sub-tree. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell over the `legacy/genesis/*` sub-modules. Upstream has no `Cardano/CLI/Legacy/Genesis.
+  - Legacy genesis sub-tree.
 - `crates/tools/cardano-cli/src/legacy/genesis/command.rs`
-  - Legacy command. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Legacy/Genesis/Command.hs`. R294 lands the file with the API skeleton. Concrete.
+  - Legacy command.
 - `crates/tools/cardano-cli/src/legacy/genesis/run.rs`
-  - Legacy run. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Legacy/Genesis/Run.hs`. R294 lands the file with the API skeleton. Concrete.
+  - Legacy run.
 - `crates/tools/cardano-cli/src/legacy/option.rs`
-  - Legacy option. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Legacy/Option.hs`. R294 lands the file with the API skeleton. Concrete.
+  - Legacy option.
 - `crates/tools/cardano-cli/src/legacy/run.rs`
-  - Legacy run. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Legacy/Run.hs`. R294 lands the file with the API skeleton. Concrete.
+  - Legacy run.
 - `crates/tools/cardano-cli/src/lib.rs`
   - Pure-Rust port of upstream `cardano-cli`. Mirrors the upstream cabal package `cardano-cli/cardano-cli/cardano-cli.cabal` library component. Submodules track upstream's `Cardano.CLI
 - `crates/tools/cardano-cli/src/lsq.rs`
-  - LSQ-client abstraction for library-side `query-*` dispatch. ## Naming parity **Strict mirror:** none. Rust-idiomatic indirection that upstream.
+  - LSQ-client abstraction for library-side `query-*` dispatch.
 - `crates/tools/cardano-cli/src/lsq_tokio.rs`
-  - Concrete tokio + yggdrasil-network LSQ-client impl. ## Naming parity **Strict mirror:** none. Yggdrasil-side concrete implementation of the [`crate::lsq::LsqClient`] trait. Upstrea
+  - Concrete tokio + yggdrasil-network LSQ-client impl.
 - `crates/tools/cardano-cli/src/main.rs`
   - Standalone `yggdrasil-cardano-cli` binary entry point. Mirrors upstream `cardano-cli/cardano-cli/app/cardano-cli.hs`'s `main = …` body: parse argv via the in-crate parser, run the.
 - `crates/tools/cardano-cli/src/option.rs`
   - Shared option parsers. Mirrors upstream `Cardano.CLI.Option` — option parsers that are reusable across multiple sub-parsers (file paths, network magic,.
 - `crates/tools/cardano-cli/src/option/flag.rs`
-  - Option flag sub-tree. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell over the `option/flag/*` sub-modules. Upstream has no `Cardano/CLI/Option/Flag.hs`.
+  - Option flag sub-tree.
 - `crates/tools/cardano-cli/src/option/flag/type.rs`
-  - Option type. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Option/Flag/Type.hs`. R294 lands the file with the API skeleton. Concrete.
+  - Option type.
 - `crates/tools/cardano-cli/src/orphan.rs`
   - Orphan-instance namespace for cardano-cli. Mirrors upstream `Cardano.CLI.Orphan` — the module Haskell uses to gather orphan instances that the cardano-cli code-base needs but.
 - `crates/tools/cardano-cli/src/os.rs`
-  - OS cardano-cli surface. Mirrors upstream `Cardano.CLI.OS.*`. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell over the OS sub-tree. Upstream has no top-level.
+  - OS cardano-cli surface. Mirrors upstream `Cardano.CLI.OS.*`.
 - `crates/tools/cardano-cli/src/os/posix.rs`
-  - OS posix. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/OS/Posix.hs`. R294 lands the file with the API skeleton. Concrete.
+  - OS posix.
 - `crates/tools/cardano-cli/src/parser.rs`
   - cardano-cli argument parser. Mirrors upstream `Cardano.CLI.Parser` — the optparse-applicative parser that produces a `ClientCommand` from `argv`. Yggdrasil uses.
 - `crates/tools/cardano-cli/src/read.rs`
   - cardano-cli envelope-file reader. Mirrors upstream `Cardano.CLI.Read` plus its `Read/*` sub-tree (envelope-format readers for governance, DRep, and committee.
 - `crates/tools/cardano-cli/src/read/committee.rs`
-  - Read committee sub-tree. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell over the `read/committee/*` sub-modules. Upstream has no `Cardano/CLI/Read/Committee.
+  - Read committee sub-tree.
 - `crates/tools/cardano-cli/src/read/committee/cold_key.rs`
-  - Read cold key. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Read/Committee/ColdKey.hs`. R294 lands the file with the API skeleton. Concrete.
+  - Read cold key.
 - `crates/tools/cardano-cli/src/read/committee/hot_key.rs`
-  - Read hot key. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Read/Committee/HotKey.hs`. R294 lands the file with the API skeleton. Concrete.
+  - Read hot key.
 - `crates/tools/cardano-cli/src/read/d_rep.rs`
-  - Read d rep. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Read/DRep.hs`. R294 lands the file with the API skeleton. Concrete.
+  - Read d rep.
 - `crates/tools/cardano-cli/src/read/governance_action_id.rs`
-  - Read governance action id. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Read/GovernanceActionId.hs`. R294 lands the file with the API skeleton. Conc
+  - Read governance action id.
 - `crates/tools/cardano-cli/src/render.rs`
   - cardano-cli output rendering. Mirrors upstream `Cardano.CLI.Render` — the helpers that format `ClientCommand` results (query responses, key files, transaction.
 - `crates/tools/cardano-cli/src/run.rs`
   - Top-level cardano-cli run dispatcher. Mirrors upstream `Cardano.CLI.Run` — the dispatcher that routes a parsed `Command` to its per-cluster runner (Byron / Compatible /.
 - `crates/tools/cardano-cli/src/run/mnemonic.rs`
-  - Run mnemonic. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Run/Mnemonic.hs`. R294 lands the file with the API skeleton. Concrete.
+  - Run mnemonic.
 - `crates/tools/cardano-cli/src/top_handler.rs`
   - Top-level error handler for the cardano-cli binary. Mirrors upstream `Cardano.CLI.TopHandler` — the wrapper that catches panics and structured errors at the binary's main entry.
 - `crates/tools/cardano-cli/src/type.rs`
-  - Type cardano-cli surface. Mirrors upstream `Cardano.CLI.Type.*`. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell over the.
+  - Type cardano-cli surface. Mirrors upstream `Cardano.CLI.Type.*`.
 - `crates/tools/cardano-cli/src/type/common.rs`
-  - Type common. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Type/Common.hs`. R294 lands the file with the API skeleton. Concrete.
+  - Type common.
 - `crates/tools/cardano-cli/src/type/error.rs`
-  - Type error sub-tree. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell over the `type/error/*` sub-modules. Upstream has no `Cardano/CLI/Type/Error.hs`.
+  - Type error sub-tree.
 - `crates/tools/cardano-cli/src/type/error/address_cmd_error.rs`
-  - Type address cmd error. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Type/Error/AddressCmdError.hs`. R294 lands the file with the API skeleton. Conc
+  - Type address cmd error.
 - `crates/tools/cardano-cli/src/type/error/address_info_error.rs`
-  - Type address info error. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Type/Error/AddressInfoError.hs`. R294 lands the file with the API skeleton. Co
+  - Type address info error.
 - `crates/tools/cardano-cli/src/type/error/bootstrap_witness_error.rs`
-  - Type bootstrap witness error. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Type/Error/BootstrapWitnessError.hs`.
+  - Type bootstrap witness error.
 - `crates/tools/cardano-cli/src/type/error/cardano_address_signing_key_conversion_error.rs`
-  - Type cardano address signing key conversion error. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Type/Error/CardanoAddressSigningKeyConversionError.h
+  - Type cardano address signing key conversion error.
 - `crates/tools/cardano-cli/src/type/error/debug_cmd_error.rs`
-  - Type debug cmd error. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Type/Error/DebugCmdError.hs`. R294 lands the file with the API skeleton. Concrete
+  - Type debug cmd error.
 - `crates/tools/cardano-cli/src/type/error/delegation_error.rs`
-  - Type delegation error. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Type/Error/DelegationError.hs`. R294 lands the file with the API skeleton. Concr
+  - Type delegation error.
 - `crates/tools/cardano-cli/src/type/error/genesis_cmd_error.rs`
-  - Type genesis cmd error. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Type/Error/GenesisCmdError.hs`. R294 lands the file with the API skeleton. Conc
+  - Type genesis cmd error.
 - `crates/tools/cardano-cli/src/type/error/governance_actions_error.rs`
-  - Type governance actions error. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Type/Error/GovernanceActionsError.hs`.
+  - Type governance actions error.
 - `crates/tools/cardano-cli/src/type/error/governance_cmd_error.rs`
-  - Type governance cmd error. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Type/Error/GovernanceCmdError.hs`. R294 lands the file with the API skeleton
+  - Type governance cmd error.
 - `crates/tools/cardano-cli/src/type/error/governance_query_error.rs`
-  - Type governance query error. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Type/Error/GovernanceQueryError.hs`.
+  - Type governance query error.
 - `crates/tools/cardano-cli/src/type/error/hash_cmd_error.rs`
-  - Type hash cmd error. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Type/Error/HashCmdError.hs`. R294 lands the file with the API skeleton. Concrete.
+  - Type hash cmd error.
 - `crates/tools/cardano-cli/src/type/error/itn_key_conversion_error.rs`
-  - Type itn key conversion error. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Type/Error/ItnKeyConversionError.hs`.
+  - Type itn key conversion error.
 - `crates/tools/cardano-cli/src/type/error/key_cmd_error.rs`
-  - Type key cmd error. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Type/Error/KeyCmdError.hs`. R294 lands the file with the API skeleton. Concrete.
+  - Type key cmd error.
 - `crates/tools/cardano-cli/src/type/error/node_cmd_error.rs`
-  - Type node cmd error. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Type/Error/NodeCmdError.hs`. R294 lands the file with the API skeleton. Concrete.
+  - Type node cmd error.
 - `crates/tools/cardano-cli/src/type/error/node_era_mismatch_error.rs`
-  - Type node era mismatch error. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Type/Error/NodeEraMismatchError.hs`.
+  - Type node era mismatch error.
 - `crates/tools/cardano-cli/src/type/error/plutus_script_decode_error.rs`
-  - Type plutus script decode error. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Type/Error/PlutusScriptDecodeError.hs`.
+  - Type plutus script decode error.
 - `crates/tools/cardano-cli/src/type/error/protocol_params_error.rs`
-  - Type protocol params error. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Type/Error/ProtocolParamsError.hs`. R294 lands the file with the API skelet
+  - Type protocol params error.
 - `crates/tools/cardano-cli/src/type/error/query_cmd_error.rs`
-  - Type query cmd error. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Type/Error/QueryCmdError.hs`. R294 lands the file with the API skeleton. Concrete
+  - Type query cmd error.
 - `crates/tools/cardano-cli/src/type/error/registration_error.rs`
-  - Type registration error. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Type/Error/RegistrationError.hs`. R294 lands the file with the API skeleton. C
+  - Type registration error.
 - `crates/tools/cardano-cli/src/type/error/script_data_error.rs`
-  - Type script data error. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Type/Error/ScriptDataError.hs`. R294 lands the file with the API skeleton. Conc
+  - Type script data error.
 - `crates/tools/cardano-cli/src/type/error/script_decode_error.rs`
-  - Type script decode error. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Type/Error/ScriptDecodeError.hs`. R294 lands the file with the API skeleton.
+  - Type script decode error.
 - `crates/tools/cardano-cli/src/type/error/stake_address_delegation_error.rs`
-  - Type stake address delegation error. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Type/Error/StakeAddressDelegationError.hs`.
+  - Type stake address delegation error.
 - `crates/tools/cardano-cli/src/type/error/stake_address_registration_error.rs`
-  - Type stake address registration error. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Type/Error/StakeAddressRegistrationError.hs`.
+  - Type stake address registration error.
 - `crates/tools/cardano-cli/src/type/error/stake_credential_error.rs`
-  - Type stake credential error. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Type/Error/StakeCredentialError.hs`.
+  - Type stake credential error.
 - `crates/tools/cardano-cli/src/type/error/stake_pool_cmd_error.rs`
-  - Type stake pool cmd error. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Type/Error/StakePoolCmdError.hs`. R294 lands the file with the API skeleton.
+  - Type stake pool cmd error.
 - `crates/tools/cardano-cli/src/type/error/tx_cmd_error.rs`
-  - Type tx cmd error. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Type/Error/TxCmdError.hs`. R294 lands the file with the API skeleton. Concrete.
+  - Type tx cmd error.
 - `crates/tools/cardano-cli/src/type/error/tx_validation_error.rs`
-  - Type tx validation error. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Type/Error/TxValidationError.hs`. R294 lands the file with the API skeleton.
+  - Type tx validation error.
 - `crates/tools/cardano-cli/src/type/governance.rs`
-  - Type governance. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Type/Governance.hs`. R294 lands the file with the API skeleton. Concrete.
+  - Type governance.
 - `crates/tools/cardano-cli/src/type/key.rs`
-  - Type key sub-tree. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell over the `type/key/*` sub-modules. Upstream has no `Cardano/CLI/Type/Key.hs`.
+  - Type key sub-tree.
 - `crates/tools/cardano-cli/src/type/key/verification_key.rs`
-  - Type verification key. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Type/Key/VerificationKey.hs`. R294 lands the file with the API skeleton. Concret
+  - Type verification key.
 - `crates/tools/cardano-cli/src/type/monad_warning.rs`
-  - Type monad warning. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Type/MonadWarning.hs`. R294 lands the file with the API skeleton. Concrete.
+  - Type monad warning.
 - `crates/tools/cardano-cli/src/type/output.rs`
-  - Type output. ## Naming parity **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/Type/Output.hs`. R294 lands the file with the API skeleton. Concrete.
+  - Type output.
 - `crates/tools/cardano-submit-api/AGENTS.md`
   - Guidance for the pure-Rust port of upstream `cardano-submit-api`.: **Status:** `partial` (post-R344 functional binary with metrics; integration soak + closeout remain — operator-ti
 - `crates/tools/cardano-submit-api/Cargo.toml`
   - Cargo manifest for the yggdrasil-cardano-submit-api crate.
   - Pure-Rust port of the upstream cardano-submit-api HTTP transaction-submission service.
 - `crates/tools/cardano-submit-api/src/cli/mod.rs`
-  - CLI module umbrella (Yggdrasil-side parent shell for cli/types.rs + cli/parsers.rs). ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell that.
+  - CLI module umbrella (Yggdrasil-side parent shell for cli/types.rs + cli/parsers.rs).
 - `crates/tools/cardano-submit-api/src/cli/parsers.rs`
-  - optparse-applicative-equivalent CLI parser (clap-based shell). ## Naming parity **Strict mirror:** cardano-submit-api/src/Cardano/TxSubmit/CLI/Parsers.hs.
+  - optparse-applicative-equivalent CLI parser (clap-based shell).
 - `crates/tools/cardano-submit-api/src/cli/types.rs`
-  - CLI argument types — `TxSubmitNodeParams` and friends. ## Naming parity **Strict mirror:** cardano-submit-api/src/Cardano/TxSubmit/CLI/Types.hs.
+  - CLI argument types — `TxSubmitNodeParams` and friends.
 - `crates/tools/cardano-submit-api/src/lib.rs`
-  - Pure-Rust port of upstream `Cardano.TxSubmit` — HTTP transaction- submission web API for Cardano nodes. ## Naming parity **Strict mirror:** cardano-submit-api/src/Cardano/TxSubmit.
+  - Pure-Rust port of upstream `Cardano.TxSubmit` — HTTP transaction- submission web API for Cardano nodes.
 - `crates/tools/cardano-submit-api/src/main.rs`
-  - Binary entry point for the `cardano-submit-api` deployable. ## Naming parity **Strict mirror:** cardano-submit-api/app/Main.hs. The Rust `main.rs` is the canonical 1:1 mirror of up
+  - Binary entry point for the `cardano-submit-api` deployable.
 - `crates/tools/cardano-submit-api/src/metrics.rs`
-  - Prometheus metrics surface (submit-tx counter, error counter, etc.). ## Naming parity **Strict mirror:** cardano-submit-api/src/Cardano/TxSubmit/Metrics.hs.
+  - Prometheus metrics surface (submit-tx counter, error counter, etc.).
 - `crates/tools/cardano-submit-api/src/orphans.rs`
-  - Orphan instances (none in Rust — see Naming parity stanza). ## Naming parity **Strict mirror:** none. Upstream's `Cardano.TxSubmit.Orphans` contains Haskell typeclass orphan instan
+  - Orphan instances (none in Rust — see Naming parity stanza).
 - `crates/tools/cardano-submit-api/src/parser.rs`
-  - CLI argument parser for the `cardano-submit-api` binary. ## Naming parity **Strict mirror:** none. Yggdrasil-side parser shell wrapping the upstream optparse-applicative parser emb
+  - CLI argument parser for the `cardano-submit-api` binary.
 - `crates/tools/cardano-submit-api/src/rest/mod.rs`
-  - REST module umbrella for rest/{types,parsers,web}.rs. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell that re-exports the per-concern leaf modules to keep cal
+  - REST module umbrella for rest/{types,parsers,web}.rs.
 - `crates/tools/cardano-submit-api/src/rest/parsers.rs`
-  - REST request parsers (CBOR body decode, content-type negotiation). ## Naming parity **Strict mirror:** cardano-submit-api/src/Cardano/TxSubmit/Rest/Parsers.hs.
+  - REST request parsers (CBOR body decode, content-type negotiation).
 - `crates/tools/cardano-submit-api/src/rest/types.rs`
-  - REST API request / response types. ## Naming parity **Strict mirror:** cardano-submit-api/src/Cardano/TxSubmit/Rest/Types.hs. Direct ports: - [`WebserverConfig`] — `data WebserverC
+  - REST API request / response types.
 - `crates/tools/cardano-submit-api/src/rest/web.rs`
-  - REST endpoint handlers (POST /api/submit/tx). ## Naming parity **Strict mirror:** cardano-submit-api/src/Cardano/TxSubmit/Rest/Web.hs. Direct ports:.
+  - REST endpoint handlers (POST /api/submit/tx).
 - `crates/tools/cardano-submit-api/src/tracing/mod.rs`
-  - Tracing module umbrella for tracing/trace_submit_api.rs. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell that re-exports the per-concern leaf modules to keep
+  - Tracing module umbrella for tracing/trace_submit_api.rs.
 - `crates/tools/cardano-submit-api/src/tracing/trace_submit_api.rs`
-  - Trace events emitted by the submit API. ## Naming parity **Strict mirror:** cardano-submit-api/src/Cardano/TxSubmit/Tracing/TraceSubmitApi.hs.
+  - Trace events emitted by the submit API.
 - `crates/tools/cardano-submit-api/src/types.rs`
-  - Core types — `TxSubmitWebApiError`, `TxCmdError`, `EnvSocketError`, `RawCborDecodeError`, `TxSubmitPort`. ## Naming parity **Strict mirror:** cardano-submit-api/src/Cardano/TxSubmi
+  - Core types — `TxSubmitWebApiError`, `TxCmdError`, `EnvSocketError`, `RawCborDecodeError`, `TxSubmitPort`.
 - `crates/tools/cardano-submit-api/src/util.rs`
-  - Utility helpers shared across the binary. ## Naming parity **Strict mirror:** cardano-submit-api/src/Cardano/TxSubmit/Util.hs. Direct port: [`log_exception`] mirrors upstream `logE
+  - Utility helpers shared across the binary.
 - `crates/tools/cardano-submit-api/src/web.rs`
-  - Top-level web server — wires REST endpoints to the HTTP listener. ## Naming parity **Strict mirror:** cardano-submit-api/src/Cardano/TxSubmit/Web.hs.
+  - Top-level web server — wires REST endpoints to the HTTP listener.
 - `crates/tools/cardano-submit-api/tests/cli_help_golden.rs`
   - Golden test: yggdrasil-cardano-submit-api `--help` / `--version` outputs are byte-equivalent to the upstream `cardano-submit-api` binary.
 - `crates/tools/cardano-submit-api/tests/fixtures/upstream-help.txt`
@@ -1440,16 +1440,54 @@
 - `crates/tools/cardano-testnet/Cargo.toml`
   - Cargo manifest for the tools crate.
   - Declares crate metadata, dependencies, features, and local lint behavior.
+- `crates/tools/cardano-testnet/src/components.rs`
+  - cardano-testnet component surfaces.
+- `crates/tools/cardano-testnet/src/components/configuration.rs`
+  - cardano-testnet configuration-creation constants.
+- `crates/tools/cardano-testnet/src/components/query.rs`
+  - cardano-testnet on-chain query helpers.
+- `crates/tools/cardano-testnet/src/defaults.rs`
+  - cardano-testnet default genesis / script values.
+- `crates/tools/cardano-testnet/src/filepath.rs`
+  - cardano-testnet runtime temporary-path helpers.
 - `crates/tools/cardano-testnet/src/lib.rs`
-  - Pure-Rust port of upstream `cardano-testnet`. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell + R335-pattern file-mirror + CLI-parser skeleton for the `cardan
+  - Pure-Rust port of upstream `cardano-testnet`.
 - `crates/tools/cardano-testnet/src/main.rs`
-  - Binary entry point for the `cardano-testnet` deployable. ## Naming parity **Strict mirror:** none. R335-pattern minimal binary wrapper that delegates to `yggdrasil_cardano_testnet:
+  - Binary entry point for the `cardano-testnet` deployable.
 - `crates/tools/cardano-testnet/src/parser.rs`
-  - CLI argument parser for the `cardano-testnet` binary. ## Naming parity **Strict mirror:** cardano-testnet/src/Parsers/Run.hs. R367 lands the top-level subcommand dispatch from upst
+  - CLI argument parser for the `cardano-testnet` binary.
+- `crates/tools/cardano-testnet/src/paths.rs`
+  - Shared cardano-testnet output-directory path conventions.
+- `crates/tools/cardano-testnet/src/process.rs`
+  - Process harness helpers for the `cardano-testnet` port.
+- `crates/tools/cardano-testnet/src/process/cli.rs`
+  - Pure command builders mirroring upstream `Testnet.Process.Cli.*`.
+- `crates/tools/cardano-testnet/src/process/cli/drep.rs`
+  - `cardano-cli` DRep command builders.
+- `crates/tools/cardano-testnet/src/process/cli/keys.rs`
+  - `cardano-cli` key command builders.
+- `crates/tools/cardano-testnet/src/process/cli/spo.rs`
+  - `cardano-cli` stake-pool-operator command builders.
+- `crates/tools/cardano-testnet/src/process/cli/transaction.rs`
+  - `cardano-cli` transaction command builders.
+- `crates/tools/cardano-testnet/src/process/run.rs`
+  - Process execution helpers for the `cardano-testnet` harness.
+- `crates/tools/cardano-testnet/src/process/run_io.rs`
+  - RIO-oriented process planning helpers for the `cardano-testnet` harness.
+- `crates/tools/cardano-testnet/src/property.rs`
+  - Property-test harness helpers for the `cardano-testnet` port.
+- `crates/tools/cardano-testnet/src/property/assert.rs`
+  - Pure and injectable helpers from upstream `Testnet.Property.Assert`.
+- `crates/tools/cardano-testnet/src/property/run.rs`
+  - Pure and injectable helpers from upstream `Testnet.Property.Run`.
+- `crates/tools/cardano-testnet/src/property/util.rs`
+  - Pure helpers from the upstream `Testnet.Property.Util` module.
+- `crates/tools/cardano-testnet/src/runtime_types.rs`
+  - cardano-testnet runtime and key-file types.
 - `crates/tools/cardano-testnet/src/status.rs`
-  - Programmatic-introspection helpers for the cardano-testnet deferred surfaces. R445 surfaces the era-aware-dispatch + Process/Property carve-outs as a `*_status()` helper.
+  - Programmatic-introspection helpers for the cardano-testnet deferred surfaces. R445 surfaced the initial era-aware-dispatch + Process/Property carve-out as a `*_status()` helper. R772-R823 filled in the era-free type surface and the Parsers/Cardano.hs option-composition layer; the remaining explicit deferral is `Command` payload wiring plus the runtime/process harness.
 - `crates/tools/cardano-testnet/src/types.rs`
-  - Operator-facing types for the `cardano-testnet` binary. ## Naming parity **Strict mirror:** cardano-testnet/src/Testnet/Start/Types.hs. R359 ports the simple operator-facing knobs
+  - Operator-facing types for the `cardano-testnet` binary.
 - `crates/tools/cardano-testnet/tests/cli_help_golden.rs`
   - Golden test: yggdrasil-cardano-testnet `--help` / `--version` outputs are byte-equivalent to the upstream `cardano-testnet` binary.
 - `crates/tools/cardano-testnet/tests/fixtures/upstream-help.txt`
@@ -1462,7 +1500,7 @@
   - Cargo manifest for the tools crate.
   - Declares crate metadata, dependencies, features, and local lint behavior.
 - `crates/tools/cardano-tracer/src/acceptors.rs`
-  - Trace-forwarder mini-protocol acceptors — entry points for cardano-tracer's pull-side wiring against running cardano-node forwarders. ## Naming parity.
+  - Trace-forwarder mini-protocol acceptors — entry points for cardano-tracer's pull-side wiring against running cardano-node forwarders.
 - `crates/tools/cardano-tracer/src/acceptors/client.rs`
   - Trace-forwarder initiator-mode entry point — `runAcceptorsClient` analog. Connects outbound to a forwarder (cardano-node) over a Unix pipe, runs the per-connection sub-.
 - `crates/tools/cardano-tracer/src/acceptors/run.rs`
@@ -1470,77 +1508,77 @@
 - `crates/tools/cardano-tracer/src/acceptors/server.rs`
   - Trace-forwarder responder-mode entry point — `runAcceptorsServer` analog. Accepts inbound forwarder connections (LocalPipe / Unix socket; RemoteSocket TCP path deferred), spawns th
 - `crates/tools/cardano-tracer/src/acceptors/utils.rs`
-  - Acceptor-side utility helpers — per-connection state setup + teardown + per-response metrics-store handling. ## Naming parity **Strict mirror:** cardano-tracer/src/Cardano/Tracer/A
+  - Acceptor-side utility helpers — per-connection state setup + teardown + per-response metrics-store handling.
 - `crates/tools/cardano-tracer/src/configuration.rs`
-  - Typed configuration surface for the `cardano-tracer` binary. ## Naming parity **Strict mirror:** cardano-tracer/src/Cardano/Tracer/Configuration.hs.
+  - Typed configuration surface for the `cardano-tracer` binary.
 - `crates/tools/cardano-tracer/src/environment.rs`
   - Runtime environment for cardano-tracer — the 14-field record threaded through every subsystem (Acceptors, Handlers/Logs, Handlers/Metrics, Handlers/Notifications, Run supervisor).
 - `crates/tools/cardano-tracer/src/handlers.rs`
-  - Per-subsystem dispatch handlers used by the cardano-tracer supervisor — parent shell. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell for the `handlers/` sub-
+  - Per-subsystem dispatch handlers used by the cardano-tracer supervisor — parent shell.
 - `crates/tools/cardano-tracer/src/handlers/http_server.rs`
-  - Common HTTP-server scaffolding for the cardano-tracer Metrics handlers (Prometheus, Monitoring, TimeseriesServer, Servers orchestration). ## Naming parity.
+  - Common HTTP-server scaffolding for the cardano-tracer Metrics handlers (Prometheus, Monitoring, TimeseriesServer, Servers orchestration).
 - `crates/tools/cardano-tracer/src/handlers/logs.rs`
-  - Log-handler subsystem — parent shell for the `handlers/logs/` sub-tree. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell for the.
+  - Log-handler subsystem — parent shell for the `handlers/logs/` sub-tree.
 - `crates/tools/cardano-tracer/src/handlers/logs/file.rs`
-  - Log-file writer — appends [`TraceObject`]s to per-node log files managed by the rotator. ## Naming parity **Strict mirror:** cardano-tracer/src/Cardano/Tracer/Handlers/Logs/File.hs
+  - Log-file writer — appends [`TraceObject`]s to per-node log files managed by the rotator.
 - `crates/tools/cardano-tracer/src/handlers/logs/journal.rs`
-  - Linux journal sink — re-export wrapper for the no-systemd implementation. ## Naming parity **Strict mirror:** cardano-tracer/src/Cardano/Tracer/Handlers/Logs/Journal.hs.
+  - Linux journal sink — re-export wrapper for the no-systemd implementation.
 - `crates/tools/cardano-tracer/src/handlers/logs/journal/no_systemd.rs`
-  - No-op stand-in for the journal sink on non-systemd platforms. ## Naming parity **Strict mirror:** cardano-tracer/src/Cardano/Tracer/Handlers/Logs/Journal/NoSystemd.hs.
+  - No-op stand-in for the journal sink on non-systemd platforms.
 - `crates/tools/cardano-tracer/src/handlers/logs/rotator.rs`
   - Log rotation policy — pure helpers for filtering / sorting / retention / age-checking, plus the IO orchestration runtime (R461) that ties them together with the.
 - `crates/tools/cardano-tracer/src/handlers/logs/trace_objects.rs`
-  - Trace-object dispatcher — routes incoming objects to the appropriate per-LoggingParams sink (file or journal). ## Naming parity **Strict mirror:** cardano-tracer/src/Cardano/Tracer
+  - Trace-object dispatcher — routes incoming objects to the appropriate per-LoggingParams sink (file or journal).
 - `crates/tools/cardano-tracer/src/handlers/logs/utils.rs`
-  - Log-file naming + timestamp helpers — shared between the file-writer and the rotator subsystems. ## Naming parity **Strict mirror:** cardano-tracer/src/Cardano/Tracer/Handlers/Logs
+  - Log-file naming + timestamp helpers — shared between the file-writer and the rotator subsystems.
 - `crates/tools/cardano-tracer/src/handlers/metrics.rs`
-  - Metrics-handler subsystem — parent shell for the `handlers/metrics/` sub-tree. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell for the.
+  - Metrics-handler subsystem — parent shell for the `handlers/metrics/` sub-tree.
 - `crates/tools/cardano-tracer/src/handlers/metrics/monitoring.rs`
   - EKG-style monitoring HTTP server — listens on the operator- configured `hasEKG` endpoint and serves an HTML node-list + per-node monitoring page.
 - `crates/tools/cardano-tracer/src/handlers/metrics/prometheus.rs`
   - Prometheus exporter HTTP server — listens on the operator- configured `hasPrometheus` endpoint and serves a per-node OpenMetrics / Prometheus exposition + a Prometheus HTTP-SD.
 - `crates/tools/cardano-tracer/src/handlers/metrics/utils.rs`
-  - Metrics-server utilities — Content-Type constants + route-table type + JSON renderer for the connected-nodes index. ## Naming parity **Strict mirror:** cardano-tracer/src/Cardano/T
+  - Metrics-server utilities — Content-Type constants + route-table type + JSON renderer for the connected-nodes index.
 - `crates/tools/cardano-tracer/src/handlers/notifications.rs`
-  - Notification subsystem — parent shell for the `handlers/notifications/` sub-tree. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell for the.
+  - Notification subsystem — parent shell for the `handlers/notifications/` sub-tree.
 - `crates/tools/cardano-tracer/src/handlers/notifications/check.rs`
-  - Per-event severity dispatch — routes incoming trace events to the correct [`super::types::EventGroup`] queue. ## Naming parity **Strict mirror:** cardano-tracer/src/Cardano/Tracer/
+  - Per-event severity dispatch — routes incoming trace events to the correct [`super::types::EventGroup`] queue.
 - `crates/tools/cardano-tracer/src/handlers/notifications/email.rs`
-  - Email-notification helpers — status-message type + watchdog timeout wrapper + body templating. ## Naming parity **Strict mirror:** cardano-tracer/src/Cardano/Tracer/Handlers/Notifi
+  - Email-notification helpers — status-message type + watchdog timeout wrapper + body templating.
 - `crates/tools/cardano-tracer/src/handlers/notifications/send.rs`
-  - Notification-engine send orchestration — drains event queues, formats body text, dispatches to the SMTP layer. ## Naming parity **Strict mirror:** cardano-tracer/src/Cardano/Tracer
+  - Notification-engine send orchestration — drains event queues, formats body text, dispatches to the SMTP layer.
 - `crates/tools/cardano-tracer/src/handlers/notifications/settings.rs`
-  - Persistence layer for the notification engine — save + load email + per-event-group settings to disk. ## Naming parity **Strict mirror:** cardano-tracer/src/Cardano/Tracer/Handlers
+  - Persistence layer for the notification engine — save + load email + per-event-group settings to disk.
 - `crates/tools/cardano-tracer/src/handlers/notifications/timer.rs`
-  - Periodic-action scheduler — runs a configurable closure every `period_secs` seconds with start/stop control. ## Naming parity **Strict mirror:** cardano-tracer/src/Cardano/Tracer/H
+  - Periodic-action scheduler — runs a configurable closure every `period_secs` seconds with start/stop control.
 - `crates/tools/cardano-tracer/src/handlers/notifications/types.rs`
-  - Notification-engine record types — email + per-event-group dispatch. ## Naming parity **Strict mirror:** cardano-tracer/src/Cardano/Tracer/Handlers/Notifications/Types.hs.
+  - Notification-engine record types — email + per-event-group dispatch.
 - `crates/tools/cardano-tracer/src/handlers/notifications/utils.rs`
-  - Notification-engine utility helpers — queue lookup + event push + queue flush + per-group timer control. ## Naming parity **Strict mirror:** cardano-tracer/src/Cardano/Tracer/Handl
+  - Notification-engine utility helpers — queue lookup + event push + queue flush + per-group timer control.
 - `crates/tools/cardano-tracer/src/handlers/system.rs`
-  - Path-resolution helpers — locate per-tracer state + config directories on the host filesystem, with XDG fallback. ## Naming parity **Strict mirror:** cardano-tracer/src/Cardano/Tra
+  - Path-resolution helpers — locate per-tracer state + config directories on the host filesystem, with XDG fallback.
 - `crates/tools/cardano-tracer/src/lib.rs`
-  - Pure-Rust port of upstream `cardano-tracer`. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell + R335-pattern file-mirror + CLI-parser skeleton for the `cardano
+  - Pure-Rust port of upstream `cardano-tracer`.
 - `crates/tools/cardano-tracer/src/logging.rs`
-  - Trace-event payload type — synthesis stand-in for upstream `Cardano.Logging.TraceObject` until the `trace-dispatcher` package is vendored. ## Naming parity.
+  - Trace-event payload type — synthesis stand-in for upstream `Cardano.Logging.TraceObject` until the `trace-dispatcher` package is vendored.
 - `crates/tools/cardano-tracer/src/main.rs`
-  - Binary entry point for the `cardano-tracer` deployable. ## Naming parity **Strict mirror:** none. R335-pattern minimal binary wrapper that delegates to `yggdrasil_cardano_tracer::r
+  - Binary entry point for the `cardano-tracer` deployable.
 - `crates/tools/cardano-tracer/src/meta_trace.rs`
-  - Trace-event taxonomy for the cardano-tracer's own self-tracing. ## Naming parity **Strict mirror:** cardano-tracer/src/Cardano/Tracer/MetaTrace.hs.
+  - Trace-event taxonomy for the cardano-tracer's own self-tracing.
 - `crates/tools/cardano-tracer/src/metrics_store.rs`
-  - Per-node metrics store — passive aggregator for metrics delivered by the trace-forwarder EKG mini-protocol. ## Naming parity **Strict mirror:** none.
+  - Per-node metrics store — passive aggregator for metrics delivered by the trace-forwarder EKG mini-protocol.
 - `crates/tools/cardano-tracer/src/parser.rs`
-  - CLI argument parser for the `cardano-tracer` binary. ## Naming parity **Strict mirror:** cardano-tracer/src/Cardano/Tracer/CLI.hs. Direct port of upstream's.
+  - CLI argument parser for the `cardano-tracer` binary.
 - `crates/tools/cardano-tracer/src/run.rs`
   - Top-level cardano-tracer supervisor — `runCardanoTracer` analog. Reads the operator config, initializes the runtime state, and spawns the core subsystems (Acceptors, Metrics server
 - `crates/tools/cardano-tracer/src/severity.rs`
-  - Trace-event severity ladder used by the cardano-tracer notification filter and metrics emitter. ## Naming parity **Strict mirror:** none. Yggdrasil-side synthesis of the `Cardano.L
+  - Trace-event severity ladder used by the cardano-tracer notification filter and metrics emitter.
 - `crates/tools/cardano-tracer/src/time.rs`
-  - Wall-clock helpers used by the cardano-tracer EKG metric backend. ## Naming parity **Strict mirror:** cardano-tracer/src/Cardano/Tracer/Time.hs.
+  - Wall-clock helpers used by the cardano-tracer EKG metric backend.
 - `crates/tools/cardano-tracer/src/types.rs`
-  - Runtime-state types for the `cardano-tracer` binary. ## Naming parity **Strict mirror:** cardano-tracer/src/Cardano/Tracer/Types.hs. Direct ports of the upstream type aliases + new
+  - Runtime-state types for the `cardano-tracer` binary.
 - `crates/tools/cardano-tracer/src/utils.rs`
-  - Cross-cutting helpers — runtime-state initialization, line separator, connection-id conversion, registry wrappers. ## Naming parity **Strict mirror:** cardano-tracer/src/Cardano/Tr
+  - Cross-cutting helpers — runtime-state initialization, line separator, connection-id conversion, registry wrappers.
 - `crates/tools/cardano-tracer/tests/cli_help_golden.rs`
   - Golden test: yggdrasil-cardano-tracer `--help` / `--version` outputs are byte-equivalent to the upstream `cardano-tracer` binary.
 - `crates/tools/cardano-tracer/tests/fixtures/upstream-help.txt`
@@ -1554,35 +1592,35 @@
   - Cargo manifest for the yggdrasil-db-analyser crate.
   - Pure-Rust port of the upstream db-analyser ChainDB forensic analyser.
 - `crates/tools/db-analyser/src/analysis.rs`
-  - Analysis dispatch layer — parent shell for the analysis sub-tree. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell for the `analysis/` sub-tree. The.
+  - Analysis dispatch layer — parent shell for the analysis sub-tree.
 - `crates/tools/db-analyser/src/analysis/benchmark_ledger_ops.rs`
-  - BenchmarkLedgerOps analysis sub-tree — parent shell for the three upstream leaves under `Analysis/BenchmarkLedgerOps/`. ## Naming parity **Strict mirror:** none.
+  - BenchmarkLedgerOps analysis sub-tree — parent shell for the three upstream leaves under `Analysis/BenchmarkLedgerOps/`.
 - `crates/tools/db-analyser/src/analysis/benchmark_ledger_ops/file_writing.rs`
-  - Output-format dispatch + CSV/JSON writer entry points used by the BenchmarkLedgerOps analysis. ## Naming parity **Strict mirror:** deps/ouroboros-consensus/ouroboros-consensus-card
+  - Output-format dispatch + CSV/JSON writer entry points used by the BenchmarkLedgerOps analysis.
 - `crates/tools/db-analyser/src/analysis/benchmark_ledger_ops/metadata.rs`
   - `db-analyser` run metadata — fed to the BenchmarkLedgerOps JSON output stream so the analysis CSV/JSON can be correlated with the environment that produced it.
 - `crates/tools/db-analyser/src/analysis/benchmark_ledger_ops/slot_data_point.rs`
-  - Per-block ledger-op timing data point — fed into the `BenchmarkLedgerOps` analysis CSV/JSON output streams. ## Naming parity **Strict mirror:** deps/ouroboros-consensus/ouroboros-c
+  - Per-block ledger-op timing data point — fed into the `BenchmarkLedgerOps` analysis CSV/JSON output streams.
 - `crates/tools/db-analyser/src/analysis/runner.rs`
-  - Analysis dispatch core — drives a `Block` iterator through one of the 13 [`crate::types::AnalysisName`] variants. ## Naming parity **Strict mirror:** deps/ouroboros-consensus/ourob
+  - Analysis dispatch core — drives a `Block` iterator through one of the 13 [`crate::types::AnalysisName`] variants.
 - `crates/tools/db-analyser/src/bin/dump_block.rs`
   - R251 forensic helper — clippy relaxations are intentional: this binary is not on the runtime hot path. The flagged lints (complex tuple return.
 - `crates/tools/db-analyser/src/byron_ebbs.rs`
-  - Byron known epoch-boundary blocks — registry consumed by db-analyser's `ShowEBBs` analysis (R475-R481 arc). ## Naming parity **Strict mirror:** deps/ouroboros-consensus/ouroboros-c
+  - Byron known epoch-boundary blocks — registry consumed by db-analyser's `ShowEBBs` analysis (R475-R481 arc).
 - `crates/tools/db-analyser/src/csv.rs`
-  - CSV output writers for the `db-analyser` benchmark + metrics analyses. ## Naming parity **Strict mirror:** deps/ouroboros-consensus/ouroboros-consensus-cardano/src/unstable-cardano
+  - CSV output writers for the `db-analyser` benchmark + metrics analyses.
 - `crates/tools/db-analyser/src/has_analysis.rs`
-  - Per-block analysis interface — trait surface used by every `AnalysisName` dispatch arm. ## Naming parity **Strict mirror:** deps/ouroboros-consensus/ouroboros-consensus-cardano/src
+  - Per-block analysis interface — trait surface used by every `AnalysisName` dispatch arm.
 - `crates/tools/db-analyser/src/lib.rs`
-  - Pure-Rust port of upstream `db-analyser`. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell + R335-pattern file-mirror + CLI-parser skeleton for the `db-analyse
+  - Pure-Rust port of upstream `db-analyser`.
 - `crates/tools/db-analyser/src/main.rs`
-  - Binary entry point for the `db-analyser` deployable. ## Naming parity **Strict mirror:** none. R335-pattern minimal binary wrapper that delegates to `yggdrasil_db_analyser::run_mai
+  - Binary entry point for the `db-analyser` deployable.
 - `crates/tools/db-analyser/src/parser.rs`
-  - CLI argument parser for the `db-analyser` binary. ## Naming parity **Strict mirror:** deps/ouroboros-consensus/ouroboros-consensus-cardano/app/DBAnalyser/Parsers.hs.
+  - CLI argument parser for the `db-analyser` binary.
 - `crates/tools/db-analyser/src/status.rs`
   - Programmatic-introspection helpers for the db-analyser deferred surfaces. R442 surfaces the upstream `Cardano.Tools.DBAnalyser.{HasAnalysis, Analysis, Run}` carve-outs as a `*_stat
 - `crates/tools/db-analyser/src/types.rs`
-  - Typed configuration surface for the `db-analyser` binary. ## Naming parity **Strict mirror:** deps/ouroboros-consensus/ouroboros-consensus-cardano/src/unstable-cardano-tools/Cardan
+  - Typed configuration surface for the `db-analyser` binary.
 - `crates/tools/db-analyser/tests/cli_help_golden.rs`
   - Golden test: yggdrasil-db-analyser `--help` / `--version` outputs are byte-equivalent to the upstream `db-analyser` binary.
 - `crates/tools/db-analyser/tests/end_to_end_chain_walk.rs`
@@ -1604,11 +1642,11 @@
   - Pure-Rust port of upstream `db-synthesizer`.
   - Parent module for the typed config, parser, forge, run, status, and orphan-instance surfaces.
 - `crates/tools/db-synthesizer/src/main.rs`
-  - Binary entry point for the `db-synthesizer` deployable. ## Naming parity **Strict mirror:** none. R335-pattern minimal binary wrapper that delegates to `yggdrasil_db_synthesizer::r
+  - Binary entry point for the `db-synthesizer` deployable.
 - `crates/tools/db-synthesizer/src/orphans.rs`
-  - JSON-deserialization + file-path-adjustment instances for the db-synthesizer typed config types. ## Naming parity **Strict mirror:** deps/ouroboros-consensus/ouroboros-consensus-ca
+  - JSON-deserialization + file-path-adjustment instances for the db-synthesizer typed config types.
 - `crates/tools/db-synthesizer/src/parser.rs`
-  - CLI argument parser for the `db-synthesizer` binary. ## Naming parity **Strict mirror:** deps/ouroboros-consensus/ouroboros-consensus-cardano/app/DBSynthesizer/Parsers.hs.
+  - CLI argument parser for the `db-synthesizer` binary.
 - `crates/tools/db-synthesizer/src/run.rs`
   - ChainDB-open + synthesize supervisor for the `db-synthesizer` binary.
   - Loads genesis/protocol inputs, builds initial forge state, reads credentials, and drives the Praos forge loop.
@@ -1616,7 +1654,7 @@
   - Programmatic-introspection helpers for the db-synthesizer forge surface.
   - Reports the functional stake-based Praos forge path and the remaining ChainDB byte-equivalence soak.
 - `crates/tools/db-synthesizer/src/types.rs`
-  - Typed configuration surface for the `db-synthesizer` binary. ## Naming parity **Strict mirror:** deps/ouroboros-consensus/ouroboros-consensus-cardano/src/unstable-cardano-tools/Car
+  - Typed configuration surface for the `db-synthesizer` binary.
 - `crates/tools/db-synthesizer/tests/cli_help_golden.rs`
   - Golden test: yggdrasil-db-synthesizer `--help` / `--version` outputs are byte-equivalent to the upstream `db-synthesizer` binary.
 - `crates/tools/db-synthesizer/tests/fixtures/upstream-help.txt`
@@ -1633,15 +1671,15 @@
   - Cargo manifest for the tools crate.
   - Declares crate metadata, dependencies, features, and local lint behavior.
 - `crates/tools/db-truncater/src/lib.rs`
-  - Pure-Rust port of upstream `db-truncater`. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell + R335-pattern file-mirror + CLI-parser skeleton for the `db-trunca
+  - Pure-Rust port of upstream `db-truncater`.
 - `crates/tools/db-truncater/src/main.rs`
-  - Binary entry point for the `db-truncater` deployable. ## Naming parity **Strict mirror:** none. R335-pattern minimal binary wrapper that delegates to `yggdrasil_db_truncater::run_m
+  - Binary entry point for the `db-truncater` deployable.
 - `crates/tools/db-truncater/src/parser.rs`
-  - CLI argument parser shell for the `db-truncater` binary. ## Naming parity **Strict mirror:** deps/ouroboros-consensus/ouroboros-consensus-cardano/app/DBTruncater/Parsers.hs.
+  - CLI argument parser shell for the `db-truncater` binary.
 - `crates/tools/db-truncater/src/run.rs`
-  - Run.hs equivalent for db-truncater. ## Naming parity **Strict mirror:** deps/ouroboros-consensus/ouroboros-consensus-cardano/src/unstable-cardano-tools/Cardano/Tools/DBTruncater/Ru
+  - Run.hs equivalent for db-truncater.
 - `crates/tools/db-truncater/src/types.rs`
-  - Typed configuration surface for the `db-truncater` binary. ## Naming parity **Strict mirror:** deps/ouroboros-consensus/ouroboros-consensus-cardano/src/unstable-cardano-tools/Carda
+  - Typed configuration surface for the `db-truncater` binary.
 - `crates/tools/db-truncater/tests/cli_help_golden.rs`
   - Golden test: yggdrasil-db-truncater `--help` / `--version` outputs are byte-equivalent to the upstream `db-truncater` binary.
 - `crates/tools/db-truncater/tests/fixtures/upstream-help.txt`
@@ -1654,14 +1692,22 @@
   - Cargo manifest for the tools crate.
   - Declares crate metadata, dependencies, features, and local lint behavior.
 - `crates/tools/dmq-node/src/configuration.rs`
-  - Configuration-file loading and CLI-vs-file-vs-defaults merge logic. ## Naming parity **Strict mirror:** deps/dmq-node/dmq-node/src/DMQ/Configuration.hs.
+  - Configuration-file loading and CLI-vs-file-vs-defaults merge logic.
+- `crates/tools/dmq-node/src/delta_q.rs`
+  - dmq-node DeltaQ latency-modelling foundations.
 - `crates/tools/dmq-node/src/diffusion.rs`
   - DMQ diffusion-layer validation-context types: PoolId, StakeSnapshot, and PoolValidationCtx.
   - Ports the self-contained data types from upstream DMQ Diffusion/NodeKernel/Types.hs.
+- `crates/tools/dmq-node/src/inbound_v2.rs`
+  - dmq-node TxSubmission inbound-V2 governor types.
+- `crates/tools/dmq-node/src/keep_alive.rs`
+  - dmq-node keepalive registry.
 - `crates/tools/dmq-node/src/lib.rs`
-  - Pure-Rust port of upstream `dmq-node`. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell + R335-pattern file-mirror + CLI-parser skeleton for the `dmq-node` sis
+  - Pure-Rust port of upstream `dmq-node`.
 - `crates/tools/dmq-node/src/main.rs`
-  - Binary entry point for the `dmq-node` deployable. ## Naming parity **Strict mirror:** none. R335-pattern minimal binary wrapper that delegates to `yggdrasil_dmq_node::run_main()`.
+  - Binary entry point for the `dmq-node` deployable.
+- `crates/tools/dmq-node/src/mempool.rs`
+  - dmq-node in-memory signature mempool.
 - `crates/tools/dmq-node/src/node_to_client.rs`
   - DMQ node-to-client protocol surface: module-tree parent plus LocalMsgSubmission/LocalMsgNotification mux mini-protocol numbers.
   - Mirrors the self-contained constants of upstream DMQ/NodeToClient.hs.
@@ -1675,7 +1721,9 @@
   - DMQ node-to-node protocol version: NodeToNodeVersion enum and NodeToNodeVersionData handshake codec.
   - Strict mirror of upstream DMQ/NodeToNode/Version.hs.
 - `crates/tools/dmq-node/src/parser.rs`
-  - CLI argument parser for the `dmq-node` binary. ## Naming parity **Strict mirror:** deps/dmq-node/dmq-node/src/DMQ/Configuration/CLIOptions.hs.
+  - CLI argument parser for the `dmq-node` binary.
+- `crates/tools/dmq-node/src/peer_sharing.rs`
+  - dmq-node peer-sharing API infrastructure.
 - `crates/tools/dmq-node/src/policy.rs`
   - DMQ mini-protocol policy: the SigSubmission decision policy and per-peer ingress limits.
   - Carries dmq-node-local mirrors of TxDecisionPolicy/MiniProtocolLimits; mirror of upstream DMQ/Policy.hs.
@@ -1694,6 +1742,8 @@
 - `crates/tools/dmq-node/src/protocol/sig_submission_v2.rs`
   - DMQ SigSubmissionV2 mini-protocol: ObjectDiffusion-based signature diffusion with count newtypes, messages, transitions, and codec.
   - Collapses upstream DMQ/Protocol/SigSubmissionV2 Type/Codec/Inbound/Outbound.hs into one file.
+- `crates/tools/dmq-node/src/registry.rs`
+  - dmq-node inbound-V2 tx-submission channel registry.
 - `crates/tools/dmq-node/src/sig_submission_v2.rs`
   - DMQ SigSubmissionV2 higher-level protocol surface: the SigSubmissionProtocolError peer-misbehaviour enum and inbound/outbound drivers.
   - Yggdrasil-side module for the upstream DMQ/SigSubmissionV2/ directory.
@@ -1703,7 +1753,7 @@
   - DMQ topology-file configuration: reads and parses a DMQ topology JSON document into a TopologyConfig.
   - Strict mirror of upstream DMQ/Configuration/Topology.hs.
 - `crates/tools/dmq-node/src/types.rs`
-  - Typed configuration surface for the `dmq-node` binary. ## Naming parity **Strict mirror:** deps/dmq-node/dmq-node/src/DMQ/Configuration/CLIOptions.hs.
+  - Typed configuration surface for the `dmq-node` binary.
 - `crates/tools/dmq-node/tests/cli_help_golden.rs`
   - Golden test: yggdrasil-dmq-node `--help` / `--version` outputs are byte-equivalent to the upstream `dmq-node` binary.
 - `crates/tools/dmq-node/tests/fixtures/upstream-help.txt`
@@ -1716,15 +1766,15 @@
   - Cargo manifest for the tools crate.
   - Declares crate metadata, dependencies, features, and local lint behavior.
 - `crates/tools/kes-agent-control/src/lib.rs`
-  - Pure-Rust port of upstream `kes-agent-control`. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell + R335-pattern file-mirror + CLI-parser skeleton for the `kes-
+  - Pure-Rust port of upstream `kes-agent-control`.
 - `crates/tools/kes-agent-control/src/main.rs`
-  - Binary entry point for the `kes-agent-control` deployable. ## Naming parity **Strict mirror:** none. R335-pattern minimal binary wrapper that.
+  - Binary entry point for the `kes-agent-control` deployable.
 - `crates/tools/kes-agent-control/src/parser.rs`
-  - CLI argument parser for the `kes-agent-control` binary. ## Naming parity **Strict mirror:** deps/kes-agent/kes-agent/cli/ControlMain.hs. Direct port of upstream's `pProgramOptions
+  - CLI argument parser for the `kes-agent-control` binary.
 - `crates/tools/kes-agent-control/src/status.rs`
   - Programmatic-introspection helpers for the kes-agent-control deferred surfaces. R440 surfaces the upstream `Cardano.KESAgent.Processes.ControlClient`.
 - `crates/tools/kes-agent-control/src/types.rs`
-  - Typed configuration surface for the `kes-agent-control` binary. ## Naming parity **Strict mirror:** deps/kes-agent/kes-agent/cli/ControlMain.hs.
+  - Typed configuration surface for the `kes-agent-control` binary.
 - `crates/tools/kes-agent-control/tests/cli_help_golden.rs`
   - Golden test: yggdrasil-kes-agent-control `--help` / `--version` outputs are byte-equivalent to the upstream `kes-agent-control` binary.
 - `crates/tools/kes-agent-control/tests/fixtures/upstream-help.txt`
@@ -1737,11 +1787,11 @@
   - Cargo manifest for the tools crate.
   - Declares crate metadata, dependencies, features, and local lint behavior.
 - `crates/tools/kes-agent/src/lib.rs`
-  - Pure-Rust port of upstream `kes-agent`. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell + R335-pattern file-mirror + CLI-parser skeleton for the `kes-agent` s
+  - Pure-Rust port of upstream `kes-agent`.
 - `crates/tools/kes-agent/src/main.rs`
-  - Binary entry point for the `kes-agent` deployable. ## Naming parity **Strict mirror:** none. R335-pattern minimal binary wrapper that delegates to `yggdrasil_kes_agent::run_main()`
+  - Binary entry point for the `kes-agent` deployable.
 - `crates/tools/kes-agent/src/parser.rs`
-  - CLI argument parser shell for the `kes-agent` binary. ## Naming parity **Strict mirror:** none. Yggdrasil-side parser shell with byte- equivalent `--help` / `--version` output capt
+  - CLI argument parser shell for the `kes-agent` binary.
 - `crates/tools/kes-agent/src/status.rs`
   - Programmatic-introspection helpers for the kes-agent deferred surfaces. R443 surfaces the upstream kes-agent daemon surfaces (socket server protocol, KES key lifecycle, daemonizati
 - `crates/tools/kes-agent/tests/cli_help_golden.rs`
@@ -1756,15 +1806,15 @@
   - Cargo manifest for the tools crate.
   - Declares crate metadata, dependencies, features, and local lint behavior.
 - `crates/tools/snapshot-converter/src/lib.rs`
-  - Pure-Rust port of upstream `snapshot-converter`. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell + R335-pattern file-mirror + CLI-parser skeleton for the `sna
+  - Pure-Rust port of upstream `snapshot-converter`.
 - `crates/tools/snapshot-converter/src/main.rs`
-  - Binary entry point for the `snapshot-converter` deployable. ## Naming parity **Strict mirror:** none. R335-pattern minimal binary wrapper that.
+  - Binary entry point for the `snapshot-converter` deployable.
 - `crates/tools/snapshot-converter/src/parser.rs`
-  - CLI argument parser for the `snapshot-converter` binary. ## Naming parity **Strict mirror:** deps/ouroboros-consensus/ouroboros-consensus-cardano/app/snapshot-converter.hs.
+  - CLI argument parser for the `snapshot-converter` binary.
 - `crates/tools/snapshot-converter/src/status.rs`
   - Programmatic-introspection helpers for the snapshot-converter deferred surfaces. R439 surfaces the upstream `convertSnapshot` + filesystem-watcher.
 - `crates/tools/snapshot-converter/src/types.rs`
-  - Typed configuration surface for the `snapshot-converter` binary. ## Naming parity **Strict mirror:** deps/ouroboros-consensus/ouroboros-consensus-cardano/app/snapshot-converter.hs.
+  - Typed configuration surface for the `snapshot-converter` binary.
 - `crates/tools/snapshot-converter/tests/cli_help_golden.rs`
   - Golden test: yggdrasil-snapshot-converter `--help` / `--version` outputs are byte-equivalent to the upstream `snapshot-converter` binary.
 - `crates/tools/snapshot-converter/tests/fixtures/upstream-help.txt`
@@ -1810,7 +1860,7 @@
 - `crates/tools/tx-generator/src/generator_tx.rs`
   - Strict mirror of upstream `GeneratorTx.hs`, wiring walletBenchmark target resolution, NtN V14 connect, worker/feeder control, and cached summary collection.
 - `crates/tools/tx-generator/src/generator_tx/sized_metadata.rs`
-  - Sized transaction-metadata construction. ## Naming parity **Strict mirror:** `.reference-haskell-cardano-node/bench/tx-generator/src/Cardano/Benchmarking/GeneratorTx/SizedMetadata.
+  - Sized transaction-metadata construction.
 - `crates/tools/tx-generator/src/generator_tx/submission.rs`
   - Strict mirror of upstream `GeneratorTx.Submission`, porting report refs, submission summaries, stream state, and the throttled transaction stream source.
 - `crates/tools/tx-generator/src/generator_tx/submission_client.rs`
@@ -1819,7 +1869,7 @@
   - Pure-Rust port of upstream `tx-generator`.
   - Parent module wiring top-level parsing, json/json_highlevel execution, compile, version, and command dispatch.
 - `crates/tools/tx-generator/src/main.rs`
-  - Binary entry point for the `tx-generator` deployable. ## Naming parity **Strict mirror:** none. R335-pattern minimal binary wrapper that delegates to `yggdrasil_tx_generator::run_m
+  - Binary entry point for the `tx-generator` deployable.
 - `crates/tools/tx-generator/src/parser.rs`
   - CLI argument parser shell for the `tx-generator` binary.
   - Keeps top-level help/version fixture compatibility while delegating typed commands to command.rs.
@@ -1850,35 +1900,35 @@
   - High-level Nix-service configuration for `tx-generator`.
   - Mirrors upstream Setup/NixService.hs option parsing, node descriptions, overrides, and projections.
 - `crates/tools/tx-generator/src/setup/plutus.rs`
-  - Plutus script loading helpers. ## Naming parity **Strict mirror:** `.reference-haskell-cardano-node/bench/tx-generator/src/Cardano/TxGenerator/Setup/Plutus.hs`.
+  - Plutus script loading helpers.
 - `crates/tools/tx-generator/src/setup/testnet_discovery.rs`
   - `cardano-testnet` output directory discovery for `tx-generator`.
   - Mirrors upstream Setup/TestnetDiscovery.hs path discovery, node ports, JSON merge, and typed NixService output.
 - `crates/tools/tx-generator/src/tx_generator.rs`
-  - Transaction-generator support namespace. ## Naming parity **Strict mirror:** none. Parent shell for upstream `Cardano.TxGenerator.*` support modules. Concrete leaf files mirror.
+  - Transaction-generator support namespace.
 - `crates/tools/tx-generator/src/tx_generator/fund.rs`
-  - Funds available for transaction construction. ## Naming parity **Strict mirror:** `.reference-haskell-cardano-node/bench/tx-generator/src/Cardano/TxGenerator/Fund.hs`.
+  - Funds available for transaction construction.
 - `crates/tools/tx-generator/src/tx_generator/fund_queue.rs`
-  - Fund-specialized FIFO queue. ## Naming parity **Strict mirror:** `.reference-haskell-cardano-node/bench/tx-generator/src/Cardano/TxGenerator/FundQueue.hs`.
+  - Fund-specialized FIFO queue.
 - `crates/tools/tx-generator/src/tx_generator/genesis.rs`
   - Strict mirror of upstream `Cardano.TxGenerator.Genesis`: SecureGenesis initial-fund lookup, genesis pseudo-input spending, transaction construction, and wallet fund production.
 - `crates/tools/tx-generator/src/tx_generator/internal.rs`
-  - Internal transaction-generator support namespace. ## Naming parity **Strict mirror:** none. Parent shell for upstream `Cardano.TxGenerator.Internal.*` modules. Concrete leaf files
+  - Internal transaction-generator support namespace.
 - `crates/tools/tx-generator/src/tx_generator/internal/fifo.rs`
-  - FIFO queue used by the transaction generator. ## Naming parity **Strict mirror:** `.reference-haskell-cardano-node/bench/tx-generator/src/Cardano/TxGenerator/Internal/Fifo.hs`.
+  - FIFO queue used by the transaction generator.
 - `crates/tools/tx-generator/src/tx_generator/plutus_context.rs`
-  - Plutus budgeting and script-data helpers. ## Naming parity **Strict mirror:** `.reference-haskell-cardano-node/bench/tx-generator/src/Cardano/TxGenerator/PlutusContext.hs`.
+  - Plutus budgeting and script-data helpers.
 - `crates/tools/tx-generator/src/tx_generator/tx.rs`
-  - Transaction construction for the tx-generator runtime. ## Naming parity **Strict mirror:** `.reference-haskell-cardano-node/bench/tx-generator/src/Cardano/TxGenerator/Tx.hs`.
+  - Transaction construction for the tx-generator runtime.
 - `crates/tools/tx-generator/src/tx_generator/utils.rs`
-  - Utility functions used across the transaction generator. ## Naming parity **Strict mirror:** `.reference-haskell-cardano-node/bench/tx-generator/src/Cardano/TxGenerator/Utils.hs`.
+  - Utility functions used across the transaction generator.
 - `crates/tools/tx-generator/src/tx_generator/utxo.rs`
-  - UTxO output builders for transaction generation. ## Naming parity **Strict mirror:** `.reference-haskell-cardano-node/bench/tx-generator/src/Cardano/TxGenerator/UTxO.hs`.
+  - UTxO output builders for transaction generation.
 - `crates/tools/tx-generator/src/types.rs`
   - High-level transaction-generator configuration types.
   - Mirrors the upstream TxGenerator.Types subset required by NixService and later Compiler slices.
 - `crates/tools/tx-generator/src/wallet.rs`
-  - Wallet queue operations used by the benchmark script runtime. ## Naming parity **Strict mirror:** `.reference-haskell-cardano-node/bench/tx-generator/src/Cardano/Benchmarking/Walle
+  - Wallet queue operations used by the benchmark script runtime.
 - `crates/tools/tx-generator/tests/cli_help_golden.rs`
   - Golden and CLI dispatch tests for the `tx-generator` binary.
   - Checks upstream help/version fixtures plus typed dispatch and unknown-command failure paths.
@@ -1892,33 +1942,36 @@
 - `docs/AGENTS.md`
   - Guidance for maintaining project policy and architecture documents under docs/.: Keep these documents synchronized with the implemented workspace, not with speculative future goals
 - `docs/ARCHITECTURE.md`
-  - Architecture: ---.
+  - Architecture: Yggdrasil is organized as a Rust workspace with explicit crate boundaries so protocol, ledger, storage, and integration work can evolve independently.
 - `docs/CHANGELOG.md`
-  - Changelog: ---.
+  - Changelog: The full changelog lives at [CHANGELOG.md](https://github.com/yggdrasil-node/Cardano-node/blob/main/CHANGELOG.md) in the repository root, kept in [Keep a Changelog](http
 - `docs/COMPATIBILITY.md`
   - Compatibility & Stability Contract: > **Status:** drafted for v1.0. Until v1.0 ships, anything in this.
 - `docs/COMPLETION_ROADMAP.md`
-  - Completion Roadmap: ---.
+  - Completion Roadmap: > **Document classification:** operational.
 - `docs/CONTRIBUTING.md`
-  - Contributing: ---.
+  - Contributing: `cargo fmt --all -- --check`.
 - `docs/DEPENDENCIES.md`
-  - Dependency Policy: ---.
+  - Dependency Policy: This file defines how dependencies are introduced into Yggdrasil.
 - `docs/Gemfile`
   - Project file at docs/Gemfile.
 - `docs/MANUAL_TEST_RUNBOOK.md`
-  - Manual Test Runbook — Yggdrasil Real-Life Operations: ---.
+  - Manual Test Runbook — Yggdrasil Real-Life Operations: **Purpose**: ordered checklist for the operator running `yggdrasil-node` against real Cardano networks (preprod first, then ma
+- `docs/PARITY_DASHBOARD.md`
+  - Compact operator-facing parity status board sourced from parity-matrix and living parity docs.
+  - Links status counts, open gaps, and remaining operator gates back to their source-of-truth documents.
 - `docs/PARITY_PROOF.md`
-  - Yggdrasil Parity Proof Report: ---.
+  - Yggdrasil Parity Proof Report: > Quick view: [`PARITY_DASHBOARD.md`](PARITY_DASHBOARD.md).
 - `docs/PARITY_SUMMARY.md`
-  - PARITY & FUNCTION SUMMARY FOR MANAGEMENT: ---.
+  - PARITY & FUNCTION SUMMARY FOR MANAGEMENT: > **Document classification:** current.
 - `docs/REAL_PREPROD_POOL_VERIFICATION.md`
-  - Real Preprod Pool Verification: ---.
+  - Real Preprod Pool Verification: This workflow verifies yggdrasil block-producer runtime behavior against the real preprod network using operator-provided pool credentials.
 - `docs/SPECS.md`
-  - Specification Sources: ---.
+  - Specification Sources: Yggdrasil is specification-driven. When sources disagree, use them in this order.
 - `docs/TECH-DEBT.md`
   - Technical debt tracker: Operator-visible items that work today but want consolidation. Each.
 - `docs/UPSTREAM_PARITY.md`
-  - Upstream Parity Matrix: ---.
+  - Upstream Parity Matrix: > Quick view: [`PARITY_DASHBOARD.md`](PARITY_DASHBOARD.md).
 - `docs/_config.yml`
   - Project file at docs/_config.yml.
 - `docs/_includes/head_custom.html`
@@ -1930,19 +1983,19 @@
 - `docs/_sass/custom/custom.scss`
   - Project file at docs/_sass/custom/custom.scss.
 - `docs/archive/AGENTS_JOURNAL.md`
-  - AGENTS.md Implementation Journal (archived): ---.
+  - AGENTS.md Implementation Journal (archived): Archived 2026-05-17. This is the verbatim `## Current Phase` journal that.
 - `docs/archive/AUDIT_VERIFICATION_2026Q2.md`
-  - Audit Verification — 2026-Q2: ---.
+  - Audit Verification — 2026-Q2: **Purpose**: read-only sanity check of every gap currently flagged in the project's parity documentation, before spending effort closing imaginary ite
 - `docs/archive/PARITY_PLAN.md`
-  - Full Parity Plan: Rust Cardano Node vs. Official Haskell Implementation: ---.
+  - Full Parity Plan: Rust Cardano Node vs. Official Haskell Implementation: > **Archived 2026-05-09 (R299).** This document is the original.
 - `docs/archive/README.md`
-  - Archive: ---.
+  - Archive: Historical documents preserved as audit trail. Each file in this.
 - `docs/archive/REFACTOR_BLUEPRINT.md`
-  - Refactor Blueprint — Upstream Module Mapping: ---.
+  - Refactor Blueprint — Upstream Module Mapping: Last updated: 2026-05-09 (R287 closure annotation).
 - `docs/archive/UPSTREAM_RESEARCH.md`
-  - Comprehensive Upstream Research: Cardano Haskell Implementation: ---.
+  - Comprehensive Upstream Research: Cardano Haskell Implementation: > **Archived 2026-05-09 (R299).** This document is the pre-execution.
 - `docs/archive/code-audit.md`
-  - Yggdrasil Cardano-node — Code Audit Report: ---.
+  - Yggdrasil Cardano-node — Code Audit Report: **Repository:** `https://github.com/Yggdrasil-node/Cardano-node`.
 - `docs/assets/images/README.md`
   - Yggdrasil docs site image assets: This directory holds the image assets referenced by the docs site.
 - `docs/assets/images/Yggrasil_banner.png`
@@ -1950,39 +2003,39 @@
 - `docs/assets/images/Yggrasil_logo.png`
   - Project file at docs/assets/images/Yggrasil_logo.png.
 - `docs/index.md`
-  - Where to start: ---.
+  - Where to start: <figure class="yg-hero-banner" markdown="0">.
 - `docs/manual/block-production.md`
-  - Block Production: ---.
+  - Block Production: This chapter is for stake pool operators (SPOs). It covers the additional setup needed to turn a relay node into a block-producing node.
 - `docs/manual/cli-reference.md`
-  - CLI Reference: ---.
+  - CLI Reference: This is the authoritative reference for the `yggdrasil-node` binary. Every subcommand and flag is listed.
 - `docs/manual/configuration.md`
-  - Configuration: ---.
+  - Configuration: Yggdrasil is configured by a JSON config file, optionally overridden by CLI flags. The config schema mirrors the upstream Haskell node's `config.json` keys for byte-
 - `docs/manual/docker.md`
-  - Running with Docker: ---.
+  - Running with Docker: A multi-stage `Dockerfile` and `docker-compose.yml` are included at the repository root. This chapter covers a relay deployment via `docker compose`. For block
 - `docs/manual/glossary.md`
-  - Glossary: ---.
+  - Glossary: Cardano-specific terminology used throughout this manual and the code.
 - `docs/manual/index.md`
-  - Get a node running: ---.
+  - Get a node running: <div class="yg-hero" markdown="0">.
 - `docs/manual/installation.md`
-  - Installation: ---.
+  - Installation: A machine with:.
 - `docs/manual/maintenance.md`
-  - Maintenance: ---.
+  - Maintenance: Long-running production responsibilities. None are urgent in week one, all matter eventually.
 - `docs/manual/monitoring.md`
-  - Monitoring: ---.
+  - Monitoring: A production node needs three observability surfaces: metrics for dashboards and alerting, structured traces for debugging, and a health endpoint for orchestrator probe
 - `docs/manual/networks.md`
-  - Networks and Presets: ---.
+  - Networks and Presets: Cardano runs three official networks. Yggdrasil ships a vendored configuration preset for each.
 - `docs/manual/overview.md`
-  - Overview: ---.
+  - Overview: Yggdrasil is a Cardano node implementation written in pure Rust. It speaks the same protocols as the upstream Haskell node, downloads the same blocks, applies the same le
 - `docs/manual/quick-start.md`
-  - Quick Start: ---.
+  - Quick Start: This is the fastest path from "binary built" to "node syncing mainnet". Five commands.
 - `docs/manual/release-verification.md`
   - Release verification: Wave 7 PR 19 added cryptographic signing, build-provenance attestation,.
 - `docs/manual/releases.md`
-  - Installing from Releases: ---.
+  - Installing from Releases: Yggdrasil ships pre-built Linux binaries with every tagged release. If you do not need to build from source, this is the fastest path to a running node.
 - `docs/manual/running.md`
-  - Running a Node: ---.
+  - Running a Node: Once you have a working binary and a config you trust, the next step is making the node a long-running service that survives reboots, restarts cleanly on signals, a
 - `docs/manual/troubleshooting.md`
-  - Troubleshooting: ---.
+  - Troubleshooting: A catalogue of common error messages and their resolutions. If your issue isn't here, file a GitHub issue with the trace output.
 - `docs/observability/README.md`
   - Yggdrasil observability — operator quick start: Wave 10 PR 29 ships drop-in observability configs so SPOs migrating.
 - `docs/observability/alertmanager/yggdrasil-rules.yml`
@@ -1992,7 +2045,7 @@
 - `docs/observability/loki/promtail.example.yml`
   - Project file at docs/observability/loki/promtail.example.yml.
 - `docs/operational-runs/2026-04-27-runbook-pass.md`
-  - Operational Run — 2026-04-27 (devcontainer rehearsal): ---.
+  - Operational Run — 2026-04-27 (devcontainer rehearsal): Per [docs/MANUAL_TEST_RUNBOOK.md](../MANUAL_TEST_RUNBOOK.md) §9 template. This.
 - `docs/operational-runs/2026-05-05-round-249-classify-signature.py`
   - Project file at docs/operational-runs/2026-05-05-round-249-classify-signature.py.
 - `docs/operational-runs/2026-05-05-round-249-preprod-vrf-failure-slot-429460.log`
@@ -2004,45 +2057,45 @@
 - `docs/operational-runs/2026-05-05-round-249-preview-vkey-witness-fail-tx-44ccae43-bytes.txt`
   - Project file at docs/operational-runs/2026-05-05-round-249-preview-vkey-witness-fail-tx-44ccae43-bytes.txt.
 - `docs/operational-runs/2026-05-06-round-263-r253-fix-byron-aware-nonce.md`
-  - Round 263 — R253 closure: Byron-aware TPraos nonce evolution: Date: 2026-05-06.
+  - Operational run record: Round 263 — R253 closure: Byron-aware TPraos nonce evolution.
 - `docs/operational-runs/2026-05-06-round-264-byron-aware-ledger-epoch-first-slot.md`
-  - Round 264 — Byron-aware ledger `epoch_first_slot` audit (R263 follow-on): Date: 2026-05-06.
+  - Operational run record: Round 264 — Byron-aware ledger `epoch_first_slot` audit (R263 follow-on).
 - `docs/operational-runs/2026-05-06-round-266-gap-bp-variant-a-confirmed.log`
   - Project file at docs/operational-runs/2026-05-06-round-266-gap-bp-variant-a-confirmed.log.
 - `docs/operational-runs/2026-05-06-round-266-gap-bp-variant-a-confirmed.md`
-  - Round 266 — Gap BP step 1: candidate (2) ruled out, candidate (1) partially ruled out: Date: 2026-05-06.
+  - Operational run record: Round 266 — Gap BP step 1: candidate (2) ruled out, candidate (1) partially ruled out.
 - `docs/operational-runs/2026-05-06-round-266b-gap-bp-builtin-trace.log`
   - Project file at docs/operational-runs/2026-05-06-round-266b-gap-bp-builtin-trace.log.
 - `docs/operational-runs/2026-05-06-round-266c-gap-bp-script-context.log`
   - Project file at docs/operational-runs/2026-05-06-round-266c-gap-bp-script-context.log.
 - `docs/operational-runs/2026-05-06-round-269-state-mir-extraction.md`
-  - Round 269 — `crates/ledger/src/state.rs` per-rule split: first slice (MIR): Date: 2026-05-06.
+  - Operational run record: Round 269 — `crates/ledger/src/state.rs` per-rule split: first slice (MIR).
 - `docs/operational-runs/2026-05-06-round-269b-state-ratify-extraction.md`
-  - Round 269b — `state.rs` per-rule split: second slice (Conway RATIFY): Date: 2026-05-06.
+  - Operational run record: Round 269b — `state.rs` per-rule split: second slice (Conway RATIFY).
 - `docs/operational-runs/2026-05-06-round-269c-state-enact-extraction.md`
-  - Round 269c — `state.rs` per-rule split: third slice (Conway ENACT): Date: 2026-05-06.
+  - Operational run record: Round 269c — `state.rs` per-rule split: third slice (Conway ENACT).
 - `docs/operational-runs/2026-05-06-round-269d-state-deposit-pot-extraction.md`
-  - Round 269d — `state.rs` per-rule split: fourth slice (`DepositPot`): Date: 2026-05-06.
+  - Operational run record: Round 269d — `state.rs` per-rule split: fourth slice (`DepositPot`).
 - `docs/operational-runs/2026-05-06-round-269e-state-phase1-validation-extraction.md`
-  - Round 269e — `state.rs` per-rule split: fifth slice (Phase-1 validation helpers): Date: 2026-05-06.
+  - Operational run record: Round 269e — `state.rs` per-rule split: fifth slice (Phase-1 validation helpers).
 - `docs/operational-runs/2026-05-06-round-269f-state-pool-state-extraction.md`
-  - Round 269f — `state.rs` per-rule split: sixth slice (`PoolState` + `RegisteredPool` + `PoolRelayAccessPoint`): Date: 2026-05-06.
+  - Operational run record: Round 269f — `state.rs` per-rule split: sixth slice (`PoolState` + `RegisteredPool` + `PoolRelayAccessPoint`).
 - `docs/operational-runs/2026-05-06-round-269g-state-reward-accounts-extraction.md`
-  - Round 269g — `state.rs` per-rule split: seventh slice (`RewardAccountState` + `RewardAccounts`): Date: 2026-05-06.
+  - Operational run record: Round 269g — `state.rs` per-rule split: seventh slice (`RewardAccountState` + `RewardAccounts`).
 - `docs/operational-runs/2026-05-06-round-269h-state-stake-credentials-extraction.md`
-  - Round 269h — `state.rs` per-rule split: eighth slice (`StakeCredentialState` + `StakeCredentials`): Date: 2026-05-06.
+  - Operational run record: Round 269h — `state.rs` per-rule split: eighth slice (`StakeCredentialState` + `StakeCredentials`).
 - `docs/operational-runs/2026-05-06-round-269i-state-drep-state-extraction.md`
-  - Round 269i — `state.rs` per-rule split: ninth slice (`RegisteredDrep` + `DrepState`): Date: 2026-05-06.
+  - Operational run record: Round 269i — `state.rs` per-rule split: ninth slice (`RegisteredDrep` + `DrepState`).
 - `docs/operational-runs/2026-05-06-round-269l-state-treasury-chaindep-extraction.md`
-  - Round 269l — `state.rs` per-rule split: twelfth slice (bundled `AccountingState` + `ChainDepStateContext`): Date: 2026-05-06.
+  - Operational run record: Round 269l — `state.rs` per-rule split: twelfth slice (bundled `AccountingState` + `ChainDepStateContext`).
 - `docs/operational-runs/2026-05-06-round-269m-state-snapshot-extraction.md`
-  - Round 269m — `state.rs` per-rule split: thirteenth slice (`LedgerStateSnapshot`): Date: 2026-05-06.
+  - Operational run record: Round 269m — `state.rs` per-rule split: thirteenth slice (`LedgerStateSnapshot`).
 - `docs/operational-runs/2026-05-06-round-269n-state-checkpoint-extraction.md`
-  - Round 269n — `state.rs` per-rule split: fourteenth slice (`LedgerStateCheckpoint`): Date: 2026-05-06.
+  - Operational run record: Round 269n — `state.rs` per-rule split: fourteenth slice (`LedgerStateCheckpoint`).
 - `docs/operational-runs/2026-05-06-round-269o-state-ppup-extraction.md`
-  - Round 269o — `state.rs` per-rule split: fifteenth slice (PPUP helpers): Date: 2026-05-06.
+  - Operational run record: Round 269o — `state.rs` per-rule split: fifteenth slice (PPUP helpers).
 - `docs/operational-runs/2026-05-06-round-269p-state-cbor-extraction.md`
-  - Round 269p — `state.rs` per-rule split: sixteenth slice (LedgerState CBOR codec): Date: 2026-05-06.
+  - Operational run record: Round 269p — `state.rs` per-rule split: sixteenth slice (LedgerState CBOR codec).
 - `docs/operational-runs/2026-05-09-phase-d-living-doc-sweep.md`
   - Phase D — Living-doc parity language sweep: **Date:** 2026-05-09.
 - `docs/operational-runs/2026-05-09-round-299-docs-cleanup-phase-2a.md`
@@ -2050,160 +2103,160 @@
 - `docs/operational-runs/2026-05-09-round-300-docs-cleanup-phase-2b.md`
   - Round 300 — `docs/` cleanup phase 2B (trim PARITY_SUMMARY.md): **Date:** 2026-05-09.
 - `docs/operational-runs/2026-05-09-round-308-parity-proof-and-scripts-agents.md`
-  - Round 308 — `docs/PARITY_PROOF.md` header refresh + `scripts/AGENTS.md`: ---.
+  - Round 308 — `docs/PARITY_PROOF.md` header refresh + `scripts/AGENTS.md`: **Date:** 2026-05-09.
 - `docs/operational-runs/2026-05-09-round-309-agents-md-arc-closure.md`
-  - Round 309 — AGENTS.md Current Phase: strict 1:1 file-mirror & tech-debt arc closure: ---.
+  - Round 309 — AGENTS.md Current Phase: strict 1:1 file-mirror & tech-debt arc closure: **Date:** 2026-05-09.
 - `docs/operational-runs/2026-05-09-round-310-gitignore-debug-pattern-fix.md`
-  - Round 310 — `.gitignore` over-broad `debug` pattern fix (CI failure): ---.
+  - Round 310 — `.gitignore` over-broad `debug` pattern fix (CI failure): **Date:** 2026-05-09.
 - `docs/operational-runs/2026-05-09-round-311-strict-mirror-index-drift-check.md`
-  - Round 311 — strict-mirror index-vs-tree drift check: ---.
+  - Round 311 — strict-mirror index-vs-tree drift check: **Date:** 2026-05-09.
 - `docs/operational-runs/2026-05-09-round-312-upstream-parity-arc-closure.md`
-  - Round 312 — `docs/UPSTREAM_PARITY.md` arc-closure cross-walk: ---.
+  - Round 312 — `docs/UPSTREAM_PARITY.md` arc-closure cross-walk: **Date:** 2026-05-09.
 - `docs/operational-runs/2026-05-09-round-313-synthesis-file-census.md`
-  - Round 313 — synthesis-file census (no upstream `.hs` mirror): ---.
+  - Round 313 — synthesis-file census (no upstream `.hs` mirror): **Date:** 2026-05-09.
 - `docs/operational-runs/2026-05-09-round-314-promote-partial-mirrors.md`
-  - Round 314 — promote partial-mirror docstrings to canonical strict-mirror: ---.
+  - Round 314 — promote partial-mirror docstrings to canonical strict-mirror: **Date:** 2026-05-09.
 - `docs/operational-runs/2026-05-09-round-315-reclassify-synthesis-files.md`
-  - Round 315 — reclassify Yggdrasil-side aggregator/glue files to strict-none synthesis: ---.
+  - Round 315 — reclassify Yggdrasil-side aggregator/glue files to strict-none synthesis: **Date:** 2026-05-09.
 - `docs/operational-runs/2026-05-09-round-316-reclassify-three-more-synthesis.md`
-  - Round 316 — reclassify 3 more partial-mirrors to synthesis: ---.
+  - Round 316 — reclassify 3 more partial-mirrors to synthesis: **Date:** 2026-05-09.
 - `docs/operational-runs/2026-05-09-round-317-merge-multiplexer-into-mux.md`
-  - Round 317 — merge `multiplexer.rs` into `mux.rs` (1:1 with upstream `Mux.hs`): ---.
+  - Round 317 — merge `multiplexer.rs` into `mux.rs` (1:1 with upstream `Mux.hs`): **Date:** 2026-05-09.
 - `docs/operational-runs/2026-05-09-round-318-handshake-split.md`
-  - Round 318 — split `handshake.rs` into 3 leaves matching upstream: ---.
+  - Round 318 — split `handshake.rs` into 3 leaves matching upstream: **Date:** 2026-05-09.
 - `docs/operational-runs/2026-05-09-round-319-inbound-governor-split.md`
-  - Round 319 — split `inbound_governor.rs` to mirror upstream `State.hs` separation: ---.
+  - Round 319 — split `inbound_governor.rs` to mirror upstream `State.hs` separation: **Date:** 2026-05-09.
 - `docs/operational-runs/2026-05-09-round-320-plutus-strict-mirror-promotions.md`
-  - Round 320 — promote 2 plutus partial-mirrors → strict-partial bucket empty: ---.
+  - Round 320 — promote 2 plutus partial-mirrors → strict-partial bucket empty: **Date:** 2026-05-09.
 - `docs/operational-runs/2026-05-09-round-321-closure-triad-refresh-r313-r320.md`
-  - Round 321 — closure-status doc triad refresh for R313–R320: ---.
+  - Round 321 — closure-status doc triad refresh for R313–R320: **Date:** 2026-05-09.
 - `docs/operational-runs/2026-05-09-round-322-changelog-r303-r321-entries.md`
-  - Round 322 — CHANGELOG.md backfill for R303–R321: ---.
+  - Round 322 — CHANGELOG.md backfill for R303–R321: **Date:** 2026-05-09.
 - `docs/operational-runs/2026-05-09-round-323-eliminate-auto-bucket.md`
-  - Round 323 — eliminate `(a) DIRECT_MIRROR (auto)` bucket: ---.
+  - Round 323 — eliminate `(a) DIRECT_MIRROR (auto)` bucket: **Date:** 2026-05-09.
 - `docs/operational-runs/2026-05-09-round-324-eliminate-affinity-filtered-bucket.md`
-  - Round 324 — eliminate `(a) DIRECT_MIRROR (auto (affinity-filtered))` bucket: ---.
+  - Round 324 — eliminate `(a) DIRECT_MIRROR (auto (affinity-filtered))` bucket: **Date:** 2026-05-09.
 - `docs/operational-runs/2026-05-09-round-325-closure-triad-refresh-r322-r324.md`
-  - Round 325 — closure-status doc triad refresh for R322–R324: ---.
+  - Round 325 — closure-status doc triad refresh for R322–R324: **Date:** 2026-05-09.
 - `docs/operational-runs/2026-05-09-round-326-vendored-source-survey.md`
-  - Round 326 — vendored sister-tool source survey + scope corrections: ---.
+  - Round 326 — vendored sister-tool source survey + scope corrections: **Date:** 2026-05-09.
 - `docs/operational-runs/2026-05-09-round-326b-vendor-bech32-kes-agent-dmq-node.md`
-  - Round 326b — vendor bech32 + kes-agent + dmq-node source trees: ---.
+  - Round 326b — vendor bech32 + kes-agent + dmq-node source trees: **Date:** 2026-05-09.
 - `docs/operational-runs/2026-05-09-round-327-twelve-skeleton-crates.md`
-  - Round 327 — workspace skeleton stubs for 12 sister-tool crates: ---.
+  - Round 327 — workspace skeleton stubs for 12 sister-tool crates: **Date:** 2026-05-09.
 - `docs/operational-runs/2026-05-09-round-328-parity-infrastructure-expansion.md`
-  - Round 328 — parity infrastructure expansion: ---.
+  - Round 328 — parity infrastructure expansion: **Date:** 2026-05-09.
 - `docs/operational-runs/2026-05-09-round-329-run-tools-launcher.md`
-  - Round 329 — run-tools launcher + preprod checkpoints clarification: ---.
+  - Round 329 — run-tools launcher + preprod checkpoints clarification: **Date:** 2026-05-09.
 - `docs/operational-runs/2026-05-09-round-330-dep-audit-bech32-deferred-http.md`
-  - Round 330 — pure-Rust dep audit: bech32 added; HTTP / log-rotation deferred: ---.
+  - Round 330 — pure-Rust dep audit: bech32 added; HTTP / log-rotation deferred: **Date:** 2026-05-09.
 - `docs/operational-runs/2026-05-09-round-331-bech32-skeleton.md`
-  - Round 331 — bech32 file-mirror skeleton: ---.
+  - Round 331 — bech32 file-mirror skeleton: **Date:** 2026-05-09.
 - `docs/operational-runs/2026-05-09-round-332-bech32-cli-parser.md`
-  - Round 332 — bech32 CLI parser + byte-equivalent `--help` / `--version`: ---.
+  - Round 332 — bech32 CLI parser + byte-equivalent `--help` / `--version`: **Date:** 2026-05-09.
 - `docs/operational-runs/2026-05-09-round-333-bech32-encode-decode.md`
-  - Round 333 — bech32 concrete encode/decode: ---.
+  - Round 333 — bech32 concrete encode/decode: **Date:** 2026-05-09.
 - `docs/operational-runs/2026-05-09-round-334-bech32-closeout.md`
-  - Round 334 — bech32 closeout: ---.
+  - Round 334 — bech32 closeout: **Date:** 2026-05-09.
 - `docs/operational-runs/2026-05-09-round-336-phase-a-skeleton-milestone.md`
-  - Round 336 — Phase A skeleton milestone: ---.
+  - Round 336 — Phase A skeleton milestone: **Date:** 2026-05-09.
 - `docs/operational-runs/2026-05-10-round-339-cardano-submit-api-foundations.md`
-  - Round 339 — cardano-submit-api foundations: ---.
+  - Round 339 — cardano-submit-api foundations: **Date:** 2026-05-10.
 - `docs/operational-runs/2026-05-10-round-340-cardano-submit-api-type-bridges.md`
-  - Round 340 — cardano-submit-api type bridges: ---.
+  - Round 340 — cardano-submit-api type bridges: **Date:** 2026-05-10.
 - `docs/operational-runs/2026-05-10-round-341-cardano-submit-api-trace-instances.md`
-  - Round 341 — cardano-submit-api trace surface: ---.
+  - Round 341 — cardano-submit-api trace surface: **Date:** 2026-05-10.
 - `docs/operational-runs/2026-05-10-round-342-cardano-submit-api-web-server.md`
-  - Round 342 — cardano-submit-api web server: ---.
+  - Round 342 — cardano-submit-api web server: **Date:** 2026-05-10.
 - `docs/operational-runs/2026-05-10-round-343-cardano-submit-api-localtxsubmission-wiring.md`
-  - Round 343 — cardano-submit-api LocalTxSubmission wiring: ---.
+  - Round 343 — cardano-submit-api LocalTxSubmission wiring: **Date:** 2026-05-10.
 - `docs/operational-runs/2026-05-10-round-344-cardano-submit-api-prometheus-metrics.md`
-  - Round 344 — cardano-submit-api Prometheus metrics: ---.
+  - Round 344 — cardano-submit-api Prometheus metrics: **Date:** 2026-05-10.
 - `docs/operational-runs/2026-05-10-round-345-cardano-submit-api-comparison-harness.md`
-  - Round 345 — cardano-submit-api comparison harness: ---.
+  - Round 345 — cardano-submit-api comparison harness: **Date:** 2026-05-10.
 - `docs/operational-runs/2026-05-10-round-347-storage-trim-after-slot.md`
-  - Round 347 — ImmutableStore::trim_after_slot extension: ---.
+  - Round 347 — ImmutableStore::trim_after_slot extension: **Date:** 2026-05-10.
 - `docs/operational-runs/2026-05-10-round-398-dep-audit-tracerenv-decision.md`
-  - Round 398 — Dependency audit + TracerEnv decision (R398-R410 cardano-tracer arc prep): ---.
+  - Round 398 — Dependency audit + TracerEnv decision (R398-R410 cardano-tracer arc prep): **Date:** 2026-05-10.
 - `docs/operational-runs/2026-05-10-round-411-arc-plan-r411-r430.md`
-  - R411-R430 — cardano-tracer completion arc plan: ---.
+  - R411-R430 — cardano-tracer completion arc plan: **Date:** 2026-05-10.
 - `docs/operational-runs/2026-05-10-round-428-r411-r427-closure.md`
-  - R428 — R411-R427 closure: cardano-tracer trace-forwarder pipe end-to-end runnable: ---.
+  - R428 — R411-R427 closure: cardano-tracer trace-forwarder pipe end-to-end runnable: **Date:** 2026-05-10.
 - `docs/operational-runs/2026-05-10-round-430-r411-r430-closure.md`
-  - R430 — R411-R430 closeout: ---.
+  - R430 — R411-R430 closeout: **Date:** 2026-05-10.
 - `docs/operational-runs/2026-05-11-round-446-snapshot-converter-format-design.md`
-  - R446 — snapshot-converter format-version design scaffolding: ---.
+  - R446 — snapshot-converter format-version design scaffolding: **Date:** 2026-05-11.
 - `docs/operational-runs/2026-05-11-round-459-data-point-arc-closure.md`
-  - R459 — DataPoint sub-protocol arc closure: ---.
+  - R459 — DataPoint sub-protocol arc closure: **Date:** 2026-05-11.
 - `docs/operational-runs/2026-05-11-round-463-logs-rotator-soak.md`
-  - R463 — Logs Rotator + file-write soak: ---.
+  - R463 — Logs Rotator + file-write soak: **Date:** 2026-05-11.
 - `docs/operational-runs/2026-05-11-round-473-data-point-forwarder-arc-closure.md`
-  - R473 — DataPoint forwarder-side arc closure: ---.
+  - R473 — DataPoint forwarder-side arc closure: **Date:** 2026-05-11.
 - `docs/operational-runs/2026-05-11-round-475-tx-output-count-helpers.md`
-  - R475 — per-era TxBody output-count helpers: ---.
+  - R475 — per-era TxBody output-count helpers: **Date:** 2026-05-11.
 - `docs/operational-runs/2026-05-11-round-476-hasanalysis-block-impl.md`
-  - R476 — `HasAnalysis for Block` + Byron EBB registry: ---.
+  - R476 — `HasAnalysis for Block` + Byron EBB registry: **Date:** 2026-05-11.
 - `docs/operational-runs/2026-05-11-round-477-hasanalysis-dispatch-coverage.md`
-  - R477 — HasAnalysis Allegra / Mary / Alonzo dispatch coverage: ---.
+  - R477 — HasAnalysis Allegra / Mary / Alonzo dispatch coverage: **Date:** 2026-05-11.
 - `docs/operational-runs/2026-05-11-round-478-hasanalysis-babbage-conway-coverage.md`
-  - R478 — HasAnalysis Babbage / Conway dispatch coverage: ---.
+  - R478 — HasAnalysis Babbage / Conway dispatch coverage: **Date:** 2026-05-11.
 - `docs/operational-runs/2026-05-11-round-479-analysis-runner-core.md`
-  - R479 — `analysis::runner` dispatch core + 4 shipped handlers: ---.
+  - R479 — `analysis::runner` dispatch core + 4 shipped handlers: **Date:** 2026-05-11.
 - `docs/operational-runs/2026-05-11-round-480-remaining-block-only-handlers.md`
-  - R480 — remaining block-only handlers + ledger-state deferral hardening: ---.
+  - R480 — remaining block-only handlers + ledger-state deferral hardening: **Date:** 2026-05-11.
 - `docs/operational-runs/2026-05-11-round-481-db-analyser-hasanalysis-arc-closure.md`
-  - R481 — db-analyser HasAnalysis arc closure: ---.
+  - R481 — db-analyser HasAnalysis arc closure: **Date:** 2026-05-11.
 - `docs/operational-runs/2026-05-11-round-482-immutable-store-iter-after.md`
-  - R482 — `ImmutableStore::iter_after` streaming iterator: ---.
+  - R482 — `ImmutableStore::iter_after` streaming iterator: **Date:** 2026-05-11.
 - `docs/operational-runs/2026-05-11-round-483-agents-refresh.md`
-  - R483 — AGENTS.md refresh for db-analyser + storage: ---.
+  - R483 — AGENTS.md refresh for db-analyser + storage: **Date:** 2026-05-11.
 - `docs/operational-runs/2026-05-11-round-484-db-truncater-agents-refresh.md`
-  - R484 — db-truncater AGENTS.md + parity-matrix refresh: ---.
+  - R484 — db-truncater AGENTS.md + parity-matrix refresh: **Date:** 2026-05-11.
 - `docs/operational-runs/2026-05-11-round-485-checknothunks-permanent-carve-out.md`
-  - R485 — `CheckNoThunksEvery` permanent carve-out: ---.
+  - R485 — `CheckNoThunksEvery` permanent carve-out: **Date:** 2026-05-11.
 - `docs/operational-runs/2026-05-11-round-486-per-block-event-shape-enrichment.md`
-  - R486 — Per-block event-shape enrichment: ---.
+  - R486 — Per-block event-shape enrichment: **Date:** 2026-05-11.
 - `docs/operational-runs/2026-05-11-round-487-cardano-tracer-agents-refresh.md`
-  - R487 — cardano-tracer AGENTS.md refresh: ---.
+  - R487 — cardano-tracer AGENTS.md refresh: **Date:** 2026-05-11.
 - `docs/operational-runs/2026-05-11-round-488-trace-ledger-processing-handler.md`
-  - R488 — `TraceLedgerProcessing` handler: ---.
+  - R488 — `TraceLedgerProcessing` handler: **Date:** 2026-05-11.
 - `docs/operational-runs/2026-05-11-round-489-benchmark-ledger-ops-handler.md`
-  - R489 — `BenchmarkLedgerOps` handler: ---.
+  - R489 — `BenchmarkLedgerOps` handler: **Date:** 2026-05-11.
 - `docs/operational-runs/2026-05-11-round-490-get-block-application-metrics-handler.md`
-  - R490 — `GetBlockApplicationMetrics` handler: ---.
+  - R490 — `GetBlockApplicationMetrics` handler: **Date:** 2026-05-11.
 - `docs/operational-runs/2026-05-11-round-491-store-ledger-state-at-handler.md`
-  - R491 — `StoreLedgerStateAt` handler: ---.
+  - R491 — `StoreLedgerStateAt` handler: **Date:** 2026-05-11.
 - `docs/operational-runs/2026-05-11-round-493-repro-mempool-and-forge-handler.md`
-  - R493 — `ReproMempoolAndForge` handler: ---.
+  - R493 — `ReproMempoolAndForge` handler: **Date:** 2026-05-11.
 - `docs/operational-runs/2026-05-11-round-494-decode-inputs-forensic-fidelity.md`
-  - R494 — `Tx::decode_inputs` + R493 fidelity bump: ---.
+  - R494 — `Tx::decode_inputs` + R493 fidelity bump: **Date:** 2026-05-11.
 - `docs/operational-runs/2026-05-11-round-495-decode-fee-and-ttl-forensic-fidelity.md`
-  - R495 — `Tx::decode_fee` + `Tx::decode_ttl` forensic-fidelity bump: ---.
+  - R495 — `Tx::decode_fee` + `Tx::decode_ttl` forensic-fidelity bump: **Date:** 2026-05-11.
 - `docs/operational-runs/2026-05-11-round-496-emit-traces-body.md`
-  - R496 — `Block::emit_traces` body + R488 trace-event wiring: ---.
+  - R496 — `Block::emit_traces` body + R488 trace-event wiring: **Date:** 2026-05-11.
 - `docs/operational-runs/2026-05-11-round-497-to-raw-tx-bytes-fidelity.md`
-  - R497 — `Tx::to_raw_tx_bytes` — last forensic-fidelity gap: ---.
+  - R497 — `Tx::to_raw_tx_bytes` — last forensic-fidelity gap: **Date:** 2026-05-11.
 - `docs/operational-runs/2026-05-11-round-498-cardano-submit-api-r344-doc-refresh.md`
-  - R498 — cardano-submit-api AGENTS.md + parity-matrix refresh: ---.
+  - R498 — cardano-submit-api AGENTS.md + parity-matrix refresh: **Date:** 2026-05-11.
 - `docs/operational-runs/2026-05-12-round-498-plan-sync-rs-split-arc.md`
   - Historical R498-R510 sync split plan, now reflected in crates/node/sync/ and adjacent runtime crates.
   - Kept as operational evidence; current instructions live in the crate AGENTS.md files.
 - `docs/operational-runs/2026-05-12-round-498-sync-error-extraction.md`
-  - R498 — `SyncError` extraction (sync.rs R-arc, slice 1/13): ---.
+  - R498 — `SyncError` extraction (sync.rs R-arc, slice 1/13): **Date:** 2026-05-12.
 - `docs/operational-runs/2026-05-12-round-499-shelley-decoders-extraction.md`
-  - R499 — Shelley decoders extraction (sync.rs R-arc, slice 2/13): ---.
+  - R499 — Shelley decoders extraction (sync.rs R-arc, slice 2/13): **Date:** 2026-05-12.
 - `docs/operational-runs/2026-05-12-round-500-block-fetch-extraction.md`
-  - R500 — BlockFetch primitives extraction (sync.rs R-arc, slice 3/13): ---.
+  - R500 — BlockFetch primitives extraction (sync.rs R-arc, slice 3/13): **Date:** 2026-05-12.
 - `docs/operational-runs/2026-05-12-round-500-end-to-end-integration-tests-ledger-state-handlers.md`
-  - R500 — End-to-end integration tests for ledger-state-dependent handlers: ---.
+  - R500 — End-to-end integration tests for ledger-state-dependent handlers: **Date:** 2026-05-12.
 - `docs/operational-runs/2026-05-12-round-501-limit-truncation-integration-coverage.md`
-  - R501 — Limit truncation integration coverage: ---.
+  - R501 — Limit truncation integration coverage: **Date:** 2026-05-12.
 - `docs/operational-runs/2026-05-12-round-501-typed-chain-sync-extraction.md`
-  - R501 — typed ChainSync API extraction (sync.rs R-arc, slice 4/13): ---.
+  - R501 — typed ChainSync API extraction (sync.rs R-arc, slice 4/13): **Date:** 2026-05-12.
 - `docs/operational-runs/2026-05-12-round-502-verbose-flag-wire-up.md`
-  - R502 — `config.verbose` wire-up: ---.
+  - R502 — `config.verbose` wire-up: **Date:** 2026-05-12.
 - `docs/operational-runs/2026-05-12-round-503-select-db-start-point-wire-up.md`
-  - R503 — `config.select_db` wire-up for `At(slot)` start point: ---.
+  - R503 — `config.select_db` wire-up for `At(slot)` start point: **Date:** 2026-05-12.
 - `docs/operational-runs/2026-05-17-round-504-db-synthesizer-r2-genesis-loading.md`
   - Round 504 — db-synthesizer Phase 4 R2: genesis / config loading: **Date:** 2026-05-17.
 - `docs/operational-runs/2026-05-18-round-505-block-producer-opcert-issuer-vkey.md`
@@ -2233,41 +2286,41 @@
 - `docs/operational-runs/2026-05-19-round-518-db-analyser-dump-block-relocation.md`
   - Round 518 - db-analyser dump-block relocation: **Date:** 2026-05-19.
 - `docs/operational-runs/2026-05-19-round-519-cardano-cli-helper-delegation.md`
-  - Round 519 - cardano-cli helper delegation: Date: 2026-05-19.
+  - Operational run record: Round 519 - cardano-cli helper delegation.
 - `docs/operational-runs/2026-05-19-round-520-node-cardano-cli-runner-delegation.md`
-  - Round 520 - node cardano-cli runner delegation: Date: 2026-05-19.
+  - Operational run record: Round 520 - node cardano-cli runner delegation.
 - `docs/operational-runs/2026-05-19-round-521-config-node-role-policy-extraction.md`
-  - Round 521 - config node-role policy extraction: Date: 2026-05-19.
+  - Operational run record: Round 521 - config node-role policy extraction.
 - `docs/operational-runs/2026-05-19-round-522-config-preflight-extraction.md`
-  - Round 522 - config preflight extraction: Date: 2026-05-19.
+  - Operational run record: Round 522 - config preflight extraction.
 - `docs/operational-runs/2026-05-20-round-523-query-helper-delegation.md`
-  - Round 523 - query helper delegation: Date: 2026-05-20.
+  - Operational run record: Round 523 - query helper delegation.
 - `docs/operational-runs/2026-05-20-round-524-lsq-wire-plan-delegation.md`
-  - Round 524 - LSQ wire plan delegation: Date: 2026-05-20.
+  - Operational run record: Round 524 - LSQ wire plan delegation.
 - `docs/operational-runs/2026-05-20-round-525-submit-tx-hex-parser-delegation.md`
-  - Round 525 - submit-tx hex parser delegation: Date: 2026-05-20.
+  - Operational run record: Round 525 - submit-tx hex parser delegation.
 - `docs/operational-runs/2026-05-20-round-526-submit-tx-socket-driver-delegation.md`
-  - Round 526 - submit-tx socket driver delegation: Date: 2026-05-20.
+  - Operational run record: Round 526 - submit-tx socket driver delegation.
 - `docs/operational-runs/2026-05-20-round-527-current-epoch-lsq-plan-delegation.md`
-  - Round 527 - current-epoch LSQ plan delegation: Date: 2026-05-20.
+  - Operational run record: Round 527 - current-epoch LSQ plan delegation.
 - `docs/operational-runs/2026-05-20-round-528-era-history-lsq-plan-delegation.md`
-  - Round 528 - era-history LSQ plan delegation: Date: 2026-05-20.
+  - Operational run record: Round 528 - era-history LSQ plan delegation.
 - `docs/operational-runs/2026-05-20-round-529-parameterized-lsq-plan-delegation.md`
-  - R529 Parameterized LSQ Plan Delegation: Date: 2026-05-20.
+  - Operational run record: R529 Parameterized LSQ Plan Delegation.
 - `docs/operational-runs/2026-05-20-round-530-db-synthesizer-state-threading.md`
-  - R530 db-synthesizer State Threading: Date: 2026-05-20.
+  - Operational run record: R530 db-synthesizer State Threading.
 - `docs/operational-runs/2026-05-20-round-531-db-synthesizer-praos-forge.md`
-  - R531 db-synthesizer Praos Forge: Date: 2026-05-20.
+  - Operational run record: R531 db-synthesizer Praos Forge.
 - `docs/operational-runs/2026-05-20-round-532-db-synthesizer-stake-sigma.md`
-  - R532 db-synthesizer Stake Sigma: Date: 2026-05-20.
+  - Operational run record: R532 db-synthesizer Stake Sigma.
 - `docs/operational-runs/2026-05-20-round-533-tx-generator-command-parser.md`
-  - R533 tx-generator Command Parser: Date: 2026-05-20.
+  - Operational run record: R533 tx-generator Command Parser.
 - `docs/operational-runs/2026-05-20-round-534-tx-generator-testnet-discovery.md`
-  - R534 tx-generator Testnet Discovery: Date: 2026-05-20.
+  - Operational run record: R534 tx-generator Testnet Discovery.
 - `docs/operational-runs/2026-05-20-round-535-tx-generator-nix-service.md`
-  - R535 tx-generator NixService: Date: 2026-05-20.
+  - Operational run record: R535 tx-generator NixService.
 - `docs/operational-runs/2026-05-20-round-536-tx-generator-compiler.md`
-  - R536 tx-generator Compiler: Date: 2026-05-20.
+  - Operational run record: R536 tx-generator Compiler.
 - `docs/operational-runs/2026-05-20-round-537-tx-generator-script-aeson.md`
   - Operational run note for the R537 tx-generator Script/Aeson slice.
   - Records JSON parser scope, validation, and remaining script execution gates.
@@ -2303,7 +2356,7 @@
   - Operational run note for the R550 tx-generator json_highlevel execution slice.
   - Documents config mangling, Plutus data preflight, generated-script execution, remaining boundaries, and focused validation.
 - `docs/operational-runs/2026-05-20-round-551-tx-generator-start-protocol.md`
-  - Round 551 - tx-generator StartProtocol env wiring: Date: 2026-05-20.
+  - Operational run record: Round 551 - tx-generator StartProtocol env wiring.
 - `docs/operational-runs/2026-05-20-round-552-tx-generator-secure-genesis.md`
   - Round 552 evidence record for the tx-generator SecureGenesis implementation, including upstream references, code changes, focused validation, and remaining gaps.
 - `docs/operational-runs/2026-05-20-round-553-tx-generator-selftest.md`
@@ -2345,53 +2398,53 @@
   - Operational evidence for R568 tx-generator DumpToFile Alonzo key-witnessed rendering.
   - Lists upstream references, renderer boundaries, validation commands, and remaining Plutus/soak gaps.
 - `docs/operational-runs/2026-05-20-round-569-tx-generator-dumptofile-babbage-key-witness.md`
-  - Round 569 tx-generator DumpToFile Babbage key-witnessed: ---.
+  - Operational run record: Round 569 tx-generator DumpToFile Babbage key-witnessed.
 - `docs/operational-runs/2026-05-20-round-570-tx-generator-dumptofile-conway-key-witness.md`
-  - Round 570 tx-generator DumpToFile Conway key-witnessed: ---.
+  - Operational run record: Round 570 tx-generator DumpToFile Conway key-witnessed.
 - `docs/operational-runs/2026-05-20-round-571-tx-generator-dumptofile-mary-multi-asset.md`
-  - Round 571 tx-generator DumpToFile Mary multi-asset values: ---.
+  - Operational run record: Round 571 tx-generator DumpToFile Mary multi-asset values.
 - `docs/operational-runs/2026-05-20-round-572-tx-generator-dumptofile-plutus-data-redeemers.md`
-  - Round 572 tx-generator DumpToFile TxDats + Redeemers: ---.
+  - Operational run record: Round 572 tx-generator DumpToFile TxDats + Redeemers.
 - `docs/operational-runs/2026-05-20-round-573-tx-generator-dumptofile-inline-datum.md`
-  - Round 573 tx-generator DumpToFile inline datums: ---.
+  - Operational run record: Round 573 tx-generator DumpToFile inline datums.
 - `docs/operational-runs/2026-05-20-round-574-tx-generator-dumptofile-plutus-reference-script.md`
-  - Round 574 tx-generator DumpToFile Plutus reference scripts: ---.
+  - Operational run record: Round 574 tx-generator DumpToFile Plutus reference scripts.
 - `docs/operational-runs/2026-05-20-round-575-tx-generator-dumptofile-plutus-witness-script.md`
-  - Round 575 tx-generator DumpToFile Plutus witness-set scripts: ---.
+  - Operational run record: Round 575 tx-generator DumpToFile Plutus witness-set scripts.
 - `docs/operational-runs/2026-05-20-round-576-tx-generator-dumptofile-conway-treasury.md`
-  - Round 576 tx-generator DumpToFile Conway treasury fields: ---.
+  - Operational run record: Round 576 tx-generator DumpToFile Conway treasury fields.
 - `docs/operational-runs/2026-05-20-round-577-tx-generator-dumptofile-conway-voting-procedures.md`
-  - Round 577 tx-generator DumpToFile Conway VotingProcedures map: ---.
+  - Operational run record: Round 577 tx-generator DumpToFile Conway VotingProcedures map.
 - `docs/operational-runs/2026-05-20-round-578-tx-generator-dumptofile-native-script.md`
-  - Round 578 tx-generator DumpToFile native-script Timelock Show: ---.
+  - Operational run record: Round 578 tx-generator DumpToFile native-script Timelock Show.
 - `docs/operational-runs/2026-05-20-round-579-tx-generator-dumptofile-bootstrap-witness.md`
-  - Round 579 tx-generator DumpToFile bootstrap witnesses: ---.
+  - Operational run record: Round 579 tx-generator DumpToFile bootstrap witnesses.
 - `docs/operational-runs/2026-05-20-round-580-tx-generator-dumptofile-proposal-procedures.md`
-  - Round 580 tx-generator DumpToFile Conway ProposalProcedures: ---.
+  - Operational run record: Round 580 tx-generator DumpToFile Conway ProposalProcedures.
 - `docs/operational-runs/2026-05-20-round-581-tx-generator-dumptofile-treasury-withdrawals.md`
-  - Round 581 tx-generator DumpToFile TreasuryWithdrawals GovAction: ---.
+  - Operational run record: Round 581 tx-generator DumpToFile TreasuryWithdrawals GovAction.
 - `docs/operational-runs/2026-05-20-round-582-tx-generator-dumptofile-update-committee.md`
-  - Round 582 tx-generator DumpToFile UpdateCommittee GovAction: ---.
+  - Operational run record: Round 582 tx-generator DumpToFile UpdateCommittee GovAction.
 - `docs/operational-runs/2026-05-20-round-583-tx-generator-dumptofile-parameter-change.md`
-  - Round 583 tx-generator DumpToFile ParameterChange GovAction: ---.
+  - Operational run record: Round 583 tx-generator DumpToFile ParameterChange GovAction.
 - `docs/operational-runs/2026-05-20-round-584-tx-generator-dumptofile-pparams-coin-word.md`
-  - Round 584 tx-generator DumpToFile PParamsUpdate Coin + Word fields: ---.
+  - Operational run record: Round 584 tx-generator DumpToFile PParamsUpdate Coin + Word fields.
 - `docs/operational-runs/2026-05-20-round-585-tx-generator-dumptofile-pparams-intervals.md`
-  - Round 585 tx-generator DumpToFile PParamsUpdate interval fields: ---.
+  - Operational run record: Round 585 tx-generator DumpToFile PParamsUpdate interval fields.
 - `docs/operational-runs/2026-05-20-round-586-tx-generator-dumptofile-pparams-prices-exunits.md`
-  - Round 586 tx-generator DumpToFile PParamsUpdate Prices + OrdExUnits: ---.
+  - Operational run record: Round 586 tx-generator DumpToFile PParamsUpdate Prices + OrdExUnits.
 - `docs/operational-runs/2026-05-20-round-587-tx-generator-dumptofile-pparams-voting-thresholds.md`
-  - Round 587 tx-generator DumpToFile PParamsUpdate voting thresholds: ---.
+  - Operational run record: Round 587 tx-generator DumpToFile PParamsUpdate voting thresholds.
 - `docs/operational-runs/2026-05-20-round-588-tx-generator-dumptofile-pparams-cost-models.md`
-  - Round 588 tx-generator DumpToFile PParamsUpdate CostModels: ---.
+  - Operational run record: Round 588 tx-generator DumpToFile PParamsUpdate CostModels.
 - `docs/operational-runs/2026-05-20-round-589-tx-generator-dumptofile-bytestring-mnemonics.md`
-  - Round 589 tx-generator DumpToFile ByteString mnemonic escapes: ---.
+  - Operational run record: Round 589 tx-generator DumpToFile ByteString mnemonic escapes.
 - `docs/operational-runs/2026-05-20-round-590-tx-generator-dumptofile-bootstrap-witness-key-hash.md`
-  - Round 590 tx-generator DumpToFile bootstrap-witness key-hash sort: ---.
+  - Operational run record: Round 590 tx-generator DumpToFile bootstrap-witness key-hash sort.
 - `docs/operational-runs/2026-05-20-round-591-remove-inert-ntn-feature.md`
-  - Round 591 Remove inert ntn feature flag (A1 partial): ---.
+  - Operational run record: Round 591 Remove inert ntn feature flag (A1 partial).
 - `docs/operational-runs/2026-05-20-round-592-remove-inert-plutus-feature.md`
-  - Round 592 Remove inert plutus feature flag from yggdrasil-ledger (A1 partial): ---.
+  - Operational run record: Round 592 Remove inert plutus feature flag from yggdrasil-ledger (A1 partial).
 - `docs/operational-runs/2026-05-20-round-594-cardano-submit-api-typed-rejection-scaffold.md`
   - Operational run record: Round 594 cardano-submit-api typed rejection scaffold (A5 Phase-2).
 - `docs/operational-runs/2026-05-20-round-595-shelley-ledger-pred-failure-scaffold.md`
@@ -2734,282 +2787,406 @@
   - Operational run record: Round 770 A1 closeout — remove the inert ntc feature flag.
 - `docs/operational-runs/2026-05-22-round-771-a6-filetree-refresh.md`
   - Operational run record: Round 771 A6 closeout — refresh the filetree manifest.
+- `docs/operational-runs/2026-05-22-round-772-cardano-testnet-on-chain-params.md`
+  - Operational run record: Round 772 cardano-testnet UpdateTimestamps default fix + TestnetOnChainParams.
+- `docs/operational-runs/2026-05-22-round-773-cardano-testnet-key-pair.md`
+  - Operational run record: Round 773 cardano-testnet KeyPair + key-kind types (runtime_types.rs).
+- `docs/operational-runs/2026-05-22-round-774-cardano-testnet-leadership-slot.md`
+  - Operational run record: Round 774 cardano-testnet LeadershipSlot + default IPv4.
+- `docs/operational-runs/2026-05-22-round-775-cardano-testnet-key-records.md`
+  - Operational run record: Round 775 cardano-testnet key-record types.
+- `docs/operational-runs/2026-05-22-round-776-cardano-testnet-option-records.md`
+  - Operational run record: Round 776 cardano-testnet era-free option records.
+- `docs/operational-runs/2026-05-22-round-777-cardano-testnet-paths.md`
+  - Operational run record: Round 777 cardano-testnet path conventions (paths.rs).
+- `docs/operational-runs/2026-05-22-round-778-cardano-testnet-filepath.md`
+  - Operational run record: Round 778 cardano-testnet temporary-path helpers (filepath.rs).
+- `docs/operational-runs/2026-05-22-round-779-cardano-testnet-sprocket.md`
+  - Operational run record: Round 779 cardano-testnet Sprocket + socket-path helpers.
+- `docs/operational-runs/2026-05-22-round-780-cardano-testnet-default-scripts.md`
+  - Operational run record: Round 780 cardano-testnet default test scripts (defaults.rs).
+- `docs/operational-runs/2026-05-22-round-781-cardano-testnet-wait-period.md`
+  - Operational run record: Round 781 cardano-testnet TestnetWaitPeriod (components/query.rs).
+- `docs/operational-runs/2026-05-22-round-782-cardano-testnet-configuration-constants.md`
+  - Operational run record: Round 782 cardano-testnet configuration constants.
+- `docs/operational-runs/2026-05-22-round-783-cardano-testnet-era-tags.md`
+  - Operational run record: Round 783 cardano-testnet era-tag enums.
+- `docs/operational-runs/2026-05-22-round-784-cardano-testnet-creation-options.md`
+  - Operational run record: Round 784 cardano-testnet TestnetCreationOptions.
+- `docs/operational-runs/2026-05-22-round-785-cardano-testnet-cli-options.md`
+  - Operational run record: Round 785 cardano-testnet CLI-options records.
+- `docs/operational-runs/2026-05-22-round-787-dmq-node-mempool-seq.md`
+  - Operational run record: Round 787 dmq-node MempoolSeq signature store.
+- `docs/operational-runs/2026-05-22-round-788-dmq-node-inbound-v2-types.md`
+  - Operational run record: Round 788 dmq-node inbound-V2 foundational types.
+- `docs/operational-runs/2026-05-22-round-789-dmq-node-tx-decision.md`
+  - Operational run record: Round 789 dmq-node inbound-V2 TxDecision record.
+- `docs/operational-runs/2026-05-22-round-790-dmq-node-peer-tx-state.md`
+  - Operational run record: Round 790 dmq-node inbound-V2 PeerTxState.
+- `docs/operational-runs/2026-05-22-round-791-dmq-node-shared-tx-state.md`
+  - Operational run record: Round 791 dmq-node inbound-V2 SharedTxState.
+- `docs/operational-runs/2026-05-22-round-792-dmq-node-ref-counts.md`
+  - Operational run record: Round 792 dmq-node inbound-V2 RefCountDiff + emptyTxDecision.
+- `docs/operational-runs/2026-05-22-round-793-dmq-node-split-acknowledged.md`
+  - Operational run record: Round 793 dmq-node inbound-V2 splitAcknowledgedTxIds.
+- `docs/operational-runs/2026-05-22-round-794-dmq-node-filter-active-peers.md`
+  - Operational run record: Round 794 dmq-node inbound-V2 filterActivePeers.
+- `docs/operational-runs/2026-05-22-round-795-dmq-node-acknowledge-tx-ids.md`
+  - Operational run record: Round 795 dmq-node inbound-V2 acknowledgeTxIds.
+- `docs/operational-runs/2026-05-22-round-796-dmq-node-tick-timed-txs.md`
+  - Operational run record: Round 796 dmq-node inbound-V2 tickTimedTxs.
+- `docs/operational-runs/2026-05-22-round-797-dmq-node-pick-peer-step.md`
+  - Operational run record: Round 797 dmq-node inbound-V2 pickTxsToDownload per-peer step.
+- `docs/operational-runs/2026-05-22-round-798-dmq-node-pick-txs-to-download.md`
+  - Operational run record: Round 798 dmq-node inbound-V2 pickTxsToDownload.
+- `docs/operational-runs/2026-05-22-round-799-dmq-node-make-decisions.md`
+  - Operational run record: Round 799 dmq-node inbound-V2 makeDecisions orchestrator.
+- `docs/operational-runs/2026-05-22-round-800-dmq-node-received-tx-ids.md`
+  - Operational run record: Round 800 dmq-node inbound-V2 receivedTxIdsImpl.
+- `docs/operational-runs/2026-05-22-round-801-dmq-node-collect-txs.md`
+  - Operational run record: Round 801 dmq-node inbound-V2 collectTxsImpl.
+- `docs/operational-runs/2026-05-22-round-805-dmq-node-registry.md`
+  - Operational run record: Round 805 dmq-node inbound-V2 channel registry.
+- `docs/operational-runs/2026-05-22-round-806-dmq-node-stake-pools.md`
+  - Operational run record: Round 806 dmq-node StakePools monitoring record.
+- `docs/operational-runs/2026-05-22-round-808-dmq-node-peer-sharing-policy.md`
+  - Operational run record: Round 808 dmq-node peer-sharing policy foundations.
+- `docs/operational-runs/2026-05-22-round-809-dmq-node-peer-sharing-api.md`
+  - Operational run record: Round 809 dmq-node PeerSharingAPI.
+- `docs/operational-runs/2026-05-22-round-810-dmq-node-delta-q.md`
+  - Operational run record: Round 810 dmq-node DeltaQ Distribution.
+- `docs/operational-runs/2026-05-22-round-811-dmq-node-gsv.md`
+  - Operational run record: Round 811 dmq-node DeltaQ GSV / PeerGSV.
+- `docs/operational-runs/2026-05-22-round-812-dmq-node-keep-alive-registry.md`
+  - Operational run record: Round 812 dmq-node KeepAliveRegistry.
+- `docs/operational-runs/2026-05-22-round-813-dmq-node-peer-sharing-registry.md`
+  - Operational run record: Round 813 dmq-node PeerSharingRegistry.
+- `docs/operational-runs/2026-05-22-round-814-dmq-node-node-kernel.md`
+  - Operational run record: Round 814 dmq-node NodeKernel.
+- `docs/operational-runs/2026-05-22-round-815-dmq-node-ntn-bundle.md`
+  - Operational run record: Round 815 dmq-node NtN mux bundle.
+- `docs/operational-runs/2026-05-22-round-816-dmq-node-ntc-bundle.md`
+  - Operational run record: Round 816 dmq-node NtC mux bundle.
+- `docs/operational-runs/2026-05-22-round-818-cardano-testnet-runtime-options-parser.md`
+  - Operational run record: Round 818 cardano-testnet runtime-options parser.
+- `docs/operational-runs/2026-05-22-round-819-cardano-testnet-genesis-options-parser.md`
+  - Operational run record: Round 819 cardano-testnet genesis-options parser.
+- `docs/operational-runs/2026-05-22-round-820-cardano-testnet-node-and-params-parsers.md`
+  - Operational run record: Round 820 cardano-testnet node + on-chain-params parsers.
+- `docs/operational-runs/2026-05-22-round-821-cardano-testnet-creation-options-parser.md`
+  - Operational run record: Round 821 cardano-testnet creation-options parser.
+- `docs/operational-runs/2026-05-22-round-822-cardano-testnet-from-env-parser.md`
+  - Operational run record: Round 822 cardano-testnet from-env parser.
+- `docs/operational-runs/2026-05-22-round-823-cardano-testnet-opts-composition.md`
+  - Operational run record: Round 823 cardano-testnet opts composition.
+- `docs/operational-runs/2026-05-26-round-824-workspace-audit-cleanup.md`
+  - Operational run record: Round 824 workspace audit cleanup.
+- `docs/operational-runs/2026-05-26-round-825-cardano-testnet-command-payload.md`
+  - Operational run record: Round 825 - cardano-testnet Command payload wiring.
+- `docs/operational-runs/2026-05-26-round-826-cardano-testnet-runtime-records.md`
+  - Operational run record: Round 826 - cardano-testnet runtime record carriers.
+- `docs/operational-runs/2026-05-26-round-827-cardano-testnet-process-cli-keys.md`
+  - Operational run record: Round 827 - cardano-testnet Process/Cli key command builders.
+- `docs/operational-runs/2026-05-26-round-828-cardano-testnet-process-cli-transaction.md`
+  - Operational run record: Round 828 - cardano-testnet Process/Cli transaction sign/submit builders.
+- `docs/operational-runs/2026-05-26-round-829-cardano-testnet-process-cli-drep.md`
+  - Operational run record: Round 829 - cardano-testnet Process/Cli DRep pure builders.
+- `docs/operational-runs/2026-05-26-round-830-cardano-testnet-process-cli-spo.md`
+  - Operational run record: Round 830 - cardano-testnet Process/Cli SPO pure builders.
+- `docs/operational-runs/2026-05-26-round-831-cardano-testnet-process-cli-transaction-txbody.md`
+  - Operational run record: Round 831 - cardano-testnet Process/Cli transaction txbody builders.
+- `docs/operational-runs/2026-05-26-round-832-cardano-testnet-process-run.md`
+  - Operational run record: Round 832 - cardano-testnet Process/Run wrappers.
+- `docs/operational-runs/2026-05-26-round-833-cardano-testnet-process-run-io.md`
+  - Operational run record: Round 833 - cardano-testnet Process/RunIO plan-json helpers.
+- `docs/operational-runs/2026-05-26-round-834-cardano-testnet-process-run-io-exec.md`
+  - Operational run record: Round 834 - cardano-testnet Process/RunIO execution helpers.
+- `docs/operational-runs/2026-05-26-round-835-cardano-testnet-property-util.md`
+  - Operational run record: Round 835 - cardano-testnet Property/Util pure helpers.
+- `docs/operational-runs/2026-05-26-round-836-cardano-testnet-property-assert.md`
+  - Operational run record: Round 836 - cardano-testnet Property/Assert pure helpers.
+- `docs/operational-runs/2026-05-26-round-837-cardano-testnet-property-assert-cli.md`
+  - Operational run record: Round 837 - cardano-testnet Property/Assert CLI-backed stake-pool assertion.
+- `docs/operational-runs/2026-05-26-round-838-cardano-testnet-property-run.md`
+  - Operational run record: Round 838 - cardano-testnet Property/Run pure harness-control helpers.
+- `docs/operational-runs/2026-05-26-round-839-cardano-testnet-property-run-planning.md`
+  - Operational run record: Round 839 - cardano-testnet Property/Run testnetProperty planning.
 - `docs/operational-runs/archive/2026-04-27-round-151-chainsync-pool-wiring.md`
-  - Round 151 — ChainSync worker pool runtime wiring + observability: Date: 2026-04-27.
+  - Operational run record: Round 151 — ChainSync worker pool runtime wiring + observability.
 - `docs/operational-runs/archive/2026-04-27-round-152-cardano-cli-tip-parity.md`
-  - Round 152 — cardano-cli `query tip` reports live chain state: Date: 2026-04-27.
+  - Operational run record: Round 152 — cardano-cli `query tip` reports live chain state.
 - `docs/operational-runs/archive/2026-04-27-round-153-network-aware-interpreter.md`
-  - Round 153 — Network-aware Interpreter / SystemStart for preview/preprod/mainnet: Date: 2026-04-27.
+  - Operational run record: Round 153 — Network-aware Interpreter / SystemStart for preview/preprod/mainnet.
 - `docs/operational-runs/archive/2026-04-27-round-154-era-pv-transition-signal.md`
-  - Round 154 — Era-PV pairing admits hard-fork transition signal: Date: 2026-04-27.
+  - Operational run record: Round 154 — Era-PV pairing admits hard-fork transition signal.
 - `docs/operational-runs/archive/2026-04-27-round-155-tx-size-fee-parity.md`
-  - Round 155 — Alonzo+ tx-size for fee/max excludes `is_valid` byte (preview unblocked): Date: 2026-04-27.
+  - Operational run record: Round 155 — Alonzo+ tx-size for fee/max excludes `is_valid` byte (preview unblocked).
 - `docs/operational-runs/archive/2026-04-27-round-156-pparams-query-parity.md`
-  - Round 156 — `cardano-cli query protocol-parameters` end-to-end: Date: 2026-04-27.
+  - Operational run record: Round 156 — `cardano-cli query protocol-parameters` end-to-end.
 - `docs/operational-runs/archive/2026-04-28-round-157-utxo-query-parity.md`
-  - Round 157 — `cardano-cli query utxo` end-to-end (whole / address / tx-in): Date: 2026-04-28.
+  - Operational run record: Round 157 — `cardano-cli query utxo` end-to-end (whole / address / tx-in).
 - `docs/operational-runs/archive/2026-04-28-round-158-tx-mempool-parity.md`
-  - Round 158 — `cardano-cli query tx-mempool` end-to-end (LocalTxMonitor parity): Date: 2026-04-28.
+  - Operational run record: Round 158 — `cardano-cli query tx-mempool` end-to-end (LocalTxMonitor parity).
 - `docs/operational-runs/archive/2026-04-28-round-159-alonzo-pparams.md`
-  - Round 159 — Alonzo PParams shape (24-element list) for preview's `query protocol-parameters`: Date: 2026-04-28.
+  - Operational run record: Round 159 — Alonzo PParams shape (24-element list) for preview's `query protocol-parameters`.
 - `docs/operational-runs/archive/2026-04-28-round-160-babbage-pparams-pv-era.md`
-  - Round 160 — Babbage PParams + PV-aware era classification: Date: 2026-04-28.
+  - Operational run record: Round 160 — Babbage PParams + PV-aware era classification.
 - `docs/operational-runs/archive/2026-04-28-round-161-conway-pparams.md`
-  - Round 161 — Conway PParams shape (31-element list) + PV→era regression tests: Date: 2026-04-28.
+  - Operational run record: Round 161 — Conway PParams shape (31-element list) + PV→era regression tests.
 - `docs/operational-runs/archive/2026-04-28-round-162-era-history-coverage.md`
-  - Round 162 — Era-history coverage to slot 2^48 + bignum relativeTime: Date: 2026-04-28.
+  - Operational run record: Round 162 — Era-history coverage to slot 2^48 + bignum relativeTime.
 - `docs/operational-runs/archive/2026-04-28-round-163-stake-query-dispatchers.md`
-  - Round 163 — Era-specific query dispatchers (stake-pools, stake-distribution, stake-address-info, genesis-config): Date: 2026-04-28.
+  - Operational run record: Round 163 — Era-specific query dispatchers (stake-pools, stake-distribution, stake-address-info, genesis-config).
 - `docs/operational-runs/archive/2026-04-28-round-164-cumulative-parity-sweep.md`
-  - Round 164 — Cumulative cardano-cli operational parity sweep: Date: 2026-04-28.
+  - Operational run record: Round 164 — Cumulative cardano-cli operational parity sweep.
 - `docs/operational-runs/archive/2026-04-28-round-165-sync-speed.md`
-  - Round 165 — Sync-speed default tuning (batch_size 10 → 30): Date: 2026-04-28.
+  - Operational run record: Round 165 — Sync-speed default tuning (batch_size 10 → 30).
 - `docs/operational-runs/archive/2026-04-28-round-166-rollback-recovery-fix.md`
-  - Round 166 — Initial-sync rollback fix unblocks batch_size > 30: Date: 2026-04-28.
+  - Operational run record: Round 166 — Initial-sync rollback fix unblocks batch_size > 30.
 - `docs/operational-runs/archive/2026-04-28-round-167-mid-sync-rollback-epoch-fixup.md`
-  - Round 167 — Mid-sync rollback epoch fixup + extended preview verification: Date: 2026-04-28.
+  - Operational run record: Round 167 — Mid-sync rollback epoch fixup + extended preview verification.
 - `docs/operational-runs/archive/2026-04-28-round-168-bootstrap-peer-metric.md`
-  - Round 168 — Bootstrap-peer registry promotion fixes `/metrics` peer counts: Date: 2026-04-28.
+  - Operational run record: Round 168 — Bootstrap-peer registry promotion fixes `/metrics` peer counts.
 - `docs/operational-runs/archive/2026-04-28-round-169-current-era-metric.md`
-  - Round 169 — Current-era Prometheus gauge: Date: 2026-04-28.
+  - Operational run record: Round 169 — Current-era Prometheus gauge.
 - `docs/operational-runs/archive/2026-04-28-round-170-per-era-block-counters.md`
-  - Round 170 — Per-era applied-block counters: Date: 2026-04-28.
+  - Operational run record: Round 170 — Per-era applied-block counters.
 - `docs/operational-runs/archive/2026-04-28-round-171-stake-pool-params-tag14.md`
-  - Round 171 — Upstream `GetStakePoolParams` (era-specific tag 14) dispatcher: Date: 2026-04-28.
+  - Operational run record: Round 171 — Upstream `GetStakePoolParams` (era-specific tag 14) dispatcher.
 - `docs/operational-runs/archive/2026-04-28-round-172-pool-state-tag17.md`
-  - Round 172 — Upstream `GetPoolState` (era-specific tag 17) dispatcher: Date: 2026-04-28.
+  - Operational run record: Round 172 — Upstream `GetPoolState` (era-specific tag 17) dispatcher.
 - `docs/operational-runs/archive/2026-04-28-round-173-stake-snapshots-tag18.md`
-  - Round 173 — Upstream `GetStakeSnapshots` (era-specific tag 18) dispatcher: Date: 2026-04-28.
+  - Operational run record: Round 173 — Upstream `GetStakeSnapshots` (era-specific tag 18) dispatcher.
 - `docs/operational-runs/archive/2026-04-28-round-174-decoder-strictness-fixes.md`
-  - Round 174 — Decoder strictness fixes (R171/R172/R173 follow-up): Date: 2026-04-28.
+  - Operational run record: Round 174 — Decoder strictness fixes (R171/R172/R173 follow-up).
 - `docs/operational-runs/archive/2026-04-28-round-175-registry-cooling-completeness.md`
-  - Round 175 — Registry-cooling completeness for R168 hooks: Date: 2026-04-28.
+  - Operational run record: Round 175 — Registry-cooling completeness for R168 hooks.
 - `docs/operational-runs/archive/2026-04-28-round-176-decoder-strictness-cleanup.md`
-  - Round 176 — Decoder strictness cleanup (R174 sweep completion): Date: 2026-04-28.
+  - Operational run record: Round 176 — Decoder strictness cleanup (R174 sweep completion).
 - `docs/operational-runs/archive/2026-04-28-round-177-filtered-delegations-fixes.md`
-  - Round 177 — `encode_filtered_delegations_and_rewards` correctness fixes: Date: 2026-04-28.
+  - Operational run record: Round 177 — `encode_filtered_delegations_and_rewards` correctness fixes.
 - `docs/operational-runs/archive/2026-04-28-round-178-era-floor-env-var.md`
-  - Round 178 — `YGG_LSQ_ERA_FLOOR` bypasses cardano-cli's era gate: Date: 2026-04-28.
+  - Operational run record: Round 178 — `YGG_LSQ_ERA_FLOOR` bypasses cardano-cli's era gate.
 - `docs/operational-runs/archive/2026-04-29-round-179-era-blockage-end-to-end.md`
-  - Round 179 — Era blockage end-to-end fix: Date: 2026-04-29.
+  - Operational run record: Round 179 — Era blockage end-to-end fix.
 - `docs/operational-runs/archive/2026-04-29-round-180-conway-governance-queries.md`
-  - Round 180 — Conway governance LSQ queries (constitution, gov-state, drep-state, account-state): Date: 2026-04-29.
+  - Operational run record: Round 180 — Conway governance LSQ queries (constitution, gov-state, drep-state, account-state).
 - `docs/operational-runs/archive/2026-04-30-round-181-drep-state-map-shape.md`
-  - Round 181 — DRepState LSQ Map shape: Date: 2026-04-30.
+  - Operational run record: Round 181 — DRepState LSQ Map shape.
 - `docs/operational-runs/archive/2026-04-30-round-182-committee-members-state.md`
-  - Round 182 — Conway `committee-state` LSQ dispatcher (tag 27): Date: 2026-04-30.
+  - Operational run record: Round 182 — Conway `committee-state` LSQ dispatcher (tag 27).
 - `docs/operational-runs/archive/2026-04-30-round-183-future-pparams.md`
-  - Round 183 — Conway `future-pparams` LSQ dispatcher (tag 33): Date: 2026-04-30.
+  - Operational run record: Round 183 — Conway `future-pparams` LSQ dispatcher (tag 33).
 - `docs/operational-runs/archive/2026-04-30-round-184-drep-spo-stake-distr.md`
-  - Round 184 — Conway DRep / SPO stake-distribution + filtered-vote-delegatees LSQ dispatchers (tags 26, 28, 30): Date: 2026-04-30.
+  - Operational run record: Round 184 — Conway DRep / SPO stake-distribution + filtered-vote-delegatees LSQ dispatchers (tags 26, 28, 30).
 - `docs/operational-runs/archive/2026-04-30-round-185-proposals-default-vote.md`
-  - Round 185 — Conway `proposals` + `stake-pool-default-vote` LSQ dispatchers (tags 31, 35): Date: 2026-04-30.
+  - Operational run record: Round 185 — Conway `proposals` + `stake-pool-default-vote` LSQ dispatchers (tags 31, 35).
 - `docs/operational-runs/archive/2026-04-30-round-186-stake-deleg-deposits-pool-distr2.md`
-  - Round 186 — Conway `GetStakeDelegDeposits` + `GetPoolDistr2` LSQ dispatchers (tags 22, 36): Date: 2026-04-30.
+  - Operational run record: Round 186 — Conway `GetStakeDelegDeposits` + `GetPoolDistr2` LSQ dispatchers (tags 22, 36).
 - `docs/operational-runs/archive/2026-04-30-round-187-ratify-state.md`
-  - Round 187 — Conway `ratify-state` LSQ dispatcher (tag 32) end-to-end: Date: 2026-04-30.
+  - Operational run record: Round 187 — Conway `ratify-state` LSQ dispatcher (tag 32) end-to-end.
 - `docs/operational-runs/archive/2026-04-30-round-188-gov-state.md`
-  - Round 188 — Conway `gov-state` body shape (tag 24) end-to-end: Date: 2026-04-30.
+  - Operational run record: Round 188 — Conway `gov-state` body shape (tag 24) end-to-end.
 - `docs/operational-runs/archive/2026-04-30-round-189-ledger-peer-snapshot.md`
-  - Round 189 — Conway `ledger-peer-snapshot` LSQ dispatcher (tag 34) end-to-end: Date: 2026-04-30.
+  - Operational run record: Round 189 — Conway `ledger-peer-snapshot` LSQ dispatcher (tag 34) end-to-end.
 - `docs/operational-runs/archive/2026-04-30-round-190-comprehensive-audit.md`
-  - Round 190 — Comprehensive cardano-cli parity audit + tag 12/13 dispatchers: Date: 2026-04-30.
+  - Operational run record: Round 190 — Comprehensive cardano-cli parity audit + tag 12/13 dispatchers.
 - `docs/operational-runs/archive/2026-04-30-round-191-live-tip-slot-plumbing.md`
-  - Round 191 — Live tip-slot plumbing into `protocol-state` + `ledger-peer-snapshot`: Date: 2026-04-30.
+  - Operational run record: Round 191 — Live tip-slot plumbing into `protocol-state` + `ledger-peer-snapshot`.
 - `docs/operational-runs/archive/2026-04-30-round-192-chain-dep-state-context.md`
-  - Round 192 — `ChainDepStateContext` snapshot infrastructure (Phase A.1): Date: 2026-04-30.
+  - Operational run record: Round 192 — `ChainDepStateContext` snapshot infrastructure (Phase A.1).
 - `docs/operational-runs/archive/2026-04-30-round-193-gov-relation-live.md`
-  - Round 193 — Live `GovRelation` from `EnactState` (Phase A.3): Date: 2026-04-30.
+  - Operational run record: Round 193 — Live `GovRelation` from `EnactState` (Phase A.3).
 - `docs/operational-runs/archive/2026-04-30-round-194-stake-distributions-live.md`
-  - Round 194 — Live DRep / SPO stake distributions + stake-deleg deposits (Phase A.4): Date: 2026-04-30.
+  - Operational run record: Round 194 — Live DRep / SPO stake distributions + stake-deleg deposits (Phase A.4).
 - `docs/operational-runs/archive/2026-04-30-round-195-ledger-peer-pools-live.md`
-  - Round 195 — Live ledger-peer-snapshot pool list (Phase A.5): Date: 2026-04-30.
+  - Operational run record: Round 195 — Live ledger-peer-snapshot pool list (Phase A.5).
 - `docs/operational-runs/archive/2026-04-30-round-196-ocert-sidecar-load.md`
-  - Round 196 — OCert counter sidecar load (Phase A.2 partial): Date: 2026-04-30.
+  - Operational run record: Round 196 — OCert counter sidecar load (Phase A.2 partial).
 - `docs/operational-runs/archive/2026-04-30-round-197-nonce-sidecar-codec.md`
-  - Round 197 — `NonceEvolutionState` CBOR codec + sidecar load (Phase A.2 next): Date: 2026-04-30.
+  - Operational run record: Round 197 — `NonceEvolutionState` CBOR codec + sidecar load (Phase A.2 next).
 - `docs/operational-runs/archive/2026-04-30-round-198-nonce-sidecar-persist.md`
-  - Round 198 — Sync-side persist for `nonce_state` (Phase A.2 final): Date: 2026-04-30.
+  - Operational run record: Round 198 — Sync-side persist for `nonce_state` (Phase A.2 final).
 - `docs/operational-runs/archive/2026-04-30-round-199-200-multipeer-verified-and-apply-histogram.md`
-  - Rounds 199 + 200 — Multi-peer livelock verified resolved + apply-batch duration histogram: Date: 2026-04-30.
+  - Operational run record: Rounds 199 + 200 — Multi-peer livelock verified resolved + apply-batch duration histogram.
 - `docs/operational-runs/archive/2026-04-30-round-201-pin-refresh.md`
-  - Round 201 — Audit baseline pin refresh (Phase E.1, 4 of 5 drifted pins): Date: 2026-04-30.
+  - Operational run record: Round 201 — Audit baseline pin refresh (Phase E.1, 4 of 5 drifted pins).
 - `docs/operational-runs/archive/2026-04-30-round-202-stake-snapshots-infra.md`
-  - Round 202 — `stake_snapshots` snapshot infrastructure (Phase A.7 partial): Date: 2026-04-30.
+  - Operational run record: Round 202 — `stake_snapshots` snapshot infrastructure (Phase A.7 partial).
 - `docs/operational-runs/archive/2026-04-30-round-203-stake-snapshots-sidecar.md`
-  - Round 203 — `stake_snapshots.cbor` sidecar persist + load (Phase A.7 final): Date: 2026-04-30.
+  - Operational run record: Round 203 — `stake_snapshots.cbor` sidecar persist + load (Phase A.7 final).
 - `docs/operational-runs/archive/2026-04-30-round-204-gov-action-state-shape-adapter.md`
-  - Round 204 — gov-state OMap proposals shape adapter (Phase A.3 closed): Date: 2026-04-30.
+  - Operational run record: Round 204 — gov-state OMap proposals shape adapter (Phase A.3 closed).
 - `docs/operational-runs/archive/2026-04-30-round-205-comprehensive-verification.md`
-  - Round 205 — Comprehensive end-to-end verification (post-Phase A): Date: 2026-04-30.
+  - Operational run record: Round 205 — Comprehensive end-to-end verification (post-Phase A).
 - `docs/operational-runs/archive/2026-04-30-round-208-mainnet-boot-smoke.md`
-  - Round 208 — Mainnet boot smoke test: Date: 2026-04-30.
+  - Operational run record: Round 208 — Mainnet boot smoke test.
 - `docs/operational-runs/archive/2026-04-30-round-210-mainnet-stall-diagnostic.md`
-  - Round 210 — Mainnet stall diagnostic (apply-side ruled out): Date: 2026-04-30.
+  - Operational run record: Round 210 — Mainnet stall diagnostic (apply-side ruled out).
 - `docs/operational-runs/archive/2026-04-30-round-211-mainnet-byron-ebb-hash-fix.md`
-  - Round 211 — Mainnet sync unblocked: Byron EBB hash + same-slot tolerance: Date: 2026-04-30.
+  - Operational run record: Round 211 — Mainnet sync unblocked: Byron EBB hash + same-slot tolerance.
 - `docs/operational-runs/archive/2026-04-30-round-212-mainnet-cardano-cli-verification.md`
-  - Round 212 — Mainnet operational verification with cardano-cli + sidecars: Date: 2026-04-30.
+  - Operational run record: Round 212 — Mainnet operational verification with cardano-cli + sidecars.
 - `docs/operational-runs/archive/2026-04-30-round-213-mux-egress-singlemsg-allow.md`
-  - Round 213 — Mux egress: allow single payloads larger than `EGRESS_SOFT_LIMIT`: Date: 2026-04-30.
+  - Operational run record: Round 213 — Mux egress: allow single payloads larger than `EGRESS_SOFT_LIMIT`.
 - `docs/operational-runs/archive/2026-04-30-round-214-getgenesisconfig-encoder.md`
-  - Round 214 — Phase A.6: GetGenesisConfig ShelleyGenesis serialiser: Date: 2026-04-30.
+  - Operational run record: Round 214 — Phase A.6: GetGenesisConfig ShelleyGenesis serialiser.
 - `docs/operational-runs/archive/2026-04-30-round-215-multinetwork-post-r214-regression.md`
-  - Round 215 — Multi-network regression verify post-R211/R212/R213/R214: Date: 2026-04-30.
+  - Operational run record: Round 215 — Multi-network regression verify post-R211/R212/R213/R214.
 - `docs/operational-runs/archive/2026-04-30-round-216-pin-refresh-r2.md`
-  - Round 216 — Phase E.1 pin refresh (round 2): Date: 2026-04-30.
+  - Operational run record: Round 216 — Phase E.1 pin refresh (round 2).
 - `docs/operational-runs/archive/2026-04-30-round-217-fetch-batch-histogram.md`
-  - Round 217 — Phase C.2 prerequisite: fetch-batch duration histogram: Date: 2026-04-30.
+  - Operational run record: Round 217 — Phase C.2 prerequisite: fetch-batch duration histogram.
 - `docs/operational-runs/archive/2026-04-30-round-218-mainnet-multipeer-fetch-rate.md`
-  - Round 218 — Operational verification: multi-peer dispatch on mainnet (R217 follow-up): Date: 2026-04-30.
+  - Operational run record: Round 218 — Operational verification: multi-peer dispatch on mainnet (R217 follow-up).
 - `docs/operational-runs/archive/2026-04-30-round-220-server-tip-envelope-fix.md`
-  - Round 220 — Full P2P functionality: server-side ChainSync `Tip` envelope fix: Date: 2026-04-30.
+  - Operational run record: Round 220 — Full P2P functionality: server-side ChainSync `Tip` envelope fix.
 - `docs/operational-runs/archive/2026-04-30-round-221-chainprovider-tip-point-split.md`
-  - Round 221 — ChainProvider trait contract: separate `chain_tip` (Tip envelope) from `chain_tip_point` (bare Point): Date: 2026-04-30.
+  - Operational run record: Round 221 — ChainProvider trait contract: separate `chain_tip` (Tip envelope) from `chain_tip_point` (bare Point).
 - `docs/operational-runs/archive/2026-04-30-round-222-peer-lifetime-stats-foundation.md`
-  - Round 222 — Phase D.2 first slice: PeerLifetimeStats foundation: Date: 2026-04-30.
+  - Operational run record: Round 222 — Phase D.2 first slice: PeerLifetimeStats foundation.
 - `docs/operational-runs/archive/2026-04-30-round-223-peer-lifetime-stats-wiring.md`
-  - Round 223 — Phase D.2 second slice: wire lifetime stats + aggregate Prometheus exposition: Date: 2026-04-30.
+  - Operational run record: Round 223 — Phase D.2 second slice: wire lifetime stats + aggregate Prometheus exposition.
 - `docs/operational-runs/archive/2026-04-30-round-224-peer-lifetime-bytes-in.md`
-  - Round 224 — Phase D.2 third slice: lifetime bytes-in counter: Date: 2026-04-30.
+  - Operational run record: Round 224 — Phase D.2 third slice: lifetime bytes-in counter.
 - `docs/operational-runs/archive/2026-05-01-round-225-rollback-depth-histogram.md`
-  - Round 225 — Phase D.1 first slice: rollback-depth observability: Date: 2026-05-01.
+  - Operational run record: Round 225 — Phase D.1 first slice: rollback-depth observability.
 - `docs/operational-runs/archive/2026-05-01-round-226-peer-lifetime-unique-handshakes.md`
-  - Round 226 — Phase D.2 enhancement: unique-peers + handshakes-total counters: Date: 2026-05-01.
+  - Operational run record: Round 226 — Phase D.2 enhancement: unique-peers + handshakes-total counters.
 - `docs/operational-runs/archive/2026-05-01-round-234-blockfetch-server-bytes-out.md`
-  - Round 234 — Phase D.2 bytes-out (initial slice): BlockFetch server bytes-served counter: Date: 2026-05-01.
+  - Operational run record: Round 234 — Phase D.2 bytes-out (initial slice): BlockFetch server bytes-served counter.
 - `docs/operational-runs/archive/2026-05-01-round-236-stake-distribution-live-pooldistr.md`
-  - Round 236 — Phase A.3 LSQ data plumbing: live `PoolDistr` for stake-distribution & SPO-stake-distribution: Date: 2026-05-01.
+  - Operational run record: Round 236 — Phase A.3 LSQ data plumbing: live `PoolDistr` for stake-distribution & SPO-stake-distribution.
 - `docs/operational-runs/archive/2026-05-01-round-237-pooldistr2-egress-rollback.md`
-  - Round 237 — `GetPoolDistr2`, low-volume egress counters, and rollback replay slice: Date: 2026-05-01.
+  - Operational run record: Round 237 — `GetPoolDistr2`, low-volume egress counters, and rollback replay slice.
 - `docs/operational-runs/archive/2026-05-01-round-238-rollback-sidecar-hardening.md`
-  - Round 238 - Rollback ChainDepState Sidecar Parity Hardening: Date: 2026-05-01.
+  - Operational run record: Round 238 - Rollback ChainDepState Sidecar Parity Hardening.
 - `docs/operational-runs/archive/2026-05-01-round-239-cardano-base-fixture-refresh.md`
-  - Round 239 - Phase E.1 cardano-base fixture refresh: Date: 2026-05-01.
+  - Operational run record: Round 239 - Phase E.1 cardano-base fixture refresh.
 - `docs/operational-runs/archive/2026-05-01-round-240-parallel-blockfetch-soak-automation.md`
-  - Round 240 - Parallel BlockFetch soak automation: Date: 2026-05-01.
+  - Operational run record: Round 240 - Parallel BlockFetch soak automation.
 - `docs/operational-runs/archive/2026-05-01-round-241-devcontainer-preprod-blockfetch-smoke.md`
-  - Round 241 - Devcontainer preprod BlockFetch smoke: Date: 2026-05-01.
+  - Operational run record: Round 241 - Devcontainer preprod BlockFetch smoke.
 - `docs/operational-runs/archive/2026-05-01-round-242-upstream-cardano-node-tests-harness.md`
-  - Round 242 - Upstream cardano-node-tests harness smoke: Date: 2026-05-01.
+  - Operational run record: Round 242 - Upstream cardano-node-tests harness smoke.
 - `docs/operational-runs/archive/2026-05-01-round-243-cardano-ledger-pin-refresh.md`
-  - Round 243 - cardano-ledger import-only pin refresh: Date: 2026-05-01.
+  - Operational run record: Round 243 - cardano-ledger import-only pin refresh.
 - `docs/operational-runs/archive/2026-05-01-round-244-byron-genesis-hash.md`
-  - Round 244 - Byron genesis hash verification: Date: 2026-05-01.
+  - Operational run record: Round 244 - Byron genesis hash verification.
 - `docs/operational-runs/archive/2026-05-01-round-245-cardano-ledger-bbody-gov-refresh.md`
-  - Round 245 - cardano-ledger BBODY/GOV drift refresh: Date: 2026-05-01.
+  - Operational run record: Round 245 - cardano-ledger BBODY/GOV drift refresh.
 - `docs/operational-runs/archive/2026-05-02-round-246-preview-plutus-well-formedness-parity.md`
-  - Round 246 - preview Plutus well-formedness parity: Date: 2026-05-02.
+  - Operational run record: Round 246 - preview Plutus well-formedness parity.
 - `docs/operational-runs/archive/2026-05-02-round-247-origin-blockfetch-prefix.md`
-  - Round 247 - Origin BlockFetch prefix preservation: Date: 2026-05-02.
+  - Operational run record: Round 247 - Origin BlockFetch prefix preservation.
 - `docs/operational-runs/archive/2026-05-02-round-248-tpraos-overlay-vrf.md`
   - Round 248 — TPraos overlay VRF parity: Added Shelley-Alonzo TPraos overlay schedule handling to the verified sync.
 - `docs/operational-runs/archive/2026-05-05-round-249-cumulative-pin-refresh.md`
-  - Round 249 - Cumulative pin refresh + parallel-test isolation: Date: 2026-05-05.
+  - Operational run record: Round 249 - Cumulative pin refresh + parallel-test isolation.
 - `docs/operational-runs/archive/2026-05-06-round-258-multipeer-default-graduation.md`
-  - Round 258 — Default `max_concurrent_block_fetch_peers` graduated 1 → 2: Date: 2026-05-06.
+  - Operational run record: Round 258 — Default `max_concurrent_block_fetch_peers` graduated 1 → 2.
 - `docs/operational-runs/archive/2026-05-06-round-259-tpraos-overlay-vrf-diagnostics.md`
-  - Round 259 — TPraos active-overlay VRF diagnostic enrichment: Date: 2026-05-06.
+  - Operational run record: Round 259 — TPraos active-overlay VRF diagnostic enrichment.
 - `docs/operational-runs/archive/2026-05-06-round-260-cddl-codegen-removal.md`
-  - Round 260 — Removed `tools/cddl-codegen` (hand-coded CBOR is authoritative): Date: 2026-05-06.
+  - Operational run record: Round 260 — Removed `tools/cddl-codegen` (hand-coded CBOR is authoritative).
 - `docs/operational-runs/archive/2026-05-06-round-261-r253-narrowing.md`
-  - Round 261 — R253 root-cause narrowing for preprod TPraos VRF gap: Date: 2026-05-06.
+  - Operational run record: Round 261 — R253 root-cause narrowing for preprod TPraos VRF gap.
 - `docs/operational-runs/archive/2026-05-06-round-262-r253-final-narrowing-nonce-evolution.md`
-  - Round 262 — R253 final narrowing: TPraos epoch nonce evolution: Date: 2026-05-06.
+  - Operational run record: Round 262 — R253 final narrowing: TPraos epoch nonce evolution.
 - `docs/operational-runs/archive/2026-05-06-round-265-gap-bp-confirmed-fresh-capture.md`
-  - Round 265 — Gap BP confirmed against R263+R264 build (preview Plutus V2 budget overrun): Date: 2026-05-06.
+  - Operational run record: Round 265 — Gap BP confirmed against R263+R264 build (preview Plutus V2 budget overrun).
 - `docs/operational-runs/archive/2026-05-06-round-266b-gap-bp-builtin-trace-narrowing.md`
-  - Round 266b — Gap BP per-builtin trace + step-cost narrowing: drift moved out of the costing surface: Date: 2026-05-06.
+  - Operational run record: Round 266b — Gap BP per-builtin trace + step-cost narrowing: drift moved out of the costing surface.
 - `docs/operational-runs/archive/2026-05-06-round-266c-gap-bp-script-context-shape.md`
-  - Round 266c — Gap BP ScriptContext byte-shape audit: top-level structure verified, drift confirmed deeper: Date: 2026-05-06.
+  - Operational run record: Round 266c — Gap BP ScriptContext byte-shape audit: top-level structure verified, drift confirmed deeper.
 - `docs/operational-runs/archive/2026-05-06-round-266d-gap-bp-cost-model-loading-fixture.md`
-  - Round 266d — Gap BP narrowing: cost-model loading + variant selection ruled out: Date: 2026-05-06.
+  - Operational run record: Round 266d — Gap BP narrowing: cost-model loading + variant selection ruled out.
 - `docs/operational-runs/archive/2026-05-06-round-269j-state-governance-and-committee-extraction.md`
-  - Round 269j+k — `state.rs` per-rule split: tenth + eleventh slices (`GovernanceActionState` + Committee*): Date: 2026-05-06.
+  - Operational run record: Round 269j+k — `state.rs` per-rule split: tenth + eleventh slices (`GovernanceActionState` + Committee*).
 - `docs/operational-runs/archive/2026-05-06-round-269q-state-eras-byron-extraction.md`
-  - Round 269q — `state.rs` per-era split: seventeenth slice (Byron apply): Date: 2026-05-06.
+  - Operational run record: Round 269q — `state.rs` per-era split: seventeenth slice (Byron apply).
 - `docs/operational-runs/archive/2026-05-06-round-269r-state-eras-shelley-extraction.md`
-  - Round 269r — `state.rs` per-era split: eighteenth slice (Shelley apply): Date: 2026-05-06.
+  - Operational run record: Round 269r — `state.rs` per-era split: eighteenth slice (Shelley apply).
 - `docs/operational-runs/archive/2026-05-06-round-269s-state-eras-allegra-extraction.md`
-  - Round 269s — `state.rs` per-era split: nineteenth slice (Allegra apply): Date: 2026-05-06.
+  - Operational run record: Round 269s — `state.rs` per-era split: nineteenth slice (Allegra apply).
 - `docs/operational-runs/archive/2026-05-06-round-269t-state-eras-mary-extraction.md`
-  - Round 269t — `state.rs` per-era split: twentieth slice (Mary apply): Date: 2026-05-06.
+  - Operational run record: Round 269t — `state.rs` per-era split: twentieth slice (Mary apply).
 - `docs/operational-runs/archive/2026-05-06-round-269u-state-eras-alonzo-extraction.md`
-  - Round 269u — `state.rs` per-era split: twenty-first slice (Alonzo apply): Date: 2026-05-06.
+  - Operational run record: Round 269u — `state.rs` per-era split: twenty-first slice (Alonzo apply).
 - `docs/operational-runs/archive/2026-05-06-round-269v-state-eras-babbage-extraction.md`
-  - Round 269v — `state.rs` per-era split: twenty-second slice (Babbage apply): Date: 2026-05-06.
+  - Operational run record: Round 269v — `state.rs` per-era split: twenty-second slice (Babbage apply).
 - `docs/operational-runs/archive/2026-05-06-round-269w-state-eras-conway-extraction.md`
-  - Round 269w — `state.rs` per-era split: twenty-third slice (Conway apply) — Phase γ per-era arc complete: Date: 2026-05-06.
+  - Operational run record: Round 269w — `state.rs` per-era split: twenty-third slice (Conway apply) — Phase γ per-era arc complete.
 - `docs/operational-runs/archive/2026-05-06-round-270a-governor-types-extraction.md`
-  - Round 270a — `governor.rs` per-domain split: first slice (Types): Date: 2026-05-06.
+  - Operational run record: Round 270a — `governor.rs` per-domain split: first slice (Types).
 - `docs/operational-runs/archive/2026-05-06-round-270b-governor-churn-extraction.md`
-  - Round 270b — `governor.rs` per-domain split: second slice (Churn + Fetch mode): Date: 2026-05-06.
+  - Operational run record: Round 270b — `governor.rs` per-domain split: second slice (Churn + Fetch mode).
 - `docs/operational-runs/archive/2026-05-06-round-270c-governor-peer-metric-extraction.md`
-  - Round 270c — `governor.rs` per-domain split: third slice (PeerMetric): Date: 2026-05-06.
+  - Operational run record: Round 270c — `governor.rs` per-domain split: third slice (PeerMetric).
 - `docs/operational-runs/archive/2026-05-06-round-270d-governor-state-extraction.md`
-  - Round 270d — `governor.rs` per-domain split: fourth slice (Governor state + decision functions): Date: 2026-05-06.
+  - Operational run record: Round 270d — `governor.rs` per-domain split: fourth slice (Governor state + decision functions).
 - `docs/operational-runs/archive/2026-05-06-round-270e-governor-counters-extraction.md`
-  - Round 270e — `governor.rs` per-domain split: fifth and final slice (Counters / outbound-connections / timeouts / ConnMgr counters) — R270 arc complete: Date: 2026-05-06.
+  - Operational run record: Round 270e — `governor.rs` per-domain split: fifth and final slice (Counters / outbound-connections / timeouts / ConnMgr counters) — R270 arc complete.
 - `docs/operational-runs/archive/2026-05-06-round-271a-runtime-governor-config-extraction.md`
-  - Round 271a — `runtime.rs` per-domain split: first slice (RuntimeGovernorConfig): Date: 2026-05-06.
+  - Operational run record: Round 271a — `runtime.rs` per-domain split: first slice (RuntimeGovernorConfig).
 - `docs/operational-runs/archive/2026-05-06-round-271b-runtime-block-producer-config-extraction.md`
-  - Round 271b — `runtime.rs` per-domain split: second slice (Block-producer config + shared state): Date: 2026-05-06.
+  - Operational run record: Round 271b — `runtime.rs` per-domain split: second slice (Block-producer config + shared state).
 - `docs/operational-runs/archive/2026-05-06-round-271c-runtime-ledger-judgement-extraction.md`
-  - Round 271c — `runtime.rs` per-domain split: third slice (LedgerJudgementSettings): Date: 2026-05-06.
+  - Operational run record: Round 271c — `runtime.rs` per-domain split: third slice (LedgerJudgementSettings).
 - `docs/operational-runs/archive/2026-05-06-round-271d-runtime-mempool-helpers-extraction.md`
-  - Round 271d — `runtime.rs` per-domain split: fourth slice (Mempool TxSubmission helpers): Date: 2026-05-06.
+  - Operational run record: Round 271d — `runtime.rs` per-domain split: fourth slice (Mempool TxSubmission helpers).
 - `docs/operational-runs/archive/2026-05-06-round-271e-runtime-tx-submission-service-extraction.md`
-  - Round 271e — `runtime.rs` per-domain split: fifth slice (TxSubmission2 service helpers): Date: 2026-05-06.
+  - Operational run record: Round 271e — `runtime.rs` per-domain split: fifth slice (TxSubmission2 service helpers).
 - `docs/operational-runs/archive/2026-05-06-round-271f-runtime-peer-session-extraction.md`
-  - Round 271f — `runtime.rs` per-domain split: sixth slice (NodeConfig + PeerSession + verified-sync request types): Date: 2026-05-06.
+  - Operational run record: Round 271f — `runtime.rs` per-domain split: sixth slice (NodeConfig + PeerSession + verified-sync request types).
 - `docs/operational-runs/archive/2026-05-06-round-271g-runtime-bootstrap-extraction.md`
-  - Round 271g — `runtime.rs` per-domain split: seventh slice (Bootstrap entry points): Date: 2026-05-06.
+  - Operational run record: Round 271g — `runtime.rs` per-domain split: seventh slice (Bootstrap entry points).
 - `docs/operational-runs/archive/2026-05-06-round-271h-runtime-keep-alive-extraction.md`
-  - Round 271h — `runtime.rs` per-domain split: eighth slice (KeepAliveScheduler + adjacent trace helpers): Date: 2026-05-06.
+  - Operational run record: Round 271h — `runtime.rs` per-domain split: eighth slice (KeepAliveScheduler + adjacent trace helpers).
 - `docs/operational-runs/archive/2026-05-06-round-271i-runtime-reconnecting-extraction-rollback.md`
-  - Round 271i — `runtime.rs` per-domain split: ninth slice ATTEMPT (ReconnectingRunState) — rolled back: Date: 2026-05-06.
+  - Operational run record: Round 271i — `runtime.rs` per-domain split: ninth slice ATTEMPT (ReconnectingRunState) — rolled back.
 - `docs/operational-runs/archive/2026-05-07-round-271i-revised-runtime-tracing-extraction.md`
-  - Round 271i (revised) — `runtime.rs` per-domain split: ninth slice (Trace-field builders): Date: 2026-05-07.
+  - Operational run record: Round 271i (revised) — `runtime.rs` per-domain split: ninth slice (Trace-field builders).
 - `docs/operational-runs/archive/2026-05-07-round-271j-runtime-reconnecting-extraction.md`
-  - Round 271j — `runtime.rs` per-domain split: tenth slice (ReconnectingRunState cluster): Date: 2026-05-07.
+  - Operational run record: Round 271j — `runtime.rs` per-domain split: tenth slice (ReconnectingRunState cluster).
 - `docs/operational-runs/archive/2026-05-07-round-271k-runtime-block-producer-loop-extraction.md`
-  - Round 271k — `runtime.rs` per-domain split: eleventh slice (Block-producer slot loop): Date: 2026-05-07.
+  - Operational run record: Round 271k — `runtime.rs` per-domain split: eleventh slice (Block-producer slot loop).
 - `docs/operational-runs/archive/2026-05-07-round-271l-runtime-governor-loop-extraction.md`
-  - Round 271l — `runtime.rs` per-domain split: twelfth slice (Governor loop): Date: 2026-05-07.
+  - Operational run record: Round 271l — `runtime.rs` per-domain split: twelfth slice (Governor loop).
 - `docs/operational-runs/archive/2026-05-07-round-271m-runtime-reconnecting-sync-extraction.md`
-  - Round 271m — `runtime.rs` per-domain split: thirteenth slice (Reconnecting verified-sync family): Date: 2026-05-07.
+  - Operational run record: Round 271m — `runtime.rs` per-domain split: thirteenth slice (Reconnecting verified-sync family).
 - `docs/operational-runs/archive/2026-05-07-round-271n-runtime-peer-management-extraction.md`
-  - Round 271n — `runtime.rs` per-domain split: fourteenth slice (Peer-management cluster): Date: 2026-05-07.
+  - Operational run record: Round 271n — `runtime.rs` per-domain split: fourteenth slice (Peer-management cluster).
 - `docs/operational-runs/archive/2026-05-07-round-271o-runtime-cm-actions-extraction.md`
-  - Round 271o — `runtime.rs` per-domain split: fifteenth slice (Connection-manager actions): Date: 2026-05-07.
+  - Operational run record: Round 271o — `runtime.rs` per-domain split: fifteenth slice (Connection-manager actions).
 - `docs/operational-runs/archive/2026-05-07-round-271p-runtime-forge-extraction.md`
-  - Round 271p — `runtime.rs` per-domain split: sixteenth slice (Forge / KES helpers): Date: 2026-05-07.
+  - Operational run record: Round 271p — `runtime.rs` per-domain split: sixteenth slice (Forge / KES helpers).
 - `docs/operational-runs/archive/2026-05-07-round-271q-runtime-ledger-peer-source-extraction.md`
-  - Round 271q — `runtime.rs` per-domain split: seventeenth slice (Ledger-peer-source bridges): Date: 2026-05-07.
+  - Operational run record: Round 271q — `runtime.rs` per-domain split: seventeenth slice (Ledger-peer-source bridges).
 - `docs/operational-runs/archive/2026-05-07-round-271r-runtime-sync-session-extraction.md`
-  - Round 271r — `runtime.rs` per-domain split: eighteenth slice (Sync-session helpers): Date: 2026-05-07.
+  - Operational run record: Round 271r — `runtime.rs` per-domain split: eighteenth slice (Sync-session helpers).
 - `docs/operational-runs/archive/2026-05-07-round-271s-runtime-final-folds.md`
-  - Round 271s — `runtime.rs` final folds (R271 closeout): Date: 2026-05-07.
+  - Operational run record: Round 271s — `runtime.rs` final folds (R271 closeout).
 - `docs/operational-runs/archive/2026-05-07-round-273a-praos-split.md`
-  - Round 273a — `praos.rs` split into `praos/{vrf,common}.rs`: Date: 2026-05-07.
+  - Operational run record: Round 273a — `praos.rs` split into `praos/{vrf,common}.rs`.
 - `docs/operational-runs/archive/2026-05-07-round-273b-nonce-split.md`
-  - Round 273b — `nonce.rs` split into `nonce/{derivation,evolution}.rs`: Date: 2026-05-07.
+  - Operational run record: Round 273b — `nonce.rs` split into `nonce/{derivation,evolution}.rs`.
 - `docs/operational-runs/archive/2026-05-07-round-273c-opcert-split.md`
-  - Round 273c — `opcert.rs` split into `opcert/{cert,counter}.rs`: Date: 2026-05-07.
+  - Operational run record: Round 273c — `opcert.rs` split into `opcert/{cert,counter}.rs`.
 - `docs/operational-runs/archive/2026-05-08-round-273d-mempool-queue-split.md`
-  - Round 273d — `mempool/queue.rs` split into `queue/{inner,shared}.rs`: Date: 2026-05-08.
+  - Operational run record: Round 273d — `mempool/queue.rs` split into `queue/{inner,shared}.rs`.
 - `docs/operational-runs/archive/2026-05-08-round-273e-mempool-tx-state-split.md`
-  - Round 273e — `mempool/tx_state.rs` split into `tx_state/{state,shared}.rs`: Date: 2026-05-08.
+  - Operational run record: Round 273e — `mempool/tx_state.rs` split into `tx_state/{state,shared}.rs`.
 - `docs/operational-runs/archive/2026-05-08-round-273f-diffusion-pipelining-split.md`
-  - Round 273f — `diffusion_pipelining.rs` split into `diffusion_pipelining/{identity,state}.rs`: Date: 2026-05-08.
+  - Operational run record: Round 273f — `diffusion_pipelining.rs` split into `diffusion_pipelining/{identity,state}.rs`.
 - `docs/operational-runs/archive/2026-05-08-round-273g-plutus-types-split.md`
-  - Round 273g — `plutus/types.rs` split into `types/{term,default_fun,runtime}.rs`: Date: 2026-05-08.
+  - Operational run record: Round 273g — `plutus/types.rs` split into `types/{term,default_fun,runtime}.rs`.
 - `docs/operational-runs/archive/2026-05-08-round-273h-plutus-cost-model-split.md`
-  - Round 273h — `plutus/cost_model.rs` split (extract step + expr + memory helpers): Date: 2026-05-08.
+  - Operational run record: Round 273h — `plutus/cost_model.rs` split (extract step + expr + memory helpers).
 - `docs/operational-runs/archive/2026-05-09-round-273-rename-strict-naming-parity.md`
   - Round 273-rename — strict naming-parity fix-up of R273b–i sub-modules: **Date:** 2026-05-09.
 - `docs/operational-runs/archive/2026-05-09-round-273i-plutus-flat-split.md`
-  - Round 273i — `plutus/flat.rs` split into `flat/{decoder,universe}.rs`: Date: 2026-05-09.
+  - Operational run record: Round 273i — `plutus/flat.rs` split into `flat/{decoder,universe}.rs`.
 - `docs/operational-runs/archive/2026-05-09-round-274-strict-mirror-discovery.md`
   - Round 274 — Strict-mirror discovery audit: **Date:** 2026-05-09.
 - `docs/operational-runs/archive/2026-05-09-round-275-strict-mirror-drift-guard.md`
@@ -3065,7 +3242,7 @@
 - `docs/parity-matrix.schema.json`
   - JSON data file for parity matrix.schema.
 - `docs/reference.md`
-  - Architecture &amp; parity: ---.
+  - Architecture &amp; parity: <div class="yg-hero" markdown="0">.
 - `docs/strict-mirror-audit.tsv`
   - Project file at docs/strict-mirror-audit.tsv.
 - `docs/upstream-haskell-files.txt`
@@ -3079,6 +3256,9 @@
   - Project file at scripts/audit-strict-mirror.py.
 - `scripts/backup_db.sh`
   - Shell helper script for backup db workflows.
+- `scripts/check-doc-status-headers.py`
+  - Stdlib-only validator for canonical status headers in living parity documents.
+  - Ensures classification, round ceiling, parity tag, and baseline fields stay aligned.
 - `scripts/check-fixture-manifest.py`
   - Project file at scripts/check-fixture-manifest.py.
 - `scripts/check-parity-matrix.py`
@@ -3247,7 +3427,7 @@
   - Subagent definition for mapping Rust behavior to the IntersectMBO/cardano-node Haskell reference.
   - Read-heavy specialist for protocol, ledger, Plutus, network, and storage parity comparison.
 - `.claude/agents/round-extractor.md`
-  - Mission: ---.
+  - Mission: You are a focused extraction specialist for Yggdrasil's R-arc rounds.
 - `.claude/commands/filetree-check.md`
   - Slash command running python .claude/scripts/filetree.py check.
   - Reports stale entries against .claude/filetree/manifest.json.
@@ -3260,7 +3440,7 @@
   - Slash command authoring a parity-plan template before substantive code edits.
   - Mirrors the Codex-style autoplanning gate for protocol-sensitive work.
 - `.claude/commands/round-doc.md`
-  - Round <RoundId> — <one-line scope>: ---.
+  - Round <RoundId> — <one-line scope>: Author `docs/operational-runs/$(date +%Y-%m-%d)-round-$1-$2.md` covering.
 - `.claude/commands/setup-reference.md`
   - Markdown documentation file at .claude/commands/setup-reference.md.
 - `.claude/filetree/FILETREE.md`
@@ -3299,71 +3479,71 @@
 - `.claude/skills/cardano-haskell-node/references/monitoring.md`
   - Monitoring with the New Tracing System: `cardano-node` 10.2+ uses the new tracing system. The legacy direct EKG/Prometheus.
 - `.claude/skills/cardano-haskell-node/references/sources/basics-cardano-key-pairs.md`
-  - Wallet address key pairs: ---.
+  - Wallet address key pairs: It's critical to understand the numerous cryptographic key pairs connected with Cardano, as well as the purpose of each key pair and best practices for se
 - `.claude/skills/cardano-haskell-node/references/sources/basics-consensus-staking.md`
-  - Understanding Consensus: ---.
+  - Understanding Consensus: Consensus is the process by which a majority opinion is reached by everyone who is involved in running the blockchain. Agreement must be made on which bloc
 - `.claude/skills/cardano-haskell-node/references/sources/basics-hardware-requirements.md`
   - Markdown documentation file at .claude/skills/cardano-haskell-node/references/sources/basics-hardware-requirements.md.
 - `.claude/skills/cardano-haskell-node/references/sources/basics-stake-pool-networking.md`
   - Markdown documentation file at .claude/skills/cardano-haskell-node/references/sources/basics-stake-pool-networking.md.
 - `.claude/skills/cardano-haskell-node/references/sources/block-producer-deployment.md`
-  - Issue the operational certificate: ---.
+  - Issue the operational certificate: :::info version reference.
 - `.claude/skills/cardano-haskell-node/references/sources/block-producer-generating-wallet-keys.md`
-  - Generate payment keys: ---.
+  - Generate payment keys: :::info version reference.
 - `.claude/skills/cardano-haskell-node/references/sources/block-producer-kes-agent.md`
-  - Setup: ---.
+  - Setup: By default, `cardano-node` reads the KES signing key directly from disk. The KES agent is a separate process that holds the signing key in mlocked RAM instead — it never tou
 - `.claude/skills/cardano-haskell-node/references/sources/block-producer-keys.md`
-  - Step 1 — Generate all keys on the air-gapped machine: ---.
+  - Step 1 — Generate all keys on the air-gapped machine: :::info version reference.
 - `.claude/skills/cardano-haskell-node/references/sources/block-producer-mithril-signer-configuration.md`
-  - Overview: ---.
+  - Overview: The Mithril signer is the component that signs snapshots of the blockchain state. It runs on the block producer because it needs access to the pool's `operational certifi
 - `.claude/skills/cardano-haskell-node/references/sources/block-producer-register-stake-address.md`
-  - Create the registration certificate: ---.
+  - Create the registration certificate: :::info version reference.
 - `.claude/skills/cardano-haskell-node/references/sources/block-producer-register-stake-pool.md`
-  - Create pool metadata: ---.
+  - Create pool metadata: :::info version reference.
 - `.claude/skills/cardano-haskell-node/references/sources/cardano-components.md`
-  - The software stack: ---.
+  - The software stack: Cardano is a layered, formally specified blockchain. Each layer has a clear responsibility, and the boundaries between them are defined in mathematical specific
 - `.claude/skills/cardano-haskell-node/references/sources/deployment-audit-your-node.md`
-  - What the script does :: ---.
+  - What the script does :: In order to check if your node configuration is correct, you can run an audit script that checks SecOps basic settings, and Cardano node compliance (topolog
 - `.claude/skills/cardano-haskell-node/references/sources/deployment-hardening-server.md`
-  - 1. Non-root user: ---.
+  - 1. Non-root user: This guide covers the baseline security hardening for a Cardano stake pool server running Ubuntu 22.04 LTS. Apply it to each machine in your setup: relays, block
 - `.claude/skills/cardano-haskell-node/references/sources/deployment-improve-grafana-security.md`
-  - Option 1 — SSH tunnel (simplest, no public exposure): ---.
+  - Option 1 — SSH tunnel (simplest, no public exposure): By default Grafana listens on port 3000 with HTTP and local password auth. This page covers three layers of improvement: restr
 - `.claude/skills/cardano-haskell-node/references/sources/governance-on-chain-polls.md`
-  - CIP-0094 - Poll participation: ---.
+  - CIP-0094 - Poll participation: :::warning Legacy mechanism.
 - `.claude/skills/cardano-haskell-node/references/sources/governance-spo-governance.md`
-  - What SPOs vote on: ---.
+  - What SPOs vote on: Cardano's Conway era introduced decentralized on-chain governance via [CIP-1694](https://cips.cardano.org/cip/CIP-1694). Three governance bodies share decision-m
 - `.claude/skills/cardano-haskell-node/references/sources/installing-cardano-node.md`
-  - Hardware requirements: ---.
+  - Hardware requirements: import Tabs from '@theme/Tabs';.
 - `.claude/skills/cardano-haskell-node/references/sources/learn-air-gap.md`
-  - Why use it: ---.
+  - Why use it: An air-gapped machine is one that has never made a network connection and never will. Cold keys — pool registration keys, Constitutional Committee signing keys, any key
 - `.claude/skills/cardano-haskell-node/references/sources/learn-cardano-cli-secure-workflow.md`
-  - The three-step pattern: ---.
+  - The three-step pattern: The core rule for all Cardano key operations is simple:.
 - `.claude/skills/cardano-haskell-node/references/sources/monitoring-openblockperf.md`
-  - Why global monitoring?: ---.
+  - Why global monitoring?: import Image from "@theme/IdealImage";.
 - `.claude/skills/cardano-haskell-node/references/sources/monitoring-overview.md`
-  - What to monitor: ---.
+  - What to monitor: Running a stake pool means being on-call for a live system. A node that silently falls behind the chain, misses its slot, or has expiring KES keys will cost you an
 - `.claude/skills/cardano-haskell-node/references/sources/monitoring-prometheus-grafana.md`
-  - Architecture: ---.
+  - Architecture: This guide sets up end-to-end monitoring for a Cardano stake pool using the new tracing system (Node 10.2+): nodes forward metrics to `cardano-tracer`, which exposes
 - `.claude/skills/cardano-haskell-node/references/sources/new-tracing-cardano-tracer.md`
-  - Cardano Tracer: ---.
+  - Cardano Tracer: `cardano-tracer` is a service for logging and monitoring over Cardano nodes. After it is connected to the node, it periodically asks the node for different informat
 - `.claude/skills/cardano-haskell-node/references/sources/new-tracing-metrics-migration.md`
-  - Migrating metrics names: ---.
+  - Migrating metrics names: [Migrating metrics names](#migrating-metrics-names).
 - `.claude/skills/cardano-haskell-node/references/sources/new-tracing-quick-start.md`
-  - Introduction: ---.
+  - Introduction: [Introduction](#introduction).
 - `.claude/skills/cardano-haskell-node/references/sources/operator-tools-calidus-keys.md`
-  - Why they matter: ---.
+  - Why they matter: Calidus keys (from Latin *calidus*, "hot") are Ed25519 key pairs that stake pool operators register on-chain to act on behalf of their pool. Once registered with a
 - `.claude/skills/cardano-haskell-node/references/sources/operator-tools-guild-ops-suite.md`
-  - Guild Operators Suite: ---.
+  - Guild Operators Suite: The Guild-Operators suite is a set of tools and scripts for setting up, managing, and monitoring Cardano stake pools, as well as managing tokens and keys. It
 - `.claude/skills/cardano-haskell-node/references/sources/overview.md`
-  - The path: ---.
+  - The path: A Cardano stake pool is the infrastructure that produces blocks on behalf of delegators. Running one means operating live servers, managing sensitive cryptographic keys,
 - `.claude/skills/cardano-haskell-node/references/sources/relay-node-configuration.md`
-  - Relay topology: ---.
+  - Relay topology: A relay node accepts connections from the network and forwards blocks and transactions to your block producer. It has a public IP address; your block producer does
 - `.claude/skills/cardano-haskell-node/references/sources/running-cardano.md`
-  - Networks and configuration files: ---.
+  - Networks and configuration files: This guide covers running `cardano-node` as a passive (non-block-producing) node and querying the chain with `cardano-cli`. If you haven't install
 - `.claude/skills/cardano-haskell-node/references/sources/testnets.md`
-  - Choosing a testnet: ---.
+  - Choosing a testnet: Cardano testnets let you safely test integrations, build applications, mint tokens, and operate stake pools without spending real ada. Each testnet serves a spe
 - `.claude/skills/cardano-haskell-node/references/sources/topology.md`
-  - Topology file reference: ---.
+  - Topology file reference: The topology file tells `cardano-node` where to find peers. It specifies local roots (peers to always stay connected to), a syncing strategy (bootstrap pee
 - `.claude/skills/cardano-haskell-node/scripts/sources.json`
   - JSON data file for sources.
 - `.claude/skills/cardano-haskell-node/scripts/sync_docs.sh`
@@ -3372,9 +3552,9 @@
   - Repo-local skill for the continuous-agent loop pattern used during long parity arcs.
   - Coordinates round-by-round development with the operational-runs docs trail.
 - `.claude/skills/parity-plan/SKILL.md`
-  - Parity Plan — Yggdrasil: ---.
+  - Parity Plan — Yggdrasil: Yggdrasil is a **clean-room Rust port** of `cardano-node` targeting.
 - `.claude/skills/round-extraction/SKILL.md`
-  - Round Extraction — Yggdrasil filename-mirror split: ---.
+  - Round Extraction — Yggdrasil filename-mirror split: Use this skill **only** for filename-mirror restructuring. Do NOT use.
 - `.config/nextest.toml`
   - TOML configuration file for nextest.
 - `.devcontainer/devcontainer-lock.json`
@@ -3420,13 +3600,13 @@
 - `specs/upstream-test-vectors/AGENTS.md`
   - The official upstream vector and golden artifacts used for parity validation.: This directory vendors official upstream vector and golden artifacts used for parity validation. Rese
 - `specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/AGENTS.md`
-  - Scope: ---.
+  - Scope: This directory corresponds to a single pinned upstream commit snapshot.
 - `specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/AGENTS.md`
-  - Scope: ---.
+  - Scope: This directory contains vendored fixture content from upstream `cardano-crypto-class`.
 - `specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/bls12-381-test-vectors/AGENTS.md`
-  - Scope: ---.
+  - Scope: This directory groups upstream BLS12-381 vector corpora used for crypto parity validation.
 - `specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/bls12-381-test-vectors/test_vectors/AGENTS.md`
-  - Scope: ---.
+  - Scope: This directory contains raw upstream BLS12-381 vector files.
 - `specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/bls12-381-test-vectors/test_vectors/bls_sig_aug_test_vectors`
   - Project file at specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/bls12-381-test-vectors/test_vectors/bls_sig_aug_test_vectors.
 - `specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/bls12-381-test-vectors/test_vectors/ec_operations_test_vectors`
@@ -3438,9 +3618,9 @@
 - `specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/bls12-381-test-vectors/test_vectors/serde_test_vectors`
   - Project file at specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/bls12-381-test-vectors/test_vectors/serde_test_vectors.
 - `specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/AGENTS.md`
-  - Scope: ---.
+  - Scope: This directory contains vendored Praos crypto fixture content from upstream `cardano-crypto-praos`.
 - `specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/AGENTS.md`
-  - Scope: ---.
+  - Scope: This directory contains raw upstream Praos VRF vector files used by crypto parity tests.
 - `specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver03_generated_1`
   - Project file at specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver03_generated_1.
 - `specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver03_generated_2`
@@ -3470,7 +3650,7 @@
 - `specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver13_standard_12`
   - Project file at specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver13_standard_12.
 - `specs/upstream-test-vectors/cardano-base/AGENTS.md`
-  - Scope: ---.
+  - Scope: This directory is a vendored mirror root for upstream `cardano-base` fixture content.
 - `supply-chain/README.md`
   - `supply-chain/` — cargo-vet audit trail: Wave 7 PR 21. Seeds the [cargo-vet](https://mozilla.github.io/cargo-vet/).
 - `supply-chain/audits.toml`

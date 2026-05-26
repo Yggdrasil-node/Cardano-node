@@ -6474,11 +6474,10 @@ mod tests {
     }
 
     #[test]
-    fn effective_concurrency_default_knob_is_one() {
-        // The shipped default (`max_concurrent_block_fetch_peers = 1`)
-        // must keep single-peer dispatch.  Pinned because changing the
-        // default elsewhere without re-anchoring this test would silently
-        // start parallelising production fetches.
+    fn effective_concurrency_explicit_single_peer_knob_returns_one() {
+        // Operators can still request the legacy single-peer dispatch
+        // path explicitly by setting `max_concurrent_block_fetch_peers = 1`.
+        // The shipped default is pinned separately in yggdrasil-node-config.
         assert_eq!(effective_block_fetch_concurrency(1, 5), 1);
     }
 

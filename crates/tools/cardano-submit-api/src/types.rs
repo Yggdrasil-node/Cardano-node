@@ -194,20 +194,19 @@ pub enum TxCmdError {
 /// Structured transaction-validation rejection from the local node.
 ///
 /// Carries both the raw CBOR-encoded era-specific `ApplyTxError`
-/// payload (so future structured-decoder work can pattern-match on
-/// individual variants like `FeeTooSmall` / `ValueNotConservedUTxO`
-/// without re-fetching the rejection) AND a string rendering used
-/// today's operator-facing output.
+/// payload (so callers can build era-tagged typed views without
+/// re-fetching the rejection) AND a string rendering used by today's
+/// operator-facing output.
 ///
 /// The custom `Serialize` impl emits only the rendered string so the
 /// upstream JSON wire shape stays byte-equivalent:
 /// `{"tag":"TxCmdTxSubmitValidationError","contents":"<rendered>"}`.
 ///
 /// Upstream parallel: `Cardano.TxSubmit.Types.TxValidationErrorInCardanoMode`.
-/// Yggdrasil's variant is era-opaque at the Rust-type level pending
-/// the multi-era `ApplyTxError` decoder; see
-/// `docs/TECH-DEBT.md` "cardano-submit-api validation error" for the
-/// per-era structured-decoder roadmap.
+/// Yggdrasil keeps the JSON envelope era-opaque for upstream wire-shape
+/// parity; typed callers choose the era with [`Self::into_typed`] and
+/// then use the typed failure accessors on
+/// [`TxValidationErrorInCardanoMode`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TxSubmitValidationError {
     /// Raw CBOR-encoded era-specific `ApplyTxError` payload as
@@ -443,9 +442,10 @@ impl fmt::Display for EraApplyTxError {
 /// `Cardano.Api.TxValidationErrorInCardanoMode`.
 ///
 /// Each variant carries the era-specific `ApplyTxError <era>` payload
-/// (`EraApplyTxError`) — currently raw CBOR + rendered text. Follow-on
-/// rounds (A5 Phase 2.5+) will replace `EraApplyTxError`'s flat
-/// raw-bytes carrier with the full per-era predicate-failure sum types.
+/// (`EraApplyTxError`) as raw CBOR + rendered text. The payload exposes
+/// `decode_conway_failures` / `decode_shelley_failures`, and this enum
+/// exposes `typed_conway_failures` / `typed_shelley_failures`, for the
+/// typed per-era predicate-failure trees.
 ///
 /// Operators that need the typed era discriminant reach for
 /// `TxSubmitValidationError::into_typed(era)`.

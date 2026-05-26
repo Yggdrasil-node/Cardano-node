@@ -1,8 +1,8 @@
 # Guidance for the pure-Rust port of upstream `kes-agent`.
 
-**Status:** `partial` (post-R335-pattern skeleton). Concrete
-subcommand dispatch lands at **R345+** per the R326-R459
-sister-tools port arc plan. Scope band: **MEDIUM**.
+**Status:** `partial` (R335-pattern skeleton + R443 structured
+deferral). Next milestone: **R444+** socket-protocol fixture capture
+and daemon dispatch follow-on. Scope band: **MEDIUM**.
 
 ## Strict 1:1 file-mirror policy (R274+)
 
@@ -19,7 +19,12 @@ Vendored at: `.reference-haskell-cardano-node/deps/kes-agent/kes-agent/` (68 `.h
 
 ## Mini-arc scope
 
-**HIGHEST-STAKES** sister tool. KES key custody + period-rotation daemon. Phase A.3 mini-arc R344-R354 (11 rounds, MEDIUM). Socket protocol byte-equivalence is mandatory or live SPO setups break. R344 captures upstream socket trace as fixture before any code; R347 lands server-side socket protocol with golden vectors mandatory; R349 wires `crates/crypto/src/kes.rs` + `crates/crypto/src/sum_kes.rs`; R353 live rehearsal vs upstream.
+**HIGHEST-STAKES** sister tool. KES key custody + period-rotation daemon.
+Socket protocol byte-equivalence is mandatory or live SPO setups break.
+The R444+ follow-on captures upstream socket traces as fixtures before
+daemon/socket code lands, then wires server-side socket protocol,
+`crates/crypto/src/kes.rs` + `crates/crypto/src/sum_kes.rs`, and live
+rehearsal vs upstream.
 
 ## Current functional surface (post-R443)
 
@@ -29,7 +34,7 @@ Vendored at: `.reference-haskell-cardano-node/deps/kes-agent/kes-agent/` (68 `.h
 - ❌ Daemon dispatch — returns `RunError::DaemonDispatchDeferred`
   (R443 structured deferral). See **Carve-out inventory** below.
 - ❌ End-to-end behavioral tests against upstream binary — pending
-  the kes-agent mini-arc (R344-R354).
+  the R444+ daemon/socket follow-on.
 
 ## Carve-out inventory (R443 structured deferral surface)
 
@@ -38,7 +43,7 @@ returning a `DaemonStatus` descriptor.
 
 | Carve-out                            | Status helper             | Deferral rationale (one-liner)                                            |
 |--------------------------------------|---------------------------|---------------------------------------------------------------------------|
-| Daemon dispatch (socket server + KES key lifecycle + start/stop/run/restart/status subcommands) | `status::daemon_status()` | HIGHEST-STAKES parity per the R326-R459 plan: socket protocol must be byte-equivalent or live SPO setups break. Depends on `crates/crypto/src/kes.rs` + `crates/crypto/src/sum_kes.rs` (shipped) + the byte-equivalent server-side socket protocol (R344-R354 mini-arc). |
+| Daemon dispatch (socket server + KES key lifecycle + start/stop/run/restart/status subcommands) | `status::daemon_status()` | HIGHEST-STAKES parity per the R326-R459 plan: socket protocol must be byte-equivalent or live SPO setups break. Depends on `crates/crypto/src/kes.rs` + `crates/crypto/src/sum_kes.rs` (shipped) + the R444+ byte-equivalent server-side socket protocol follow-on. |
 
 ## Build + run
 
@@ -56,7 +61,7 @@ target/release/kes-agent --help
 
 The binary is named `kes-agent` (matching upstream exactly) — operators
 can swap upstream's binary for the yggdrasil one in their automation
-once concrete dispatch lands at `R345+`.
+after the R444+ daemon/socket follow-on closes.
 
 ##  Rules *Non-Negotiable*
 
@@ -79,7 +84,9 @@ Per the R326-R459 plan, this crate's full implementation lands across
 the named mini-arc rounds:
 
 - ✅ Skeleton shipped (R327 + R335-pattern bulk skeleton at R335-R336).
-- 🟡 Next: **R345** — first concrete-impl round of the mini-arc.
+- ✅ Structured daemon/socket deferral surfaced at R443.
+- 🟡 Next: **R444+** — upstream socket-protocol fixture capture and
+  daemon dispatch follow-on.
 - 🟡 Closeout — when all subcommands are functional, parity-matrix
   entry advances `partial → verified_11_0_1`. Operators can then
   swap upstream binary for the yggdrasil binary without script

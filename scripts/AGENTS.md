@@ -13,6 +13,7 @@ scripts/
 ├── audit-strict-mirror.py         # discovery script, populates docs/strict-mirror-audit.tsv
 ├── check-strict-mirror.py         # CI gate (R288): file-mirror drift detector
 ├── check-stale-placement.py       # CI gate: post-reorganization path/status guard
+├── check-doc-status-headers.py    # CI gate (R824): parity-doc status/header guard
 ├── check-parity-matrix.py         # CI gate: parity-matrix.json schema + paths
 ├── check-fixture-manifest.py      # CI gate (R303): cardano-base SHA pin consistency
 ├── check-reference-artifacts.py   # Linux/WSL local-only: validates .reference-haskell-cardano-node/install/
@@ -79,8 +80,14 @@ reintroduce during the cleanup: node-local parameterized LocalStateQuery
 wording, old cardano-cli subcommand counts, three-command subset wording,
 and active-migration wording for the closed C-arc; it also rejects
 obsolete parity-summary/proof/upstream verification baselines,
-tx-generator/cardano-testnet still being described as blocked by the closed
-cardano-cli C-arc, and the closed workspace-member gap.
+old README/docs-site test baselines, stale BlockFetch default-flip wording
+from before the R258 default graduation, tx-generator/cardano-testnet still
+being described as blocked by the closed cardano-cli C-arc, stale
+cardano-submit-api structured-decoder/R345-R346 evidence wording, stale
+kes-agent/kes-agent-control early-mini-arc current-status wording, stale
+root-manifest sister-tool labels, stale dmq-node pre-R816 current-status
+wording, stale cardano-testnet pre-R823, Command-payload, and
+process-handle type gap wording, and the closed workspace-member gap.
 It also fails if the vendored Haskell reference snapshot contains nested
 `.git` metadata, is not ignored by Git, or would otherwise stop being a
 metadata-free corpus. A `.gitmodules` entry or Git-index submodule entry for
@@ -133,6 +140,25 @@ scan. The live scan invokes `cargo metadata --no-deps` and falls back to
 `~/.cargo/bin/cargo` when the current shell's PATH has not inherited the Rust
 toolchain yet.
 
+### `check-doc-status-headers.py` (R824, CI gate)
+
+Validates living parity/status docs:
+
+- `docs/PARITY_SUMMARY.md`, `docs/UPSTREAM_PARITY.md`, and
+  `docs/COMPLETION_ROADMAP.md` must agree on `As of date`, `Round ceiling`,
+  `Parity tag`, and `Test baseline date`.
+- The declared round ceiling must be at or ahead of the newest
+  `docs/operational-runs/*round-*.md` note; sibling logs/artifacts are
+  intentionally ignored.
+- `Parity tag` must match `docs/parity-matrix.json::reference.tag`.
+- `docs/PARITY_DASHBOARD.md` must use the canonical status date and status
+  counts derived from `docs/parity-matrix.json`.
+
+Run whenever central parity docs, the dashboard, operational-run round
+records, or `docs/parity-matrix.json` statuses change.
+Run `python3 scripts/check-doc-status-headers.py --self-test` before the live
+scan when editing the guard itself. CI runs both the self-test and live scan.
+
 ### `check-parity-matrix.py` (CI gate)
 
 Validates [`docs/parity-matrix.json`](../docs/parity-matrix.json):
@@ -177,9 +203,9 @@ executables. Validates `.reference-haskell-cardano-node/install/`:
   `cardano-submit-api`, `cardano-testnet`, `bech32`.
 - 3 networks × 8 config files present under
   `share/{mainnet,preprod,preview}/` (`config.json`, `topology.json`,
-  `peer-snapshot.json`, `checkpoints.json`, `tracer-config.json`,
+  `peer-snapshot.json`, `tracer-config.json`,
   `byron-genesis.json`, `shelley-genesis.json`, `alonzo-genesis.json`,
-  `conway-genesis.json`, `submit-api-config.json`).
+  `conway-genesis.json`).
 
 Run after `bash scripts/setup-reference.sh --force` to confirm the
 vendored install lines up with the policy tag.
@@ -246,8 +272,9 @@ which filename is "in scope".
 
 ##  Rules *Non-Negotiable*
 
-- The four CI validators (strict-mirror, parity-matrix, fixture-manifest,
-  reference-artifacts-local) MUST stay green between rounds. A failing
+- The CI validators (strict-mirror, stale-placement, doc-status,
+  parity-matrix, fixture-manifest) and the local reference-artifacts
+  validator MUST stay green between rounds. A failing
   validator is a closure-criterion violation, not a "fix later" item.
 - New Python validators MUST follow the `kebab-case.py` naming convention and
   use `python3` (no virtualenv); only stdlib + system cargo/git CLI

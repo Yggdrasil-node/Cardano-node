@@ -62,6 +62,25 @@ fn add_trailing_path_separator(path: &str) -> String {
     }
 }
 
+fn join_unix_file_path(base: &str, name: &str) -> String {
+    let base_is_root = base.starts_with('/') && base.trim_matches('/').is_empty();
+    let base = base.trim_end_matches('/');
+    let name = name.trim_start_matches('/');
+    if base_is_root {
+        return if name.is_empty() {
+            "/".to_string()
+        } else {
+            format!("/{name}")
+        };
+    }
+    match (base.is_empty(), name.is_empty()) {
+        (true, true) => String::new(),
+        (true, false) => name.to_string(),
+        (false, true) => base.to_string(),
+        (false, false) => format!("{base}/{name}"),
+    }
+}
+
 /// The base (parent) directory of a temporary path, with a trailing
 /// separator.
 ///
@@ -102,10 +121,7 @@ impl Sprocket {
     ///
     /// Mirror of upstream `sprocketSystemName`.
     pub fn system_name(&self) -> String {
-        Path::new(&self.base)
-            .join(&self.name)
-            .to_string_lossy()
-            .into_owned()
+        join_unix_file_path(&self.base, &self.name)
     }
 }
 
@@ -128,10 +144,7 @@ pub fn make_tmp_rel_path(tmp: &TmpAbsolutePath) -> String {
 /// Mirror of upstream `makeSocketDir fp = makeTmpRelPath fp </>
 /// defaultSocketDir`.
 pub fn make_socket_dir(tmp: &TmpAbsolutePath) -> String {
-    Path::new(&make_tmp_rel_path(tmp))
-        .join(crate::paths::DEFAULT_SOCKET_DIR)
-        .to_string_lossy()
-        .into_owned()
+    join_unix_file_path(&make_tmp_rel_path(tmp), crate::paths::DEFAULT_SOCKET_DIR)
 }
 
 /// The [`Sprocket`] for a named node within a temporary path.
@@ -141,10 +154,7 @@ pub fn make_socket_dir(tmp: &TmpAbsolutePath) -> String {
 pub fn make_sprocket(tmp: &TmpAbsolutePath, node: &str) -> Sprocket {
     Sprocket {
         base: make_tmp_base_abs_path(tmp),
-        name: Path::new(&make_socket_dir(tmp))
-            .join(node)
-            .to_string_lossy()
-            .into_owned(),
+        name: join_unix_file_path(&make_socket_dir(tmp), node),
     }
 }
 
@@ -195,5 +205,14 @@ mod tests {
         assert_eq!(s.base, "/tmp/testnet-abc/");
         assert_eq!(s.name, "run/socket/node0");
         assert_eq!(s.system_name(), "/tmp/testnet-abc/run/socket/node0");
+    }
+
+    #[test]
+    fn sprocket_system_name_preserves_unix_root_base() {
+        let s = Sprocket {
+            base: "/".to_string(),
+            name: "run/socket/node0".to_string(),
+        };
+        assert_eq!(s.system_name(), "/run/socket/node0");
     }
 }

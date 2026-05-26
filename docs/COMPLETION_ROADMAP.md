@@ -10,14 +10,14 @@ nav_order: 6
 > **Document classification:** operational.
 
 ## Canonical Status Header
-- **As of date:** 2026-05-24
-- **Round ceiling:** R688
+- **As of date:** 2026-05-26
+- **Round ceiling:** R839
 - **Parity tag:** 11.0.1
-- **Test baseline date:** 2026-05-17
+- **Test baseline date:** 2026-05-26
 - **Source of truth:** [`docs/parity-matrix.json`](parity-matrix.json)
 
 
-**Created:** 2026-05-17 · **Status reference:** R503 + post-R503 commit-level work
+**Created:** 2026-05-17 · **Status reference:** R839 cardano-testnet Property/Run testnetProperty planning helpers + post-R503 commit-level work
 
 ## Purpose
 
@@ -41,11 +41,16 @@ one session.
 
 ## Status snapshot
 
+Post-R688 operational-run evidence now reaches R839. The newer rounds
+advance tx-generator, db-analyser, dmq-node, cardano-testnet, and
+workspace-audit hygiene without changing the remaining Category-B/C
+operator and wire-comparison closure requirements.
+
 ## Current verification baseline
 
-- **Date:** 2026-05-17 (Rust 1.95.0)
+- **Date:** 2026-05-26 (Rust 1.95.0)
 - **Command set (exact):** `cargo fmt --all -- --check`, `cargo check-all`, `cargo lint`, `cargo test-all`
-- **Result snapshot:** all four commands passed; `cargo test-all` reported **6,519 passing, 0 failing, 3 ignored**.
+- **Result snapshot:** all four commands passed; `cargo test-all` reported **7,251 passing, 0 failing, 3 ignored** (7,254 listed tests total).
 - **Authoritative status-first source:** update `docs/parity-matrix.json` first for parity-status changes, then synchronize roadmap prose.
 
 ## Historical baseline (not current status)
@@ -397,7 +402,24 @@ socket-protocol byte-equivalence fixture capture (highest-stakes — key
 custody). `tx-generator` is no longer blocked on the cardano-cli C-arc;
 that prerequisite closed at R515/R529, so its remaining blocker is its
 own parser / generator / submission implementation plus upstream
-  comparison evidence. R533 shipped its upstream `Command.hs` parser
+comparison evidence. `cardano-testnet` has its era-free types,
+Parsers/Cardano option composition, typed `Command` payload wiring,
+byte-equivalent `version` subcommand, `Testnet/Types.hs` runtime
+record carriers, pure `Testnet/Process/Cli/Keys.hs` command
+builders, and `Testnet/Process/Cli/Transaction.hs` sign/submit/txid
+plus spend-output txbody builders, plus `Testnet/Process/Cli/DRep.hs` pure key/cert/vote
+builders and `Testnet/Process/Cli/SPO.hs` pure certificate/vote
+builders plus `Testnet/Process/Run.hs` flexible process wrappers and
+`Testnet/Process/RunIO.hs` plan-json binary-resolution/execution helpers
+through R834, `Testnet/Property/Util.hs` pure harness primitives through R835,
+`Testnet/Property/Assert.hs` pure assertion helpers through R836, the
+`assertExpectedSposInLedgerState` stake-pool query wrapper through R837, and
+`Testnet/Property/Run.hs` pure harness-control/planning helpers through R839; its
+remaining implementation work is node/KES spawning and supervision,
+era-genesis, DRep/SPO runtime workflows, transaction runtime/query
+orchestration, and the remaining Process/Property harness execution for
+`cardano` and `create-env`. R533 shipped
+its upstream `Command.hs` parser
   mirror, R534 shipped `Setup/TestnetDiscovery.hs`, R535 shipped
   `Setup/NixService.hs` high-level option parsing/projections, R536
   shipped `Compiler.hs` script generation plus the `Script/Types.hs` IR,
@@ -1307,10 +1329,13 @@ Remaining: full per-mini-protocol queue limits + scheduler fairness, then a
 24h+ soak forwarding live traces to a real `cardano-tracer` endpoint.
 **Closes with:** the soak harness + a clean 24h run.
 
-### B2 — cardano-submit-api integration soak (R345)
-Functional binary exists; needs a drop-in byte-equivalence soak vs the
-upstream `cardano-submit-api`. **Closes with:** operator soak →
-`verified_11_0_1`.
+### B2 — cardano-submit-api integration soak (R825+)
+Functional binary exists with the R569-R688 typed rejection decoder arc
+closed, and the 202 Accepted response now returns the submitted
+transaction `TxId`. Remaining parity work is the drop-in byte-equivalence
+soak vs the upstream `cardano-submit-api`.
+**Closes with:** empty `scripts/compare_submit_api_to_upstream.sh`
+response diffs → `verified_11_0_1`.
 
 ### B3 — db-truncater integration soak (R351)
 Functional; needs integration verification vs upstream `db-truncater`.
@@ -1324,7 +1349,9 @@ update sites bridged.
 ### B5 — Production-readiness operator gates
 `MANUAL_TEST_RUNBOOK.md` §2–9 mainnet endurance rehearsal (24h+) and the §6.5
 parallel-fetch sign-off (`scripts/parallel_blockfetch_soak.sh`)
-before flipping the default `max_concurrent_block_fetch_peers` from 1 to 2.
+remain open operator gates. The shipped default is already `2`; these runs close
+the evidence requirement for the current default and any richer-topology stress
+settings.
 
 ---
 

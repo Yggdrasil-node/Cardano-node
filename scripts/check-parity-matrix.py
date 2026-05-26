@@ -95,6 +95,9 @@ ALLOWED_MILESTONES |= _arc_range(460, 479)  # Phase D.2 — post-R459 follow-on 
 ALLOWED_MILESTONES |= _arc_range(480, 499)  # Phase D.3 — db-analyser HasAnalysis arc closeout + room for the next 18 follow-ons.
 ALLOWED_MILESTONES |= _arc_range(500, 519)  # Phase 2.B follow-on — cardano-tracer Mux Layer 2/3 forwarder stack (R502 + R503 conformance + buffer).
 ALLOWED_MILESTONES |= _arc_range(520, 579)  # Phase 2.C follow-on — post-reorganization cleanup + sister-tool continuation.
+ALLOWED_MILESTONES |= _arc_range(580, 703)  # Phase 2.D follow-on — tx-generator DumpToFile parity closure and blocker narrowing.
+ALLOWED_MILESTONES |= _arc_range(704, 823)  # Phase 2.E follow-on — db tools, dmq-node, and cardano-testnet continuation.
+ALLOWED_MILESTONES |= _arc_range(824, 843)  # Phase 2.F follow-on — workspace-audit cleanup and operator-evidence follow-ons.
 
 
 def fail(message: str) -> None:

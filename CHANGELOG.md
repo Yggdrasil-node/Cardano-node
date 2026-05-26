@@ -1283,8 +1283,8 @@ basename-heuristic reliance.
   - `crates/node/config/src/upstream_pins.rs` — 3 sister-tool upstream-pin
     descriptions (`crates/tools/bech32/`, `crates/tools/kes-agent/` +
     `crates/tools/kes-agent-control/`, `crates/tools/dmq-node/`)
-  Each rewrite preserves the round-band annotation context
-  (R331-R334 / R344-R354 / R355-R359 / R450-R459) and appends a
+  Each rewrite preserves the relevant sister-tool round-band annotation
+  context (bech32 / kes-agent / kes-agent-control / dmq-node) and appends a
   "R447 relocated" note for searchability.
   Workspace test count unchanged at 5,962. All 5 verification
   gates clean.
@@ -1504,9 +1504,9 @@ basename-heuristic reliance.
   `lib.rs` refactor:
   - **status::DaemonStatus**: 4-field descriptor + helper
     `daemon_status()`. Documents that the daemon dispatch is
-    gated on the kes-agent mini-arc (R344-R354 — highest-stakes
-    parity since the socket protocol must be byte-equivalent or
-    live SPO setups break).
+    gated on the kes-agent daemon/socket follow-on (current gate:
+    R444+) because the socket protocol must be byte-equivalent or
+    live SPO setups break.
   - **RunError::DaemonDispatchDeferred**: replaces the prior
     raw `eyre!` string. No fields — the deferral is global
     rather than per-subcommand at this skeleton stage.
@@ -1564,11 +1564,9 @@ basename-heuristic reliance.
   - **status::ControlClientStatus**: 4-field descriptor (status,
     depends_on, deferred_round, upstream_reference) returned by
     [`status::control_client_status`]. Documents that the socket
-    I/O surface is gated on the kes-agent server mini-arc landing
-    first (R344-R354 per the playful-tickling-plum.md plan —
-    highest-stakes parity in the sister-tools arc since the
-    socket protocol must be byte-equivalent or live SPO setups
-    break).
+    I/O surface is gated on the kes-agent daemon/socket follow-on
+    landing first (current gate: R444+) because the socket protocol
+    must be byte-equivalent or live SPO setups break.
   - **status::Subcommand enum**: `GenStagedKey | ExportStagedVkey
     | DropStagedKey | InstallKey | DropKey | Info` — stable
     identifier for one of the 6 kes-agent-control subcommands.

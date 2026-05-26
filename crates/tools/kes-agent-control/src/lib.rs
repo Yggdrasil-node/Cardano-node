@@ -81,10 +81,9 @@ pub fn run_main() -> ExitCode {
 ///
 /// R362 wires argv → [`types::ProgramOptions`] dispatch. The actual
 /// per-subcommand ControlClient socket I/O is deferred to a
-/// follow-on round gated on the kes-agent server mini-arc landing
-/// first (highest-stakes parity per the R326-R459 plan — the
-/// socket protocol must be byte-equivalent or live SPO setups
-/// break).
+/// follow-on round gated on the R444+ kes-agent daemon/socket work:
+/// the server-side socket protocol must be byte-equivalent before
+/// ControlClient can be verified safely.
 ///
 /// R440 surfaces the deferral via the [`RunError`] enum +
 /// [`status::control_client_status`] introspection helper rather
@@ -110,12 +109,12 @@ pub enum RunError {
     /// `Cardano.KESAgent.Processes.ControlClient` — connects to
     /// a running kes-agent daemon over its Unix-domain socket and
     /// drives the per-subcommand runner. Yggdrasil's port is
-    /// gated on the kes-agent server mini-arc landing first
-    /// (highest-stakes parity per the R326-R459 plan; socket
-    /// protocol must be byte-equivalent or live SPO setups break).
+    /// gated on the R444+ kes-agent daemon/socket follow-on; the
+    /// server-side socket protocol must be byte-equivalent before
+    /// ControlClient can be verified safely.
     #[error(
         "yggdrasil-kes-agent-control: ControlClient socket I/O for `{subcommand}' deferred — \
-         gated on the kes-agent server mini-arc (see crates/tools/kes-agent-control/src/status.rs::\
+         gated on the R444+ kes-agent daemon/socket follow-on (see crates/tools/kes-agent-control/src/status.rs::\
          control_client_status for the full deferral rationale)."
     )]
     SubcommandSocketIoDeferred {

@@ -86,7 +86,7 @@ pub use state::{
 /// Transaction and block wrapper types.
 pub use tx::{
     AlonzoCompatibleSubmittedTx, Block, BlockHeader, MultiEraSubmittedTx,
-    ShelleyCompatibleSubmittedTx, Tx, compute_tx_id,
+    ShelleyCompatibleSubmittedTx, Tx, compute_tx_id, compute_tx_id_from_tx_cbor,
 };
 
 // -- Type re-exports ----------------------------------------------------------

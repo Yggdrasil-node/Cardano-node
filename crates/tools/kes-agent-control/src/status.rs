@@ -38,12 +38,12 @@ pub struct ControlClientStatus {
 pub fn control_client_status() -> ControlClientStatus {
     ControlClientStatus {
         status: "deferred",
-        depends_on: "the kes-agent server mini-arc (per the playful-tickling-plum.md plan, R344-R354 \
-             — covers the daemon-side socket protocol that ControlClient connects to). The \
-             socket protocol must be byte-equivalent or live SPO setups break, so this is \
-             the highest-stakes parity surface in the sister-tools arc; the control client \
-             is intentionally gated on the server arc landing first.",
-        deferred_round: "R362+",
+        depends_on: "the R444+ kes-agent daemon follow-on that captures and wires the \
+             daemon-side socket protocol that ControlClient connects to. The socket protocol \
+             must be byte-equivalent or live SPO setups break, so this is the highest-stakes \
+             parity surface in the sister-tools arc; the control client is intentionally gated \
+             on the daemon/socket follow-on landing first.",
+        deferred_round: "R444+",
         upstream_reference: ".reference-haskell-cardano-node (post-R326b kes-agent vendor) — Cardano.KESAgent.Processes.ControlClient + the per-subcommand runners (runGenKey / runQueryKey / runDropStagedKey / runInstallKey / runDropKey / runGetInfo) in cli/ControlMain.hs",
     }
 }
@@ -99,7 +99,11 @@ mod tests {
     fn control_client_status_describes_deferral() {
         let s = control_client_status();
         assert_eq!(s.status, "deferred");
-        assert!(s.depends_on.contains("kes-agent server mini-arc"));
+        assert!(s.depends_on.contains("kes-agent daemon follow-on"));
+        assert!(
+            s.depends_on.contains("R444+"),
+            "kes-agent-control deferral should point at the current daemon follow-on"
+        );
         assert!(s.upstream_reference.contains("ControlClient"));
     }
 

@@ -3,7 +3,7 @@
 // `use super::*;` still gives full access to the parent's items.
 
 use super::*;
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 use yggdrasil_consensus::{NonceEvolutionState, OcertCounters};
 use yggdrasil_ledger::{Era, LedgerState};
 use yggdrasil_network::MiniProtocolNum;
@@ -13,6 +13,26 @@ use yggdrasil_network::MiniProtocolNum;
 /// lock the floor-promotion test could leak a value into the table-pinning
 /// test running concurrently and force every PV to era_index 6.
 static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+const LSQ_ERA_FLOOR_ENV: &str = "YGG_LSQ_ERA_FLOOR";
+
+fn clear_lsq_era_floor(_guard: &MutexGuard<'_, ()>) {
+    // SAFETY: callers must hold ENV_LOCK, passed as `_guard`, so the
+    // process-wide environment is not mutated concurrently by another
+    // test in this module.
+    unsafe {
+        std::env::remove_var(LSQ_ERA_FLOOR_ENV);
+    }
+}
+
+fn set_lsq_era_floor(_guard: &MutexGuard<'_, ()>, value: &str) {
+    // SAFETY: callers must hold ENV_LOCK, passed as `_guard`, so the
+    // process-wide environment is not mutated concurrently by another
+    // test in this module.
+    unsafe {
+        std::env::set_var(LSQ_ERA_FLOOR_ENV, value);
+    }
+}
 
 #[test]
 fn test_ntc_protocol_numbers() {
@@ -227,13 +247,10 @@ fn shelley_genesis_encoder_emits_15_element_list() {
 fn effective_era_index_pv_table_matches_upstream() {
     use yggdrasil_ledger::ProtocolParameters;
 
-    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    // SAFETY: env access is serialised by ENV_LOCK above. Clear any value
-    // a concurrent floor-promotion test may have left set so the PV→era
-    // mapping is exercised on its own.
-    unsafe {
-        std::env::remove_var("YGG_LSQ_ERA_FLOOR");
-    }
+    let guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    // Clear any value a concurrent floor-promotion test may have left set
+    // so the PV→era mapping is exercised on its own.
+    clear_lsq_era_floor(&guard);
 
     let cases = [
         // (block_pv, expected_era_index)
@@ -276,7 +293,7 @@ fn effective_era_index_pv_table_matches_upstream() {
 /// by default).
 #[test]
 fn era_floor_env_var_promotes_reported_era() {
-    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
     // Build a snapshot whose chain is at PV=(6,0) (Alonzo).
     let mut state = LedgerState::new(Era::Byron);
@@ -284,53 +301,32 @@ fn era_floor_env_var_promotes_reported_era() {
     let snapshot = state.snapshot();
 
     // Sanity: with no env var set, era is Alonzo (4).
-    // SAFETY: env mutation is serialised by ENV_LOCK above.
-    unsafe {
-        std::env::remove_var("YGG_LSQ_ERA_FLOOR");
-    }
+    clear_lsq_era_floor(&guard);
     assert_eq!(effective_era_index_for_lsq(&snapshot), 4);
 
     // With YGG_LSQ_ERA_FLOOR=5, era promotes to Babbage (5).
-    // SAFETY: serialised by ENV_LOCK.
-    unsafe {
-        std::env::set_var("YGG_LSQ_ERA_FLOOR", "5");
-    }
+    set_lsq_era_floor(&guard, "5");
     assert_eq!(effective_era_index_for_lsq(&snapshot), 5);
 
     // With YGG_LSQ_ERA_FLOOR=6, era promotes to Conway (6).
-    // SAFETY: serialised by ENV_LOCK.
-    unsafe {
-        std::env::set_var("YGG_LSQ_ERA_FLOOR", "6");
-    }
+    set_lsq_era_floor(&guard, "6");
     assert_eq!(effective_era_index_for_lsq(&snapshot), 6);
 
     // With YGG_LSQ_ERA_FLOOR=2 (lower than derived Alonzo=4),
     // it's a no-op — never demote.
-    // SAFETY: serialised by ENV_LOCK.
-    unsafe {
-        std::env::set_var("YGG_LSQ_ERA_FLOOR", "2");
-    }
+    set_lsq_era_floor(&guard, "2");
     assert_eq!(effective_era_index_for_lsq(&snapshot), 4);
 
     // With YGG_LSQ_ERA_FLOOR=99 (out of range), it's a no-op.
-    // SAFETY: serialised by ENV_LOCK.
-    unsafe {
-        std::env::set_var("YGG_LSQ_ERA_FLOOR", "99");
-    }
+    set_lsq_era_floor(&guard, "99");
     assert_eq!(effective_era_index_for_lsq(&snapshot), 4);
 
     // With YGG_LSQ_ERA_FLOOR=garbage, it's a no-op.
-    // SAFETY: serialised by ENV_LOCK.
-    unsafe {
-        std::env::set_var("YGG_LSQ_ERA_FLOOR", "not-a-number");
-    }
+    set_lsq_era_floor(&guard, "not-a-number");
     assert_eq!(effective_era_index_for_lsq(&snapshot), 4);
 
     // Cleanup.
-    // SAFETY: serialised by ENV_LOCK.
-    unsafe {
-        std::env::remove_var("YGG_LSQ_ERA_FLOOR");
-    }
+    clear_lsq_era_floor(&guard);
 }
 
 /// Round 161 — when block_pv is `None` (no block applied yet)

@@ -1,7 +1,10 @@
 //! Programmatic-introspection helpers for the dmq-node deferred
 //! surfaces.
 //!
-//! R444 surfaces the Diffusion / NodeKernel / PeerSelection wiring carve-outs as a `*_status()` helper.
+//! R444 surfaced the initial Diffusion / NodeKernel / PeerSelection wiring
+//! carve-out as a `*_status()` helper. R717-R816 filled in the protocol,
+//! inbound governor, NodeKernel helper records, and NtN/NtC mux bundles; the
+//! remaining explicit deferral is the final `run()` event-loop assembly.
 //!
 //! Mirrors the precedent set by R424-R429 cardano-tracer +
 //! R439-R443 sister-tool deferral sweeps.
@@ -31,9 +34,9 @@ pub struct DiffusionWiringStatus {
 pub fn diffusion_wiring_status() -> DiffusionWiringStatus {
     DiffusionWiringStatus {
         status: "deferred",
-        depends_on: "the dmq-node mini-arc per the playful-tickling-plum.md plan (R450-R459 — Tier 4 sister project). The wiring leverages crates/network/'s existing Diffusion / NodeKernel / PeerSelection surfaces (already shipped) but needs the dmq-specific wire protocol + local-socket server (per R455+ of the plan).",
-        deferred_round: "R361+",
-        upstream_reference: ".reference-haskell-cardano-node (post-R326b dmq-node vendor) — DMQ.Node.{Diffusion, Run, NodeKernel} + the dmq mempool-queue wire protocol",
+        depends_on: "the R717-R816 dmq-node implementation arc has shipped the DMQ protocol surface, inbound-V2 governor, NodeKernel records, peer-sharing/KeepAlive/DeltaQ helpers, and NtN/NtC mux bundles. Remaining work is the run() event loop: socket accept loops, handshakes, mux driver startup, and protocol-task wiring through crates/network.",
+        deferred_round: "R817+",
+        upstream_reference: ".reference-haskell-cardano-node (post-R326b dmq-node vendor) — DMQ.Node.{Run,Diffusion,NodeKernel,NodeToNode,NodeToClient,Tracer} plus the DMQ protocol and inbound-governor modules",
     }
 }
 
@@ -45,8 +48,9 @@ mod tests {
     fn diffusion_wiring_status_describes_deferral() {
         let s = diffusion_wiring_status();
         assert_eq!(s.status, "deferred");
-        assert!(s.depends_on.contains("dmq-node mini-arc"));
-        assert!(s.depends_on.contains("R450-R459"));
+        assert!(s.depends_on.contains("R717-R816"));
+        assert!(s.depends_on.contains("run() event loop"));
+        assert_eq!(s.deferred_round, "R817+");
         assert!(s.upstream_reference.contains("DMQ.Node"));
     }
 

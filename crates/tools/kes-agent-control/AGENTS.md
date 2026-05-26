@@ -1,8 +1,8 @@
 # Guidance for the pure-Rust port of upstream `kes-agent-control`.
 
-**Status:** `partial` (post-R335-pattern skeleton). Concrete
-subcommand dispatch lands at **R356+** per the R326-R459
-sister-tools port arc plan. Scope band: **SMALL**.
+**Status:** `partial` (R355 typed config + R362/R370 parser/env +
+R440 structured deferral). Concrete ControlClient socket I/O waits on
+the **R444+** kes-agent daemon/socket follow-on. Scope band: **SMALL**.
 
 ## Strict 1:1 file-mirror policy (R274+)
 
@@ -19,7 +19,11 @@ Vendored at: `.reference-haskell-cardano-node/deps/kes-agent/kes-agent/` (0 `.hs
 
 ## Mini-arc scope
 
-Companion CLI for kes-agent. Phase A.4 mini-arc R355-R359 (5 rounds, SMALL). R357 implements gen-staged-key, install-key, export-staged-vkey subcommands; R358 round-trip test against R344-R354 yggdrasil-kes-agent + upstream.
+Companion CLI for kes-agent. Typed config, parser dispatch, and
+environment-derived defaults are shipped. Remaining ControlClient
+socket I/O is gated on the R444+ kes-agent daemon/socket follow-on,
+because the daemon-side socket protocol must be byte-equivalent before
+the control client can be verified safely.
 
 ## Current functional surface (post-R440)
 
@@ -32,7 +36,7 @@ Companion CLI for kes-agent. Phase A.4 mini-arc R355-R359 (5 rounds, SMALL). R35
   `RunError::SubcommandSocketIoDeferred { subcommand: status::Subcommand }`
   (R440 structured deferral). See **Carve-out inventory** below.
 - ❌ End-to-end behavioral tests against upstream binary — pending
-  the kes-agent server mini-arc (R344-R354).
+  the R444+ kes-agent daemon/socket follow-on.
 
 ## Carve-out inventory (R440 structured deferral surface)
 
@@ -44,7 +48,7 @@ Companion CLI for kes-agent. Phase A.4 mini-arc R355-R359 (5 rounds, SMALL). R35
 
 | Carve-out                            | Status helper                       | Deferral rationale (one-liner)                                            |
 |--------------------------------------|-------------------------------------|---------------------------------------------------------------------------|
-| ControlClient socket I/O             | `status::control_client_status()`   | Gated on kes-agent server mini-arc (R344-R354 — highest-stakes parity: socket protocol must be byte-equivalent or live SPO setups break). KES key lifecycle in `crates/crypto/src/kes.rs` is already shipped; only the server-side socket protocol is missing. |
+| ControlClient socket I/O             | `status::control_client_status()`   | Gated on the R444+ kes-agent daemon/socket follow-on: the server-side socket protocol must be byte-equivalent or live SPO setups break. KES key lifecycle in `crates/crypto/src/kes.rs` is already shipped; only the server-side socket protocol is missing. |
 
 ## Build + run
 
@@ -62,7 +66,8 @@ target/release/kes-agent-control --help
 
 The binary is named `kes-agent-control` (matching upstream exactly) — operators
 can swap upstream's binary for the yggdrasil one in their automation
-once concrete dispatch lands at `R356+`.
+after the R444+ daemon/socket follow-on closes and ControlClient socket
+I/O is wired.
 
 ##  Rules *Non-Negotiable*
 
@@ -81,11 +86,14 @@ once concrete dispatch lands at `R356+`.
 
 ## Round roadmap
 
-Per the R326-R459 plan, this crate's full implementation lands across
-the named mini-arc rounds:
+This crate's parser/config surface has landed; runtime socket I/O now
+depends on the daemon follow-on:
 
 - ✅ Skeleton shipped (R327 + R335-pattern bulk skeleton at R335-R336).
-- 🟡 Next: **R356** — first concrete-impl round of the mini-arc.
+- ✅ Typed config/parser/env surface shipped (R355, R362, R370).
+- ✅ Structured ControlClient socket-I/O deferral surfaced at R440.
+- 🟡 Next: **R444+** — wait for the kes-agent daemon/socket follow-on,
+  then wire ControlClient socket I/O for all six subcommands.
 - 🟡 Closeout — when all subcommands are functional, parity-matrix
   entry advances `partial → verified_11_0_1`. Operators can then
   swap upstream binary for the yggdrasil binary without script

@@ -595,7 +595,15 @@ Record in §9:
 - Mainnet knob=2 24h hash compare: PASS / FAIL
 - Throughput delta knob=2 vs knob=1 (target: ≥ 1.0×, expected: 1.5–2×)
 
-If all sign-offs pass, the team can flip the default in `crates/node/config/src/lib.rs::default_max_concurrent_block_fetch_peers` from `1` to `2` (matching upstream `bfcMaxConcurrencyBulkSync = 2`). Update preset constructors in lockstep — there's a drift-guard test (`preset_configs_share_canonical_max_concurrent_block_fetch_peers`) that pins all three presets to the same value, so changing the default in one place fails CI until all are updated.
+If all sign-offs pass, record the evidence in a new operational-run note and
+update the living parity docs to close the §6.5 operator gate. The shipped
+default is already `2`, matching upstream `bfcMaxConcurrencyBulkSync = 2`, and
+the drift-guard tests
+(`preset_configs_share_canonical_max_concurrent_block_fetch_peers` and
+`default_max_concurrent_block_fetch_peers_matches_preset_value`) pin that the
+default helper and all three preset constructors stay in lockstep. Operators
+who need single-peer replay/audit behaviour should set
+`max_concurrent_block_fetch_peers = 1` explicitly.
 
 ---
 

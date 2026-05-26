@@ -139,6 +139,10 @@ DESCRIPTION_OVERRIDES = {
         "Machine-readable parity-status inventory for Rust ↔ IntersectMBO/cardano-node features.",
         "Validated by scripts/check-parity-matrix.py; the reference.tag tracks the latest upstream release (currently 11.0.1).",
     ],
+    "docs/PARITY_DASHBOARD.md": [
+        "Compact operator-facing parity status board sourced from parity-matrix and living parity docs.",
+        "Links status counts, open gaps, and remaining operator gates back to their source-of-truth documents.",
+    ],
     "docs/operational-runs/2026-05-12-round-498-plan-sync-rs-split-arc.md": [
         "Historical R498-R510 sync split plan, now reflected in crates/node/sync/ and adjacent runtime crates.",
         "Kept as operational evidence; current instructions live in the crate AGENTS.md files.",
@@ -158,6 +162,10 @@ DESCRIPTION_OVERRIDES = {
     "scripts/check-reference-artifacts.py": [
         "Linux/WSL local validator for the vendored Haskell cardano-node install tree.",
         "Checks executable reference binaries, network share bundles, and cardano-node version policy.",
+    ],
+    "scripts/check-doc-status-headers.py": [
+        "Stdlib-only validator for canonical status headers in living parity documents.",
+        "Ensures classification, round ceiling, parity tag, and baseline fields stay aligned.",
     ],
     "scripts/check-stale-placement.py": [
         "Stdlib-only validator for stale post-reorganization source, config, script, and skill paths.",
@@ -257,6 +265,11 @@ def normalize_description(lines: Any) -> list[str]:
     return cleaned
 
 
+def description_needs_refresh(lines: list[str]) -> bool:
+    text = " ".join(lines)
+    return "## Naming parity" in text or ": ---." in text or ": Date:" in text
+
+
 def sentence(text: str) -> str:
     text = " ".join(text.strip().split())
     if not text:
@@ -268,6 +281,12 @@ def sentence(text: str) -> str:
 
 def markdown_description(path: str, text: str) -> list[str]:
     lines = [line.strip() for line in text.splitlines()]
+    if lines and lines[0] == "---":
+        for index, line in enumerate(lines[1:], start=1):
+            if line == "---":
+                lines = lines[index + 1 :]
+                break
+
     heading = ""
     paragraph = ""
 
@@ -275,6 +294,9 @@ def markdown_description(path: str, text: str) -> list[str]:
         if line.startswith("#"):
             heading = line.lstrip("#").strip()
             break
+
+    if path.startswith("docs/operational-runs/") and heading:
+        return [sentence(f"Operational run record: {heading}")[:180]]
 
     in_code = False
     for line in lines:
@@ -310,6 +332,10 @@ def rust_description(path: str, text: str) -> list[str]:
             continue
         else:
             break
+        if body.startswith("#"):
+            if docs:
+                break
+            continue
         if body and not body.startswith("Copyright"):
             docs.append(body)
         if len(" ".join(docs)) > 140:
@@ -422,16 +448,24 @@ def make_entry(path: str, existing: dict[str, Any] | None = None, *, accept_curr
     if path in DESCRIPTION_OVERRIDES:
         description = DESCRIPTION_OVERRIDES[path]
     else:
-        description = normalize_description(existing.get("description_lines")) or default_description(path)
+        description = normalize_description(existing.get("description_lines"))
+        if not description or description_needs_refresh(description):
+            description = default_description(path)
     description = normalize_description(description) or [f"Project file at {path}."]
 
-    metadata = file_metadata(path) if accept_current else {
+    current_metadata = file_metadata(path) if accept_current else None
+    unchanged = bool(
+        current_metadata
+        and existing.get("content_sha256") == current_metadata["content_sha256"]
+        and existing.get("git_blob") == current_metadata["git_blob"]
+    )
+    metadata = current_metadata if accept_current and not unchanged else {
         "content_sha256": existing.get("content_sha256", ""),
         "git_blob": existing.get("git_blob", ""),
         "source_mtime_ns": existing.get("source_mtime_ns", 0),
     }
 
-    if accept_current or "described_at_utc" not in existing:
+    if (accept_current and not unchanged) or "described_at_utc" not in existing:
         described_at = utc_now()
     else:
         described_at = existing.get("described_at_utc", "")

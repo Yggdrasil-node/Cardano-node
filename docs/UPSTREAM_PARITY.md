@@ -12,18 +12,18 @@ nav_order: 5
 > **Document classification:** operational.
 
 ## Canonical Status Header
-- **As of date:** 2026-05-24
-- **Round ceiling:** R688
+- **As of date:** 2026-05-26
+- **Round ceiling:** R839
 - **Parity tag:** 11.0.1
-- **Test baseline date:** 2026-05-17
+- **Test baseline date:** 2026-05-26
 - **Source of truth:** [`docs/parity-matrix.json`](parity-matrix.json)
 
 
-Last updated: 2026-05-20; post-reorganization status and verification-baseline header refreshed after R517-R529 cleanup
+Last updated: 2026-05-26; status header refreshed after R839 cardano-testnet Property/Run testnetProperty planning helpers
 
 This document tracks concrete parity alignment against official IntersectMBO repositories and highlights remaining gaps that block a full parity claim.
 
-> **Current status note (2026-05-20).** The R517-R529 cleanup closed stale
+> **Current status note (2026-05-26).** The R517-R529 cleanup closed stale
 > post-reorganization placement debt: the node binary crate lives at
 > `crates/node/cardano-node/`, operator configuration at root
 > `configuration/`, operator/reference scripts at root `scripts/`, and
@@ -32,6 +32,9 @@ This document tracks concrete parity alignment against official IntersectMBO rep
 > / 27 LSQ queries), while upstream-binary operator evidence remains tracked
 > in [`docs/COMPLETION_ROADMAP.md`](COMPLETION_ROADMAP.md) and
 > [`docs/parity-matrix.json`](parity-matrix.json).
+> Post-R688 operational-run evidence now reaches R839; the newer rounds
+> advance sister-tool implementation surfaces and audit hygiene without
+> changing the open operator/wire-evidence gates in this matrix.
 >
 > **R273-rename + R274-R311 strict 1:1 file-mirror arc + R313-R320
 > docstring-classification cleanup** (closed 2026-05-09). The vendored
@@ -51,13 +54,17 @@ This document tracks concrete parity alignment against official IntersectMBO rep
 
 ### Current verification baseline
 
-- Latest broad workspace baseline (2026-05-17, Rust 1.95.0):
+- Latest broad workspace baseline (2026-05-26, Rust 1.95.0):
   `cargo fmt --all -- --check`, `cargo check-all`, `cargo lint`, and
-  `cargo test-all` all pass; `cargo test-all` reports 6,519 passing, 0
-  failing, 3 ignored.
-- Post-R529 focused cleanup gates: `python3 scripts/check-stale-placement.py`
-  and `python3 scripts/check-parity-matrix.py` are clean against the current
-  workspace layout and the `11.0.1` reference tag.
+  `cargo test-all` all pass; `cargo test-all` reports 7,251 passing, 0
+  failing, 3 ignored (7,254 listed tests total).
+- R839 parity-flow validators are clean against the current workspace layout
+  and the `11.0.1` reference tag: `python3 scripts/check-stale-placement.py`,
+  `python3 scripts/check-parity-matrix.py`,
+  `python3 scripts/check-doc-status-headers.py`,
+  `python3 scripts/check-fixture-manifest.py`,
+  `python3 scripts/check-strict-mirror.py --fail-on-violation`, and
+  `python3 .claude/scripts/filetree.py check`.
 - Local/operator-only reference artifact verification remains separate:
   `python3 scripts/check-reference-artifacts.py` validates the vendored
   `.reference-haskell-cardano-node/install/` tree when that 1.3 GB local
@@ -103,7 +110,7 @@ This document tracks concrete parity alignment against official IntersectMBO rep
 - **Closed consensus parity gap (R251, Gap BQ)**: preview VKey witness signature verification at slot `~1525024` on tx `44ccae438c4e1350271e772a96b4f974ee3a48c6458d7c2499a200abbdb55948`. With `YGG_SKIP_PHASE2=1` the R249 preview sync advanced past Gap BP through 17 epoch boundaries and reached slot `~1525024`, then failed with `VKey witness signature verification failed for hash 45d70e54f3b5e9c5a2b0cd417028197bd6f5fa5378c2f5eba896678d` from IOG bootstrap peer `99.80.240.19:3001`. **Initial hypothesis (libsodium-vs-`verify_strict` strictness divergence) was disproven** by direct byte-level inspection: signature R/S canonical, vkey not small-order, AND independent verification with OpenSSL Ed25519 (Python `cryptography`) ALSO rejected the signature against Yggdrasil's computed message — proving the bug was a wrong `tx_body_hash`, not a verifier-strictness issue. The security guardrail correctly stopped the agent-judgment Ed25519 weakening that would have masked the real bug. **Root cause** (R251 byte-level forensic via `crates/tools/db-analyser/src/bin/dump_block.rs` walking the reference Haskell ChainDB chunk 353): Yggdrasil's `crates/ledger/src/cbor.rs::extract_block_tx_byte_spans` used strict `dec.array()` for the outer block, bodies array, and witness-set array. Real preview Babbage blocks (e.g. block at chunk-353 offset `~114079`) encode the bodies-array itself with CBOR indefinite-length (`0x9f ... 0xff`, RFC 8949 §3.2.1). When extraction failed, the apply-path macro `crates/node/sync/src/lib.rs::alonzo_family_block_to_block_with_spans` fell back to `tx_body.to_cbor_bytes()` re-serialization (always definite-length), producing a `tx_body_hash` that differed from the on-wire (indefinite) hash the signer signed. **Fix** (R251): switched all three `array()` calls to `array_begin()` plus a new `collect_indefinite_or_definite_spans` helper that walks both definite and indefinite-length encodings, preserving byte spans exactly. 2 regression tests pin the fix: `extract_block_tx_byte_spans_handles_indefinite_bodies_array` and `extract_block_tx_byte_spans_handles_indefinite_witnesses_array`. **Verification**: 25-min preview soak resumed from saved checkpoint at slot 1,488,359 and advanced cleanly to slot **1,557,718** — past the previous Gap BQ failure point with 32K-slot margin, zero witness verification errors, 17 epoch boundaries crossed. Forensic artifacts preserved at `docs/operational-runs/2026-05-05-round-249-preview-vkey-witness-fail-{slot-1525024.log,tx-44ccae43-bytes.txt}` (capture log + bytes) and `…-classify-signature.py` (canonicality classifier).
 - **Operator-facing perf gap (R249/R250 sidefinding)**: in the side-by-side preview soaks, Haskell `cardano-node 10.7.1` syncs at **5,296 slot/s** vs. Yggdrasil at **1,653 slot/s** — Haskell is currently **3.2× faster** on a fresh sync from genesis. The dominant contributor is peer-snapshot configuration: `configuration/preview/peer-snapshot.json` shipped a 321-byte placeholder with one fake pool, while the upstream Haskell preview share ships a 28 KB snapshot with **131 unique relay addresses across ~50 ledger pools**. Combined with a runtime-side bug where Yggdrasil treated peer-snapshot peers as if gated behind `useLedgerAfterSlot=102_729_600` (Haskell uses snapshot peers immediately at startup as `bigLedgerPeers`, gate only applies to live-ledger-derived peers), Yggdrasil was effectively single-peer until slot `102M+`, while Haskell has multi-peer fetch from genesis. Closing this gap was config + a small runtime fix: replace the placeholder `peer-snapshot.json` with the upstream content, and split the snapshot-vs-live-ledger gating in `crates/node/runtime/src/sync_session.rs`. Target: **2× faster than Haskell** = 6.4× current Yggdrasil throughput.
 - **R250 partial close (2026-05-05)**: peer-snapshot adoption + split-gate landed. Replaced placeholder `peer-snapshot.json` for preview/preprod/mainnet with the upstream Haskell-share content (preview 28 KB / 175 pools, preprod 15 KB, mainnet 152 KB / many more pools). Bumped `useLedgerAfterSlot` to upstream-aligned values (preview 107222465, preprod 118022427, mainnet 182044807) and `MinNodeVersion` 10.6.2 → 10.7.0 in all three `config.json`. Split snapshot-vs-live-ledger gating: new `crates/network/src/ledger_peers_provider.rs::always_eligible_snapshot_peers` plus `crates/node/config/src/lib.rs::NodeConfigFile::always_eligible_snapshot_fallbacks` wrapper, called alongside the existing gated `eligible_ledger_peer_candidates` from both startup (`crates/node/cardano-node/src/ledger_peers.rs::configured_fallback_peers`) and reconnect (`crates/node/runtime/src/sync_session.rs`) paths. Snapshot peers now eligible immediately at startup (verified live: trace `evaluated ledger-derived startup fallbacks` shows `snapshotEligibleCount=174 liveLedgerEligibleCount=0 decision=AwaitingLatestSlot { after_slot: 107222465 }`). 2 regression tests pin the new behavior: `snapshot_peers_eligible_before_use_ledger_after_slot` and `live_ledger_peers_remain_gated_when_snapshot_eligible`. **Measured perf delta**: Yggdrasil 1,653 → 2,321 slot/s (40% throughput improvement) across a 5-min preview soak from genesis. **Remaining work**: governor outbound-connect path doesn't yet promote snapshot-eligible peers to BlockFetch workers (`yggdrasil_blockfetch_workers_registered` stays at 0; `active_peers=1`). R254 perf round must wire snapshot peers into the warm/hot promotion loop and add batched Ed25519 verify + pipelined CBOR decode + allocator tuning to clear the 2× Haskell goal.
-- Active validation focus remains Gap BO and Gap BP. For BO, re-replay the preserved log, narrow the failing block, compare the overlay classification + active-delegate selection + VRF input/seed/key against upstream `Cardano.Protocol.TPraos.Rules.Overlay.classifyOverlaySlot` and `pbftVrfChecks` for the exact slot. For BP, diff `crates/plutus/src/cost_model.rs::step_cost(kind)` against the V2 cost-model B JSON byte-for-byte and audit `crates/plutus/src/machine.rs::spend_step` increments at `Var`/`LamAbs`/`Apply`/`Delay`/`Force`/`Constant`/`Builtin` sites for off-by-one against upstream `Cek/Internal.hs::stepAndMaybeSpend`. Once both close, run clean preview replay through the R248 overlay fix, then complete systematic mainnet endurance rehearsal plus runbook §6.5 sign-off using `scripts/parallel_blockfetch_soak.sh` before changing the default `max_concurrent_block_fetch_peers`.
+- Active validation focus remains Gap BO and Gap BP. For BO, re-replay the preserved log, narrow the failing block, compare the overlay classification + active-delegate selection + VRF input/seed/key against upstream `Cardano.Protocol.TPraos.Rules.Overlay.classifyOverlaySlot` and `pbftVrfChecks` for the exact slot. For BP, diff `crates/plutus/src/cost_model.rs::step_cost(kind)` against the V2 cost-model B JSON byte-for-byte and audit `crates/plutus/src/machine.rs::spend_step` increments at `Var`/`LamAbs`/`Apply`/`Delay`/`Force`/`Constant`/`Builtin` sites for off-by-one against upstream `Cek/Internal.hs::stepAndMaybeSpend`. Once both close, run clean preview replay through the R248 overlay fix, then complete systematic mainnet endurance rehearsal plus runbook §6.5 sign-off using `scripts/parallel_blockfetch_soak.sh`; the shipped `max_concurrent_block_fetch_peers` default is already `2`, while operators can still set `1` explicitly for single-peer replay/audit behaviour.
 - Fixture and Plutus maintenance focus: keep the R239 `cardano-base` vector cadence current when upstream advances again, and keep the R246 Plutus parity assumptions under replay/drift watch as new preview/preprod scripts appear.
 
 ## Upstream Anchors

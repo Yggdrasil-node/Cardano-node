@@ -106,6 +106,15 @@ jobs:
           python3 scripts/check-stale-placement.py --self-test
           python3 scripts/check-stale-placement.py
 
+      # Central parity-doc status guard.
+      # Keeps PARITY_SUMMARY, UPSTREAM_PARITY, COMPLETION_ROADMAP, and
+      # PARITY_DASHBOARD aligned with the latest operational-run round
+      # and docs/parity-matrix.json status counts.
+      - name: Doc-status header guard
+        run: |
+          python3 scripts/check-doc-status-headers.py --self-test
+          python3 scripts/check-doc-status-headers.py
+
       # Fetch upstream Haskell source trees only (no 870 MB install
       # tarball). Required by the parity-matrix validator below, which
       # asserts every `haskell_reference[*].path` exists on disk under

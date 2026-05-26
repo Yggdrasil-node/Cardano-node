@@ -28,6 +28,32 @@ pub fn compute_tx_id(body_bytes: &[u8]) -> TxId {
     TxId(yggdrasil_crypto::hash_bytes_256(body_bytes).0)
 }
 
+/// Compute the `TxId` from a complete Shelley-family transaction CBOR value.
+///
+/// Upstream `getTxId . getTxBody` hashes the original on-wire CBOR bytes of
+/// the transaction body, not the whole transaction and not a re-encoded body.
+/// Cardano transactions encode the body as the first element of the outer
+/// transaction array (`[body, witnesses, ?isValid, aux]`), so this helper
+/// captures that first raw CBOR item and delegates to [`compute_tx_id`].
+pub fn compute_tx_id_from_tx_cbor(tx_bytes: &[u8]) -> Result<TxId, LedgerError> {
+    let mut dec = Decoder::new(tx_bytes);
+    let array_len = dec.array().map_err(|err| {
+        LedgerError::CborDecodeError(format!(
+            "transaction CBOR does not start with an array: {err}"
+        ))
+    })?;
+    if array_len < 2 {
+        return Err(LedgerError::CborDecodeError(format!(
+            "transaction CBOR array must contain at least body and witness set, got {array_len}"
+        )));
+    }
+
+    let body_bytes = dec.raw_value().map_err(|err| {
+        LedgerError::CborDecodeError(format!("failed to extract transaction body bytes: {err}"))
+    })?;
+    Ok(compute_tx_id(body_bytes))
+}
+
 /// A transaction identified by its body hash.
 ///
 /// The `body` field holds the transaction's opaque serialized payload until
@@ -859,6 +885,22 @@ mod tests {
     fn compute_tx_id_is_32_bytes() {
         let id = compute_tx_id(b"payload");
         assert_eq!(id.0.len(), 32);
+    }
+
+    #[test]
+    fn compute_tx_id_from_tx_cbor_hashes_first_array_element() {
+        let tx_cbor = [0x83, 0xa0, 0xa0, 0xf6];
+        let expected = compute_tx_id(&[0xa0]);
+        assert_eq!(compute_tx_id_from_tx_cbor(&tx_cbor).unwrap(), expected);
+    }
+
+    #[test]
+    fn compute_tx_id_from_tx_cbor_rejects_non_array() {
+        let err = compute_tx_id_from_tx_cbor(&[0xa0]).expect_err("non-array transaction rejects");
+        assert!(
+            err.to_string().contains("transaction CBOR") || err.to_string().contains("array"),
+            "got: {err}"
+        );
     }
 
     // ── Tx struct ──────────────────────────────────────────────────────

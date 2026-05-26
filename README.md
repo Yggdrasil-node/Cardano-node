@@ -9,7 +9,7 @@
 [![Release](https://github.com/yggdrasil-node/Cardano-node/actions/workflows/release.yml/badge.svg)](https://github.com/yggdrasil-node/Cardano-node/actions/workflows/release.yml)
 [![Latest release](https://img.shields.io/github/v/release/yggdrasil-node/Cardano-node?include_prereleases&sort=semver)](https://github.com/yggdrasil-node/Cardano-node/releases/latest)
 [![Rust 1.95.0](https://img.shields.io/badge/rust-1.95.0-orange)](rust-toolchain.toml)
-[![Tests](https://img.shields.io/badge/tests-6.5K%2B%20passing-brightgreen)](#current-status)
+[![Tests](https://img.shields.io/badge/tests-7%2C222%20passing-brightgreen)](#current-status)
 
 Yggdrasil is a pure Rust Cardano node workspace targeting long-term protocol and serialization parity with the upstream Cardano node.
 
@@ -81,19 +81,21 @@ Full details: [Installing from Releases](https://yggdrasil-node.github.io/Cardan
 - **Node CLI**: `clap`-based binary with `run` (connect to peer and sync), `validate-config` (operator preflight for config, peer-snapshot inputs, and any existing storage recovery state), `status` (inspect on-disk storage and report sync position, block counts, and checkpoint state), and `default-config` (emit JSON config) subcommands. JSON configuration file support with CLI flag overrides, topology/config parsing that feeds reusable network-crate topology and peer-ordering helpers, and upstream-aligned tracing fields (`TurnOnLogging`, `UseTraceDispatcher`, `TraceOptions`, `TraceOptionNodeName`, `TraceOptionForwarder`). `NodeMetrics` provides atomic operational counters wired into the hot sync loops, with `--metrics-port` exposing a Prometheus-compatible HTTP `/metrics` endpoint and a JSON `/metrics/json` endpoint on `127.0.0.1`.
 - **Node sync orchestration**: Full multi-era sync pipeline from bootstrap through managed service. Multi-era block decode (all 7 era tags). Consensus header verification bridge. Block header hash computation (Blake2b-256). Ordered bootstrap relay fallback plus reconnecting verified sync on ChainSync or BlockFetch connectivity loss. Graceful shutdown via Ctrl-C signal handling. A local `NodeTracer` emits human- or machine-formatted runtime trace objects for bootstrap, reconnect, sync progress, and shutdown/failure paths. Live sync evicts confirmed and expired transactions from the shared mempool, epoch-boundary reward math uses tracked per-pool performance, and rollback recovery restores nonce/OpCert ChainDepState from sidecar history before replaying stored blocks to the selected rollback point.
 - **Upstream parity**: CBOR golden round-trip tests, cross-subsystem integration tests, and wire-format field naming aligned with official Cardano CDDL specifications.
-- **Validation baseline**: all four cargo gates pass as of 2026-05-17 on the pinned Rust 1.95.0 toolchain — `cargo fmt --all -- --check`, `cargo check-all`, `cargo lint`, and `cargo test-all` (**6,519 tests passing, 0 failing**). The strict 1:1 file-mirror drift-guard (`scripts/check-strict-mirror.py`) and the checked-in parity-flow validators (`check-parity-matrix.py`, `check-fixture-manifest.py`) are clean. See [`docs/PARITY_DASHBOARD.md`](docs/PARITY_DASHBOARD.md) for the compact status board, [`docs/PARITY_SUMMARY.md`](docs/PARITY_SUMMARY.md), [`docs/PARITY_PROOF.md`](docs/PARITY_PROOF.md), and [`docs/UPSTREAM_PARITY.md`](docs/UPSTREAM_PARITY.md) for the round-by-round parity arc, and [`docs/COMPLETION_ROADMAP.md`](docs/COMPLETION_ROADMAP.md) for the remaining-work backlog.
+- **Validation baseline**: all four cargo gates pass as of 2026-05-26 on the pinned Rust 1.95.0 toolchain — `cargo fmt --all -- --check`, `cargo check-all`, `cargo lint`, and `cargo test-all` (**7,251 tests passing, 0 failing, 3 ignored**; 7,254 listed tests total). The strict 1:1 file-mirror drift-guard (`scripts/check-strict-mirror.py`) and the checked-in parity-flow validators (`check-parity-matrix.py`, `check-fixture-manifest.py`, `check-stale-placement.py`, `check-doc-status-headers.py`, and `.claude/scripts/filetree.py`) are clean. See [`docs/PARITY_DASHBOARD.md`](docs/PARITY_DASHBOARD.md) for the compact status board, [`docs/PARITY_SUMMARY.md`](docs/PARITY_SUMMARY.md), [`docs/PARITY_PROOF.md`](docs/PARITY_PROOF.md), and [`docs/UPSTREAM_PARITY.md`](docs/UPSTREAM_PARITY.md) for the round-by-round parity arc, and [`docs/COMPLETION_ROADMAP.md`](docs/COMPLETION_ROADMAP.md) for the remaining-work backlog.
 - CI workflow and workspace cargo aliases for check/test/lint.
 
 ### Status: code-level parity closure
 
-As of R248, every confirmed-active code-level parity slice tracked in [`docs/archive/AUDIT_VERIFICATION_2026Q2.md`](docs/archive/AUDIT_VERIFICATION_2026Q2.md) is closed, including the runtime integrations that previously lived as follow-ups: multi-session BlockFetch orchestration through the per-peer `FetchWorkerPool` (mirroring upstream `Ouroboros.Network.BlockFetch.ClientRegistry`) consuming `partition_fetch_range_across_peers`; the ChainSync `observe_header(slot)` hook feeding per-peer `DensityWindow` instances surfaced through `PeerMetrics.density`; weight-aware connection-manager scheduling driven by `HotPeerScheduling` with density-biased demotion; Phase D.1 rollback sidecar hardening, where nonce/OpCert ChainDepState restores to the exact rollback point using slot-indexed sidecar bundles and stored-block replay; the coordinated upstream pin refreshes through the latest `cardano-ledger` BBODY/GOV drift; startup verification of all four preset genesis hashes, including Byron's upstream canonical JSON hash path; the upstream Conway BBODY temporary suppression of `HeaderProtVerTooHigh` on testnets until protocol major 12; preview Plutus well-formedness/runtime parity for the observed Babbage reference-script path; and TPraos active-overlay VRF validation for genesis-delegate slots. The remaining production-readiness gates are operator-side rehearsals in [`docs/MANUAL_TEST_RUNBOOK.md`](docs/MANUAL_TEST_RUNBOOK.md) §2–9 (preprod/mainnet sync, hash compare vs Haskell node, restart-resilience cycles, parallel-fetch rehearsal §6.5, sign-off summary); R240 adds the `parallel_blockfetch_soak.sh` harness so §6.5 evidence collection is reproducible.
+As of R839, the core node parity closure remains intact and the active work is evidence collection plus the remaining sister-tool surfaces. The R689-R839 continuation covered tx-generator DumpToFile narrowing, db-analyser genesis-bootstrap correction, dmq-node protocol/peer-driver/registry/bundle surfaces, cardano-testnet era-aware option/parser work, typed Command payload wiring, `Testnet/Types.hs` runtime record carriers, `Testnet/Process/Cli/Keys.hs` command builders, `Testnet/Process/Cli/Transaction.hs` sign/submit/txid and spend-output txbody builders, `Testnet/Process/Cli/DRep.hs` pure key/cert/vote builders, `Testnet/Process/Cli/SPO.hs` pure certificate/vote builders, `Testnet/Process/Run.hs` flexible process wrappers, `Testnet/Process/RunIO.hs` plan-json binary-resolution/execution helpers, `Testnet/Property/Util.hs` pure harness primitives, `Testnet/Property/Assert.hs` pure plus CLI-backed stake-pool assertion helpers, and `Testnet/Property/Run.hs` pure harness-control/planning helpers, plus this workspace audit cleanup. These rounds do not change the remaining operator and wire-comparison gates tracked in [`docs/COMPLETION_ROADMAP.md`](docs/COMPLETION_ROADMAP.md): the §2-9 mainnet endurance rehearsal, the §6.5 parallel-fetch sign-off, Gap BO, Gap BP, and the R178-followup LSQ response-envelope comparison.
 
 ### Ongoing operational work
 
 - Mainnet sync endurance testing per the runbook (Phase E.2 — 24h+ rehearsal).
+- Parallel BlockFetch sign-off with live worker activation and Haskell tip comparison.
+- Wire-comparison follow-up for Gap BO, Gap BP, and the R178-followup LSQ response envelope.
 - Extended cardano-tracer interoperability validation.
 
-### Remaining gates (R211→R248 arc)
+### Remaining gates (current R839 status)
 
 The remaining items are operator-time gates, not known code-level parity blockers:
 
@@ -137,12 +139,13 @@ All four must pass. The release build also runs `cargo doc --workspace --no-deps
 
 ### Parity-flow gates
 
-Yggdrasil tracks the **latest IntersectMBO/cardano-node release tag** as the parity target (currently `11.0.1`). Three additional gates surface parity-risk early:
+Yggdrasil tracks the **latest IntersectMBO/cardano-node release tag** as the parity target (currently `11.0.1`). Additional parity-flow gates surface parity-risk early:
 
 ```bash
 python3 scripts/check-parity-matrix.py          # validates docs/parity-matrix.json
 python3 scripts/check-stale-placement.py --self-test
 python3 scripts/check-stale-placement.py        # flags retired paths and stale current-status gates
+python3 scripts/check-doc-status-headers.py     # aligns central parity-doc headers and dashboard counts
 python3 .claude/scripts/filetree.py check       # flags stale .claude/filetree manifest entries
 bash    scripts/setup-reference.sh              # refresh reference snapshot + Linux/WSL install to policy tag
 ```

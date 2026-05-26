@@ -98,6 +98,9 @@ yggdrasil-db-*.tar.gz
 coverage/
 lcov.info
 
+# Generated tx-generator selftest output
+/crates/tools/tx-generator/plutus-budget-summary.json
+
 # Python tooling artifacts
 __pycache__/
 *.pyc

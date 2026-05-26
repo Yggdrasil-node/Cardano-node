@@ -51,8 +51,7 @@ pub fn run() -> eyre::Result<()> {
 pub enum RunError {
     /// Daemon dispatch is deferred. Mirror of upstream's
     /// `Cardano.KESAgent.Processes.{ServiceMain, ServiceClient, RunCommands}`
-    /// — gated on the named kes-agent mini-arc per the
-    /// playful-tickling-plum.md plan (R344-R354).
+    /// — gated on the R444+ kes-agent daemon/socket follow-on.
     #[error(
         "yggdrasil-kes-agent: daemon dispatch deferred (see crates/tools/kes-agent/src/status.rs::\
          daemon_status for the full deferral rationale). Help/version output IS \

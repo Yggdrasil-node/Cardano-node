@@ -3,22 +3,21 @@
 //!
 //! ## Naming parity
 //!
-//! **Strict mirror:** none. Yggdrasil-side parent shell + R335-pattern
-//! file-mirror + CLI-parser skeleton for the `dmq-node` sister-tool crate.
-//! Per-leaf module mirrors land in subsequent rounds per the
-//! Sister-Tools Pure-Rust Port plan.
+//! **Strict mirror:** none. Yggdrasil-side parent shell for the `dmq-node`
+//! sister-tool crate plus local Rust module surfaces that mirror the vendored
+//! DMQ protocol, inbound-governor, NodeKernel, and mux-bundle structure.
 //!
-//! Layout mapping (R356 ships types.rs; later rounds populate the rest):
+//! Layout mapping (post-R816):
 //!
 //! | Upstream `.hs`                                            | Yggdrasil `.rs`              |
 //! |-----------------------------------------------------------|------------------------------|
 //! | `src/DMQ/Configuration/CLIOptions.hs` + `Configuration.hs` (CLI shape) | `types.rs`         |
 //! | `src/DMQ/Configuration/CLIOptions.hs::parseCLIOptions`    | `parser.rs`                  |
-//! | `src/DMQ/Configuration.hs::readConfigurationFile`         | `config_file.rs` (pending)   |
-//! | `src/DMQ/Configuration/Topology.hs`                       | `topology.rs` (pending)      |
-//! | `src/DMQ/NodeToNode.hs` + `NodeToClient.hs`               | `mux/{ntn,ntc}.rs` (pending; via crates/network) |
-//! | `src/DMQ/Protocol/*`                                      | `protocol/*.rs` (in progress) |
-//! | `src/DMQ/Diffusion/*`                                     | `diffusion/*.rs` (pending)   |
+//! | `src/DMQ/Configuration.hs::readConfigurationFile`         | `configuration.rs`           |
+//! | `src/DMQ/Configuration/Topology.hs`                       | `topology.rs`                |
+//! | `src/DMQ/NodeToNode.hs` + `NodeToClient.hs`               | `node_to_node.rs` + `node_to_client.rs` |
+//! | `src/DMQ/Protocol/*`                                      | `protocol/*.rs`              |
+//! | `src/DMQ/Diffusion/*` + `NodeKernel.hs`                   | `diffusion.rs`, `registry.rs`, `peer_sharing.rs`, `delta_q.rs`, `keep_alive.rs` |
 //! | `src/DMQ/Tracer.hs`                                       | `tracer.rs` (pending)        |
 //! | `app/Main.hs`                                             | `main.rs`                    |
 
@@ -101,10 +100,12 @@ pub fn run_main() -> ExitCode {
 
 /// Concrete run-loop entry.
 ///
-/// R361 lands the parser → resolve → run() chain; the actual
-/// Diffusion/NodeKernel/PeerSelection wiring lands at R357+ per the
-/// per-tool roadmap. Until then, this returns a sentinel error
-/// describing what's missing.
+/// R361/R369 wire the parser + configuration chain. R717-R816 ship
+/// the DMQ protocol, inbound governor, NodeKernel helper records, and
+/// NtN/NtC mux bundles. The remaining concrete behavior is the final
+/// `run()` event loop that binds sockets, performs handshakes, starts
+/// mux drivers, and supervises the protocol tasks; until then, this
+/// returns a sentinel error describing the missing assembly.
 pub fn run(config: &types::Configuration) -> eyre::Result<()> {
     Err(RunError::DiffusionWiringDeferred {
         host: format!("{}:{}", config.host_addr, config.port_number),
@@ -123,9 +124,8 @@ pub fn run(config: &types::Configuration) -> eyre::Result<()> {
 pub enum RunError {
     /// Diffusion / NodeKernel / PeerSelection wiring is deferred.
     /// Mirror of upstream's DMQ.Node.{Diffusion, Run, NodeKernel}
-    /// — gated on the dmq-node mini-arc per the
-    /// playful-tickling-plum.md plan (R450-R459 — Tier 4 sister
-    /// project).
+    /// — the R717-R816 component arc is shipped, but the final
+    /// event-loop assembly remains pending.
     #[error(
         "yggdrasil-dmq-node: Diffusion / NodeKernel / PeerSelection wiring deferred (see \
          crates/tools/dmq-node/src/status.rs::diffusion_wiring_status for the full deferral \

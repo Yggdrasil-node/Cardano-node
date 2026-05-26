@@ -159,15 +159,21 @@ fn protocol_parameters_file() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::script::core::plutus_budget_summary_file_for_tests;
     use crate::script::types::ProtocolParametersSource;
-
-    const PLUTUS_BUDGET_SUMMARY_FILE: &str = "plutus-budget-summary.json";
 
     struct BudgetSummaryFileCleanup;
 
+    impl BudgetSummaryFileCleanup {
+        fn new() -> Self {
+            let _ = std::fs::remove_file(plutus_budget_summary_file_for_tests());
+            Self
+        }
+    }
+
     impl Drop for BudgetSummaryFileCleanup {
         fn drop(&mut self) {
-            let _ = std::fs::remove_file(PLUTUS_BUDGET_SUMMARY_FILE);
+            let _ = std::fs::remove_file(plutus_budget_summary_file_for_tests());
         }
     }
 
@@ -215,8 +221,7 @@ mod tests {
 
     #[test]
     fn run_selftest_discard_executes_complete_static_script() {
-        let _cleanup = BudgetSummaryFileCleanup;
-        let _ = std::fs::remove_file(PLUTUS_BUDGET_SUMMARY_FILE);
+        let _summary_file_cleanup = BudgetSummaryFileCleanup::new();
 
         run_selftest(None).expect("selftest discard");
     }
@@ -227,9 +232,8 @@ mod tests {
             "yggdrasil-tx-generator-selftest-{}.out",
             std::process::id()
         ));
-        let _cleanup = BudgetSummaryFileCleanup;
+        let _summary_file_cleanup = BudgetSummaryFileCleanup::new();
         let _ = std::fs::remove_file(&output_path);
-        let _ = std::fs::remove_file(PLUTUS_BUDGET_SUMMARY_FILE);
 
         run_selftest(Some(&output_path)).expect("selftest dump");
 

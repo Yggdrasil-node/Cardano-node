@@ -20,8 +20,17 @@ another. A small set of stale current-status claims is guarded here too:
 obsolete node-local LSQ wording, old cardano-cli counts and gate wording, old
 three-command node-wrapper cardano-cli subset wording, stale active-migration
 wording for the closed cardano-cli C-arc, obsolete parity-summary baselines,
-obsolete proof/upstream verification baselines, and the closed
-workspace-member gap.
+obsolete proof/upstream verification baselines, old README/docs-site test
+baselines, stale cardano-submit-api structured-decoder/R345-R346 evidence
+wording, stale kes-agent/kes-agent-control early-mini-arc status wording,
+stale root-manifest sister-tool labels, stale dmq-node pre-R816 current-status
+wording, stale cardano-testnet pre-R823 current-status wording, the closed
+cardano-testnet Command-payload, Process/Cli/Keys, Transaction
+sign/submit/txid, DRep pure-builder, SPO pure-builder, and Process/Run
+flexible-wrapper, RunIO plan-json, RunIO execution, Property/Util, and
+Property/Assert pure-helper/CLI-wrapper, and Property/Run pure-helper gaps,
+the closed bech32 pre-verified current-status wording, closed cardano-submit-api
+accepted-response OK wording, and the closed workspace-member gap.
 
 The vendored Haskell reference snapshot is allowed to contain source files and
 reference artifacts, but it must not retain nested Git metadata. It is a
@@ -383,7 +392,7 @@ STALE_PATTERNS = {
         r"249 parity rounds covering"
     ),
     "stale parity proof baseline wording": re.compile(
-        r"Cumulative arc\*\*: R1\s*(?:→|->)\s*R320\+|"
+        r"Cumulative arc\*\*: R1\s*(?:→|->)\s*(?:R320|R529)\+|"
         r"Workspace tests\*\*: 4,982 passing|"
         r'canonical reference for "what works end-to-end" today|'
         r"check-parity-matrix\.py` over 8 entries"
@@ -392,7 +401,28 @@ STALE_PATTERNS = {
         r"Last updated: 2026-05-05; header|"
         r"Five-gate snapshot \(post-R311|"
         r"`cargo test --workspace --all-features`: 4,982 passing / 0 failing|"
-        r"`check-parity-matrix\.py` \(8 entries"
+        r"`check-parity-matrix\.py` \(8 entries|"
+        r"Post-R529 focused cleanup gates"
+    ),
+    "stale living docs verification baseline": re.compile(
+        r"6,519 tests passing|"
+        r"7,295 tests passing|"
+        r"7%2C295%20passing|"
+        r"7,298 listed tests|"
+        r"7,210 tests passing|"
+        r"7,213 listed tests|"
+        r"6\.5K\+.*passing|"
+        r"4\.7K\+ tests|"
+        r"4\.7K\+ passing|"
+        r"Live workspace coverage is 4\.7K\+|"
+        r"As of R248|"
+        r"R211.*R248 arc"
+    ),
+    "stale blockfetch default flip wording": re.compile(
+        r"flip the default .*max_concurrent_block_fetch_peers.*from `1` to `2`|"
+        r"flip(?:ping)? the default .*max_concurrent_block_fetch_peers.*from 1 to 2|"
+        r"before changing the default `max_concurrent_block_fetch_peers`|"
+        r"shipped default \(`max_concurrent_block_fetch_peers = 1`\)"
     ),
     "stale tx-generator cardano-cli prerequisite gate": re.compile(
         r"cardano-cli C-arc CLI-MVS|"
@@ -418,6 +448,145 @@ STALE_PATTERNS = {
         r"Phase F bootstrap state|"
         r"R298\+ migration roadmap|"
         r"concrete implementations port over multi-week R296\+ follow-up work"
+    ),
+    "stale cardano-submit-api structured-decoder debt": re.compile(
+        r"structured-enum decoder, deferred|"
+        r"Yggdrasil's variant is era-opaque at the Rust-type level pending|"
+        r"raw-bytes carrier with the full per-era predicate-failure sum types"
+    ),
+    "stale cardano-submit-api R345/R346 evidence wording": re.compile(
+        r"R345 milestone of the cardano-|"
+        r"cardano-submit-api integration soak \(R345\)|"
+        r"validation at R345|"
+        r"Phase A\.2 closeout \(R346\)|"
+        r"before R346 closeout|"
+        r"lands at R345|"
+        r"scheduled \(gated on R345\)|"
+        r"cardano-submit-api\",\s*# partial\s*(?:—|-)\s*R338-R345 implementation arc"
+    ),
+    "stale cardano-submit-api accepted-response OK wording": re.compile(
+        r"TxId in 202 success body\s*(?:—|-)\s*upstream returns `TxId` from|"
+        r"Yggdrasil still returns `?\\?\"OK\\?\"`?|"
+        r"Yggdrasil currently returns (?:an )?empty success body \(`?\\?\"OK\\?\"`?\)|"
+        r"empty `?\\?\"OK\\?\"` response body|"
+        r"Accepted-response parity: upstream `cardano-submit-api` returns the submitted transaction `TxId`"
+    ),
+    "stale kes-agent R344/R345 current-status wording": re.compile(
+        r"subcommand dispatch lands at \*\*R345\+\*\*|"
+        r"once concrete dispatch lands at `R345\+`|"
+        r"Next:\s*\*\*R345\*\*|"
+        r"awaiting Phase A\.3 entry at R344\+|"
+        r"Skeleton round at R344: file-tree mirror \+ CLI parser scaffolding\.|"
+        r"R344-R354(?: mini-arc)?"
+    ),
+    "stale kes-agent-control pre-R444 current-status wording": re.compile(
+        r"subcommand dispatch lands at \*\*R356\+\*\*|"
+        r"once concrete dispatch lands at `R356\+`|"
+        r"Next:\s*\*\*R356\*\*"
+    ),
+    "stale sister-tool root manifest status label": re.compile(
+        r'"crates/tools/bech32",\s*#\s*R334 verified_11_0_1|'
+        r'"crates/tools/kes-agent",\s*#\s*skeleton\b.*R443 deferral|'
+        r'"crates/tools/cardano-tracer",\s*#\s*partial\b.*R411-R438|'
+        r'"crates/tools/db-truncater",\s*#\s*partial\b.*R347-R350 implementation arc|'
+        r'"crates/tools/db-analyser",\s*#\s*partial\b.*R442 structured deferral surface|'
+        r'"crates/tools/snapshot-converter",\s*#\s*partial\b.*R446 format-version scaffolding|'
+        r'"crates/tools/db-synthesizer",\s*#\s*partial\b.*R441 structured deferral surface|'
+        r'"crates/tools/cardano-testnet",\s*#\s*partial\b.*R445 structured deferral surface|'
+        r'"crates/tools/cardano-testnet",\s*#\s*partial\b.*R534 era-aware runtime pending|'
+        r'"crates/tools/tx-generator",\s*#\s*skeleton\b.*tx-generator parser/submission arc pending|'
+        r'"crates/tools/dmq-node",\s*#\s*partial\b.*R444 structured deferral surface'
+    ),
+    "stale dmq-node pre-R816 current-status wording": re.compile(
+        r"Diffusion \+ NodeToNode \+ NodeToClient \+ NodeKernel implementation pending\.|"
+        r"R357\+ for Diffusion/NodeKernel/PeerSelection wiring|"
+        r"Diffusion/NodeKernel/PeerSelection wiring lands at R357\+|"
+        r"once concrete dispatch lands at `R451\+`\.|"
+        r"Next:\s*\*\*R451\*\*"
+    ),
+    "stale cardano-testnet pre-R823 current-status wording": re.compile(
+        r"R445 surfaces the era-aware-dispatch \+ Process/Property carve-outs as a `\*_status\(\)` helper\.|"
+        r"cardano-testnet mini-arc per .*R416-R433|"
+        r"R367 lands argv (?:→|->) \[`parser::Command`\] subcommand dispatch\.|"
+        r"`?parse_runtime_options`,\s*//! `parse_genesis_options` so far"
+    ),
+    "stale cardano-testnet Command-payload gap wording": re.compile(
+        r"Command payload/runtime pending|"
+        r"Command payload wiring pending|"
+        r"Remaining work is Command payload wiring|"
+        r"parse_args still carries PassthroughArgs until the next wiring slice|"
+        r"Wire parse_args Command::Cardano / Command::CreateEnv to carry the typed CardanoTestnetCliOptions / CardanoTestnetCreateEnvOptions records instead of PassthroughArgs\.|"
+        r"Pending: thread those typed records into `Command::Cardano` / `Command::CreateEnv`"
+    ),
+    "stale cardano-testnet process-handle type gap wording": re.compile(
+        r"process-handle runtime types \(`TestnetNode`,\s*`TestnetRuntime`,\s*`TestnetKesAgent`[^)]*hold OS process / stdio handles|"
+        r"Port Testnet/Types\.hs process-handle runtime types \(TestnetRuntime / TestnetNode / TestnetKesAgent\) with local process supervision\.|"
+        r"`Testnet/Types\.hs` \(portable runtime/key types\)\s*\|\s*`runtime_types\.rs`"
+    ),
+    "stale cardano-testnet process-cli keys gap wording": re.compile(
+        r"`Testnet/Process/Cli/\*\.hs` \(SPO/Tx/Keys/DRep dispatch\)\s*\|\s*`process/cli/\*\.rs` \(pending\)|"
+        r"Process/Cli/Keys\.hs .*pending|"
+        r"Port Testnet/Process/Cli/Keys\.hs"
+    ),
+    "stale cardano-testnet transaction sign-submit-txid gap wording": re.compile(
+        r"Process/Cli/\{SPO,Transaction,DRep\}\.hs helpers|"
+        r"Port the remaining Process/Cli SPO, Transaction, and DRep helpers|"
+        r"signTx/submitTx/retrieveTransactionId pending|"
+        r"Transaction sign/submit/txid builders pending"
+    ),
+    "stale cardano-testnet drep pure-builder gap wording": re.compile(
+        r"Process/Cli SPO/DRep helpers|"
+        r"Process/Cli/\{SPO,DRep\}\.hs helpers|"
+        r"DRep key/cert/vote builders pending|"
+        r"Port Testnet/Process/Cli/DRep\.hs"
+    ),
+    "stale cardano-testnet spo pure-builder gap wording": re.compile(
+        r"Process/Cli SPO helpers|"
+        r"Process/Cli/SPO\.hs helpers pending|"
+        r"SPO cert(?:ificate)?/vote builders pending|"
+        r"Port Testnet/Process/Cli/SPO\.hs"
+    ),
+    "stale cardano-testnet process-run gap wording": re.compile(
+        r"Process/Run\.hs .*pending|"
+        r"Process execution wrappers pending|"
+        r"process execution wrappers,\s*node/KES spawning|"
+        r"without process execution wrappers"
+    ),
+    "stale cardano-testnet runio plan-json gap wording": re.compile(
+        r"RunIO.*plan-json.*pending|"
+        r"plan-json binary-resolution helpers pending|"
+        r"without RunIO plan-json"
+    ),
+    "stale cardano-testnet runio execution gap wording": re.compile(
+        r"RunIO.*execution.*pending|"
+        r"RunIO execution/liftIO helpers pending|"
+        r"without RunIO execution"
+    ),
+    "stale cardano-testnet property-util pure-helper gap wording": re.compile(
+        r"Property/Util\.hs .*pending|"
+        r"integrationRetryWorkspace pending|"
+        r"aesonObjectLookUp pending|"
+        r"without Property/Util"
+    ),
+    "stale cardano-testnet property-assert pure-helper gap wording": re.compile(
+        r"Property/Assert\.hs .*pending|"
+        r"readJsonLines pending|"
+        r"getRelevantSlots pending|"
+        r"assertErasEqual pending|"
+        r"without Property/Assert|"
+        r"CLI-backed property assertions|"
+        r"remaining CLI-backed assertion wrappers|"
+        r"assertExpectedSposInLedgerState .*pending"
+    ),
+    "stale cardano-testnet property-run pure-helper gap wording": re.compile(
+        r"Property/Run\.hs pure .*pending|"
+        r"testnetProperty planning pending|"
+        r"UserProvidedEnv pending|"
+        r"ignoreOn(?:Windows|Mac|MacAndWindows)? pending|"
+        r"without Property/Run helpers"
+    ),
+    "stale bech32 pre-verified current-status wording": re.compile(
+        r"Yggdrasil pure-Rust port\s*(?:—|-)\s*R327 skeleton; concrete implementation lands across the A\.1 sub-arc per the R326(?:–|-)R459 sister-tools port plan\."
     ),
 }
 
@@ -472,6 +641,7 @@ SELF_TEST_STALE_CASES = (
     ("post-R394", "stale parity summary baseline wording"),
     ("249 parity rounds covering", "stale parity summary baseline wording"),
     ("**Cumulative arc**: R1 -> R320+", "stale parity proof baseline wording"),
+    ("**Cumulative arc**: R1 -> R529+", "stale parity proof baseline wording"),
     (
         "**Workspace tests**: 4,982 passing, 0 failing",
         "stale parity proof baseline wording",
@@ -501,6 +671,35 @@ SELF_TEST_STALE_CASES = (
         "stale upstream parity baseline wording",
     ),
     (
+        "Post-R529 focused cleanup gates",
+        "stale upstream parity baseline wording",
+    ),
+    ("6,519 tests passing, 0 failing", "stale living docs verification baseline"),
+    ("7,295 tests passing, 0 failing", "stale living docs verification baseline"),
+    ("tests-7%2C295%20passing-brightgreen", "stale living docs verification baseline"),
+    ("7,298 listed tests total", "stale living docs verification baseline"),
+    ("7,210 tests passing, 0 failing", "stale living docs verification baseline"),
+    ("7,213 listed tests total", "stale living docs verification baseline"),
+    ("The full workspace runs **4.7K+ tests**", "stale living docs verification baseline"),
+    ("Live workspace coverage is 4.7K+ passing tests", "stale living docs verification baseline"),
+    ("### Remaining gates (R211→R248 arc)", "stale living docs verification baseline"),
+    (
+        "flip the default in `crates/node/config/src/lib.rs::default_max_concurrent_block_fetch_peers` from `1` to `2`",
+        "stale blockfetch default flip wording",
+    ),
+    (
+        "before flipping the default `max_concurrent_block_fetch_peers` from 1 to 2",
+        "stale blockfetch default flip wording",
+    ),
+    (
+        "before changing the default `max_concurrent_block_fetch_peers`",
+        "stale blockfetch default flip wording",
+    ),
+    (
+        "shipped default (`max_concurrent_block_fetch_peers = 1`)",
+        "stale blockfetch default flip wording",
+    ),
+    (
         "tx-generator on the cardano-cli CLI-MVS (A2)",
         "stale tx-generator cardano-cli prerequisite gate",
     ),
@@ -524,6 +723,282 @@ SELF_TEST_STALE_CASES = (
     (
         "concrete implementations port over multi-week R296+ follow-up work",
         "stale cardano-cli bootstrap follow-up wording",
+    ),
+    (
+        "**Remaining work** (Phase 2 - structured-enum decoder, deferred)",
+        "stale cardano-submit-api structured-decoder debt",
+    ),
+    (
+        "All endpoints byte-identical. Phase A.2 closeout (R346) can",
+        "stale cardano-submit-api R345/R346 evidence wording",
+    ),
+    (
+        "subject to live-rehearsal validation at R345.",
+        "stale cardano-submit-api R345/R346 evidence wording",
+    ),
+    (
+        "### B2 - cardano-submit-api integration soak (R345)",
+        "stale cardano-submit-api R345/R346 evidence wording",
+    ),
+    (
+        '"crates/tools/cardano-submit-api",    # partial — R338-R345 implementation arc',
+        "stale cardano-submit-api R345/R346 evidence wording",
+    ),
+    (
+        "subcommand dispatch lands at **R345+** per the R326-R459 sister-tools port arc plan",
+        "stale kes-agent R344/R345 current-status wording",
+    ),
+    (
+        "SKELETON STUB awaiting Phase A.3 entry at R344+",
+        "stale kes-agent R344/R345 current-status wording",
+    ),
+    (
+        "Skeleton round at R344: file-tree mirror + CLI parser scaffolding.",
+        "stale kes-agent R344/R345 current-status wording",
+    ),
+    (
+        "subcommand dispatch lands at **R356+** per the R326-R459 sister-tools port arc plan",
+        "stale kes-agent-control pre-R444 current-status wording",
+    ),
+    (
+        "once concrete dispatch lands at `R356+`",
+        "stale kes-agent-control pre-R444 current-status wording",
+    ),
+    (
+        "Next: **R356** — first concrete-impl round of the mini-arc.",
+        "stale kes-agent-control pre-R444 current-status wording",
+    ),
+    (
+        '"crates/tools/bech32",                # R334 verified_11_0_1',
+        "stale sister-tool root manifest status label",
+    ),
+    (
+        '"crates/tools/kes-agent",             # skeleton — R443 deferral; R444+ daemon/socket follow-on',
+        "stale sister-tool root manifest status label",
+    ),
+    (
+        '"crates/tools/cardano-tracer",        # partial — R411-R438 cardano-tracer named arc closed + R431-R437 follow-ons',
+        "stale sister-tool root manifest status label",
+    ),
+    (
+        '"crates/tools/db-truncater",          # partial — R347-R350 implementation arc',
+        "stale sister-tool root manifest status label",
+    ),
+    (
+        '"crates/tools/db-analyser",           # partial — R442 structured deferral surface',
+        "stale sister-tool root manifest status label",
+    ),
+    (
+        '"crates/tools/snapshot-converter",    # partial — R446 format-version scaffolding',
+        "stale sister-tool root manifest status label",
+    ),
+    (
+        '"crates/tools/db-synthesizer",        # partial — R441 structured deferral surface',
+        "stale sister-tool root manifest status label",
+    ),
+    (
+        '"crates/tools/cardano-testnet",       # partial — R445 structured deferral surface',
+        "stale sister-tool root manifest status label",
+    ),
+    (
+        '"crates/tools/tx-generator",          # skeleton — cardano-cli prerequisite closed; tx-generator parser/submission arc pending',
+        "stale sister-tool root manifest status label",
+    ),
+    (
+        '"crates/tools/dmq-node",              # partial — R444 structured deferral surface',
+        "stale sister-tool root manifest status label",
+    ),
+    (
+        "Diffusion + NodeToNode + NodeToClient + NodeKernel implementation pending.",
+        "stale dmq-node pre-R816 current-status wording",
+    ),
+    (
+        "R361 lands the parser → resolve → run() chain; the actual Diffusion/NodeKernel/PeerSelection wiring lands at R357+",
+        "stale dmq-node pre-R816 current-status wording",
+    ),
+    (
+        "once concrete dispatch lands at `R451+`.",
+        "stale dmq-node pre-R816 current-status wording",
+    ),
+    (
+        "Next: **R451** — first concrete-impl round of the mini-arc.",
+        "stale dmq-node pre-R816 current-status wording",
+    ),
+    (
+        "R445 surfaces the era-aware-dispatch + Process/Property carve-outs as a `*_status()` helper.",
+        "stale cardano-testnet pre-R823 current-status wording",
+    ),
+    (
+        "the cardano-testnet mini-arc per the playful-tickling-plum.md plan (R416-R433",
+        "stale cardano-testnet pre-R823 current-status wording",
+    ),
+    (
+        "R367 lands argv → [`parser::Command`] subcommand dispatch.",
+        "stale cardano-testnet pre-R823 current-status wording",
+    ),
+    (
+        "parse_runtime_options`,\n//! `parse_genesis_options` so far",
+        "stale cardano-testnet pre-R823 current-status wording",
+    ),
+    (
+        '"crates/tools/cardano-testnet",       # partial — R823 parser composition; Command payload/runtime pending',
+        "stale cardano-testnet Command-payload gap wording",
+    ),
+    (
+        "`Parsers/{Run,Cardano}.hs` | `parser.rs` (Command payload wiring pending)",
+        "stale cardano-testnet Command-payload gap wording",
+    ),
+    (
+        "The typed CardanoTestnetCliOptions / CardanoTestnetCreateEnvOptions records are produced by helper parsers; parse_args still carries PassthroughArgs until the next wiring slice.",
+        "stale cardano-testnet Command-payload gap wording",
+    ),
+    (
+        "The process-handle runtime types (`TestnetNode`, `TestnetRuntime`, `TestnetKesAgent` - they hold OS process / stdio handles) remain pending.",
+        "stale cardano-testnet process-handle type gap wording",
+    ),
+    (
+        "Port Testnet/Types.hs process-handle runtime types (TestnetRuntime / TestnetNode / TestnetKesAgent) with local process supervision.",
+        "stale cardano-testnet process-handle type gap wording",
+    ),
+    (
+        "| `Testnet/Types.hs` (portable runtime/key types) | `runtime_types.rs` |",
+        "stale cardano-testnet process-handle type gap wording",
+    ),
+    (
+        "| `Testnet/Process/Cli/*.hs` (SPO/Tx/Keys/DRep dispatch) | `process/cli/*.rs` (pending) |",
+        "stale cardano-testnet process-cli keys gap wording",
+    ),
+    (
+        "Process/Cli/Keys.hs remains pending until the next process-wrapper round.",
+        "stale cardano-testnet process-cli keys gap wording",
+    ),
+    (
+        "Port Testnet/Process/Cli/Keys.hs before node spawning.",
+        "stale cardano-testnet process-cli keys gap wording",
+    ),
+    (
+        "Port the remaining Process/Cli SPO, Transaction, and DRep helpers.",
+        "stale cardano-testnet transaction sign-submit-txid gap wording",
+    ),
+    (
+        "Transaction sign/submit/txid builders pending until the next process-wrapper round.",
+        "stale cardano-testnet transaction sign-submit-txid gap wording",
+    ),
+    (
+        "Process/Cli SPO/DRep helpers remain pending.",
+        "stale cardano-testnet drep pure-builder gap wording",
+    ),
+    (
+        "Process/Cli SPO helpers remain pending.",
+        "stale cardano-testnet spo pure-builder gap wording",
+    ),
+    (
+        "SPO certificate/vote builders pending until the next process-wrapper round.",
+        "stale cardano-testnet spo pure-builder gap wording",
+    ),
+    (
+        "Port Testnet/Process/Cli/SPO.hs before the next cardano-testnet slice.",
+        "stale cardano-testnet spo pure-builder gap wording",
+    ),
+    (
+        "DRep key/cert/vote builders pending until the next process-wrapper round.",
+        "stale cardano-testnet drep pure-builder gap wording",
+    ),
+    (
+        '"crates/tools/cardano-testnet",       # partial — R534 era-aware runtime pending',
+        "stale sister-tool root manifest status label",
+    ),
+    (
+        "Process/Run.hs execution helpers remain pending until the next process-wrapper round.",
+        "stale cardano-testnet process-run gap wording",
+    ),
+    (
+        "Process execution wrappers pending until node startup lands.",
+        "stale cardano-testnet process-run gap wording",
+    ),
+    (
+        "The current testnet crate still runs without process execution wrappers.",
+        "stale cardano-testnet process-run gap wording",
+    ),
+    (
+        "RunIO plan-json process planning remains pending.",
+        "stale cardano-testnet runio plan-json gap wording",
+    ),
+    (
+        "plan-json binary-resolution helpers pending until the next process slice.",
+        "stale cardano-testnet runio plan-json gap wording",
+    ),
+    (
+        "The current testnet crate still runs without RunIO plan-json lookup.",
+        "stale cardano-testnet runio plan-json gap wording",
+    ),
+    (
+        "RunIO execution helpers remain pending.",
+        "stale cardano-testnet runio execution gap wording",
+    ),
+    (
+        "RunIO execution/liftIO helpers pending until the next process slice.",
+        "stale cardano-testnet runio execution gap wording",
+    ),
+    (
+        "The current testnet crate still runs without RunIO execution wrappers.",
+        "stale cardano-testnet runio execution gap wording",
+    ),
+    (
+        "Property/Util.hs pure helper port remains pending.",
+        "stale cardano-testnet property-util pure-helper gap wording",
+    ),
+    (
+        "integrationRetryWorkspace pending until Process/Property lands.",
+        "stale cardano-testnet property-util pure-helper gap wording",
+    ),
+    (
+        "The current testnet crate still runs without Property/Util helpers.",
+        "stale cardano-testnet property-util pure-helper gap wording",
+    ),
+    (
+        "Property/Assert.hs pure helper port remains pending.",
+        "stale cardano-testnet property-assert pure-helper gap wording",
+    ),
+    (
+        "readJsonLines pending until Process/Property lands.",
+        "stale cardano-testnet property-assert pure-helper gap wording",
+    ),
+    (
+        "The current testnet crate still runs without Property/Assert helpers.",
+        "stale cardano-testnet property-assert pure-helper gap wording",
+    ),
+    (
+        "CLI-backed property assertions remain pending.",
+        "stale cardano-testnet property-assert pure-helper gap wording",
+    ),
+    (
+        "assertExpectedSposInLedgerState wrapper pending until Process/Property lands.",
+        "stale cardano-testnet property-assert pure-helper gap wording",
+    ),
+    (
+        "Property/Run.hs pure helper port remains pending.",
+        "stale cardano-testnet property-run pure-helper gap wording",
+    ),
+    (
+        "testnetProperty planning pending until the next Property/Run slice.",
+        "stale cardano-testnet property-run pure-helper gap wording",
+    ),
+    (
+        "ignoreOnWindows pending until Process/Property lands.",
+        "stale cardano-testnet property-run pure-helper gap wording",
+    ),
+    (
+        "The current testnet crate still runs without Property/Run helpers.",
+        "stale cardano-testnet property-run pure-helper gap wording",
+    ),
+    (
+        "Yggdrasil pure-Rust port — R327 skeleton; concrete implementation lands across the A.1 sub-arc per the R326-R459 sister-tools port plan.",
+        "stale bech32 pre-verified current-status wording",
+    ),
+    (
+        'Accepted-response parity: upstream `cardano-submit-api` returns the submitted transaction `TxId` in the 202 Accepted JSON body (`Handler TxId`); Yggdrasil still returns `"OK"` until multi-era TxId derivation is wired into `tx_submit_post`.',
+        "stale cardano-submit-api accepted-response OK wording",
     ),
 )
 

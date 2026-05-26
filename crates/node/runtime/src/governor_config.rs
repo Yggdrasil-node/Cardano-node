@@ -80,8 +80,11 @@ pub struct RuntimeGovernorConfig {
     /// time, populating the shared
     /// [`SharedFetchWorkerPool`] held by `OutboundPeerManager`.
     /// The sync loop's multi-peer dispatch branch then activates.
-    /// Default `1` keeps the pool empty and the legacy single-peer
-    /// path active.
+    /// The constructor default is `1` so isolated runtime tests stay on
+    /// the legacy single-peer path unless they opt in. The binary
+    /// runtime calls [`Self::with_max_concurrent_block_fetch_peers`]
+    /// with `NodeConfigFile::max_concurrent_block_fetch_peers`, whose
+    /// shipped default is pinned separately in `yggdrasil-node-config`.
     ///
     /// Mirrors upstream `bfcMaxConcurrencyDeadline = 1` /
     /// `bfcMaxConcurrencyBulkSync = 2`.

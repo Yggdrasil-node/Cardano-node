@@ -4,10 +4,10 @@ set -euo pipefail
 # Compare yggdrasil-cardano-submit-api vs upstream cardano-submit-api
 # binary-byte-by-binary-byte across the canonical request surface.
 #
-# Designed for operator rehearsal at the R345 milestone of the cardano-
-# submit-api Phase A.2 mini-arc. CI cannot run this script (it needs a
-# live cardano-node socket + the upstream binary); operators run it
-# manually before promoting the parity-matrix entry to verified_11_0_1.
+# Designed for the R825+ cardano-submit-api operator-evidence follow-on.
+# CI cannot run this script (it needs a live cardano-node socket + the
+# upstream binary); operators run it manually before promoting the
+# parity-matrix entry to verified_11_0_1.
 #
 # Procedure:
 #  1. Bring up upstream cardano-node (e.g. on preview testnet).
@@ -194,12 +194,12 @@ fi
 
 if [ "${failures}" -eq 0 ]; then
   echo
-  echo "All endpoints byte-identical. Phase A.2 closeout (R346) can"
-  echo "promote sister-tool.cardano-submit-api parity-matrix entry"
-  echo "from 'partial' to 'verified_11_0_1'."
+  echo "All endpoints byte-identical. The R825+ operator-evidence"
+  echo "follow-on can promote sister-tool.cardano-submit-api from"
+  echo "'implemented_needs_11_0_1_evidence' to 'verified_11_0_1'."
   exit 0
 else
   echo
-  echo "${failures} endpoint(s) diverged. Investigate before R346 closeout." >&2
+  echo "${failures} endpoint(s) diverged. Investigate before verified promotion." >&2
   exit 1
 fi

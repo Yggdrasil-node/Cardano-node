@@ -34,12 +34,12 @@ pub struct DaemonStatus {
 pub fn daemon_status() -> DaemonStatus {
     DaemonStatus {
         status: "deferred",
-        depends_on: "the kes-agent mini-arc per the playful-tickling-plum.md plan (R344-R354 — \
-             highest-stakes parity since the socket protocol must be byte-equivalent or live \
-             SPO setups break). The daemon depends on yggdrasil's KES key lifecycle in \
-             crates/crypto/src/kes.rs + crates/crypto/src/sum_kes.rs (which is already shipped) plus a \
-             byte-equivalent server-side socket protocol that lands in the named mini-arc.",
-        deferred_round: "R335+",
+        depends_on: "the R444+ kes-agent daemon follow-on: capture byte-equivalent server-side \
+             socket protocol fixtures, then wire the socket server, KES key lifecycle, and \
+             start/stop/run/restart/status dispatch. The daemon depends on yggdrasil's KES key \
+             lifecycle in crates/crypto/src/kes.rs + crates/crypto/src/sum_kes.rs (already \
+             shipped) plus the byte-equivalent server-side socket protocol follow-on.",
+        deferred_round: "R444+",
         upstream_reference: ".reference-haskell-cardano-node (post-R326b kes-agent vendor) — Cardano.KESAgent.Processes.{ServiceMain, ServiceClient, RunCommands} + daemonization wiring",
     }
 }
@@ -52,7 +52,11 @@ mod tests {
     fn daemon_status_describes_deferral() {
         let s = daemon_status();
         assert_eq!(s.status, "deferred");
-        assert!(s.depends_on.contains("kes-agent mini-arc"));
+        assert!(s.depends_on.contains("kes-agent daemon follow-on"));
+        assert!(
+            s.depends_on.contains("R444+"),
+            "kes-agent deferral should point at the current follow-on round"
+        );
         assert!(s.depends_on.contains("crates/crypto/src/kes.rs"));
         assert!(s.upstream_reference.contains("ServiceMain"));
     }

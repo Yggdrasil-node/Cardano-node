@@ -1,7 +1,28 @@
 //! Programmatic-introspection helpers for the cardano-testnet
 //! deferred surfaces.
 //!
-//! R445 surfaces the era-aware-dispatch + Process/Property carve-outs as a `*_status()` helper.
+//! R445 surfaced the initial era-aware-dispatch + Process/Property carve-out
+//! as a `*_status()` helper. R772-R823 filled in the era-free type surface and
+//! the Parsers/Cardano.hs option-composition layer; R825 wired the typed
+//! `Command` payloads and version subcommand; R826 added the
+//! `Testnet/Types.hs` process-handle runtime record carriers; R827 ports the
+//! pure `Testnet/Process/Cli/Keys.hs` command builders; R828 ports the
+//! `Testnet/Process/Cli/Transaction.hs` sign/submit/txid builders; R829 ports
+//! the pure `Testnet/Process/Cli/DRep.hs` key/cert/vote builders; R830 ports
+//! the pure `Testnet/Process/Cli/SPO.hs` certificate/vote builders; R831 ports
+//! the pure `Testnet/Process/Cli/Transaction.hs` spend-output txbody builders;
+//! R832 ports the `Testnet/Process/Run.hs` flexible process wrappers; R833
+//! ports the `Testnet/Process/RunIO.hs` plan-json binary-resolution and
+//! process-planning helpers; R834 ports the remaining RunIO execution/liftIO
+//! helpers; R835 ports the pure Property/Util harness helpers; R836 ports the
+//! pure Property/Assert assertion helpers; R837 ports the CLI-backed
+//! Property/Assert stake-pool query wrapper; R838 ports the pure
+//! Property/Run user-env, ignore-helper, and runtime-message projection; R839
+//! ports the pure `testnetProperty` workspace/action plan, keepalive fact, and
+//! failed-start branch. The remaining explicit deferral is node/KES spawning
+//! and supervision, era genesis, transaction runtime/query orchestration, SPO
+//! runtime workflows, DRep runtime workflows, and the remaining
+//! Process/Property harness bodies.
 //!
 //! Mirrors the precedent set by R424-R429 cardano-tracer +
 //! R439-R444 sister-tool deferral sweeps.
@@ -60,9 +81,9 @@ pub struct EraDispatchStatus {
 pub fn era_dispatch_status() -> EraDispatchStatus {
     EraDispatchStatus {
         status: "deferred",
-        depends_on: "the cardano-testnet mini-arc per the playful-tickling-plum.md plan (R416-R433 — LARGE; 32 upstream .hs files; Hedgehog Process/Property modules approved as Rust-idiomatic carve-out using tokio::process + proptest). Gated on yggdrasil-ledger's era surface being exposed at crate boundaries.",
-        deferred_round: "R367+",
-        upstream_reference: ".reference-haskell-cardano-node/cardano-testnet/src/Testnet/{Defaults, Filepath, Orphans, Runtime, Types}.hs + Testnet/Start/{Types, Byron, Cardano}.hs + Testnet/Components/{Query, Configuration}.hs + Testnet/Process/Cli/*.hs (era-aware subcommand option records)",
+        depends_on: "the R772-R823 cardano-testnet implementation arc has shipped the era-free Testnet/Start/Types, path/default/component constants, and Parsers/Cardano option-composition surface. R825 typed Command payloads now thread CardanoTestnetCliOptions / CardanoTestnetCreateEnvOptions through parse_args/run and dispatch the version subcommand. R826 ports the Testnet/Types.hs process-handle runtime carriers (TestnetRuntime / TestnetNode / TestnetKesAgent), node socket helpers, and LocalNodeConnectInfo projection. R827 ports the pure Testnet/Process/Cli/Keys.hs cardano-cli key command builders. R828 ports the Testnet/Process/Cli/Transaction.hs sign/submit/txid builders. R829 ports the Testnet/Process/Cli/DRep.hs pure key/cert/vote builders. R830 ports the Testnet/Process/Cli/SPO.hs pure certificate/vote builders. R831 ports the Testnet/Process/Cli/Transaction.hs pure spend-output txbody builders. R832 ports the Testnet/Process/Run.hs flexible process execution wrappers. R833 ports the Testnet/Process/RunIO.hs plan-json binary-resolution and process-planning helpers. R834 ports the remaining RunIO execution/liftIO helpers. R835 ports the pure Testnet/Property/Util.hs retry/workspace naming, DISABLE_RETRIES, Linux predicate, and Aeson object lookup helpers. R836 ports the pure Testnet/Property/Assert.hs JSON-lines, relevant-slot extraction, deadline, stake-pool count, and era-equality assertion helpers. R837 ports the CLI-backed Testnet/Property/Assert.hs assertExpectedSposInLedgerState stake-pool query wrapper with injectable cardano-cli execution. R838 ports the pure Testnet/Property/Run.hs UserProvidedEnv, OS-ignore disposition helpers, and running-testnet operator message rendering. R839 ports the pure Testnet/Property/Run.hs testnetProperty workspace/action plan, keepalive delay, intentional-failure fact, and failed-start rendering. Remaining work is node/KES spawning and supervision, era-genesis, transaction runtime/query orchestration, SPO runtime workflows, DRep runtime workflows, and the remaining Process/Property harness execution for cardano/create-env; Hedgehog Process/Property modules stay a Rust-idiomatic tokio::process + proptest carve-out.",
+        deferred_round: "R840+",
+        upstream_reference: ".reference-haskell-cardano-node/cardano-testnet/src/Parsers/{Run,Cardano}.hs + Testnet/{Defaults, Filepath, Orphans, Runtime, Types}.hs + Testnet/Start/{Types, Byron, Cardano}.hs + Testnet/Components/{Query, Configuration}.hs + Testnet/Process/Cli/*.hs + Testnet/Property/*.hs",
     }
 }
 
@@ -87,9 +108,25 @@ mod tests {
     fn era_dispatch_status_describes_deferral() {
         let s = era_dispatch_status();
         assert_eq!(s.status, "deferred");
-        assert!(s.depends_on.contains("cardano-testnet mini-arc"));
+        assert!(s.depends_on.contains("R772-R823"));
+        assert!(s.depends_on.contains("R825 typed Command payloads"));
+        assert!(s.depends_on.contains("R826 ports"));
+        assert!(s.depends_on.contains("R827 ports"));
+        assert!(s.depends_on.contains("R828 ports"));
+        assert!(s.depends_on.contains("R829 ports"));
+        assert!(s.depends_on.contains("R830 ports"));
+        assert!(s.depends_on.contains("R831 ports"));
+        assert!(s.depends_on.contains("R832 ports"));
+        assert!(s.depends_on.contains("R833 ports"));
+        assert!(s.depends_on.contains("R834 ports"));
+        assert!(s.depends_on.contains("R835 ports"));
+        assert!(s.depends_on.contains("R836 ports"));
+        assert!(s.depends_on.contains("R837 ports"));
+        assert!(s.depends_on.contains("R838 ports"));
+        assert!(s.depends_on.contains("R839 ports"));
+        assert!(s.depends_on.contains("node/KES spawning and supervision"));
+        assert_eq!(s.deferred_round, "R840+");
         assert!(s.depends_on.contains("Hedgehog"));
-        assert!(s.depends_on.contains("yggdrasil-ledger"));
         assert!(s.upstream_reference.contains("Testnet"));
     }
 

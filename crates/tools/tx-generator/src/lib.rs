@@ -154,18 +154,24 @@ fn quick_test_plutus_data_or_die(opts: &setup::nix_service::NixServiceOptions) -
 mod tests {
     use super::*;
     use crate::command::JsonHighLevelCommand;
+    use crate::script::core::plutus_budget_summary_file_for_tests;
     use crate::setup::nix_service::parse_nix_service_options_value;
     use crate::types::{PlutusScriptRef, TxGenPlutusType};
     use serde_json::json;
     use std::path::{Path, PathBuf};
 
-    const PLUTUS_BUDGET_SUMMARY_FILE: &str = "plutus-budget-summary.json";
-
     struct BudgetSummaryFileCleanup;
+
+    impl BudgetSummaryFileCleanup {
+        fn new() -> Self {
+            let _ = std::fs::remove_file(plutus_budget_summary_file_for_tests());
+            Self
+        }
+    }
 
     impl Drop for BudgetSummaryFileCleanup {
         fn drop(&mut self) {
-            let _ = std::fs::remove_file(PLUTUS_BUDGET_SUMMARY_FILE);
+            let _ = std::fs::remove_file(plutus_budget_summary_file_for_tests());
         }
     }
 
@@ -295,8 +301,7 @@ mod tests {
             "yggdrasil-tx-generator-command-{}.out",
             std::process::id()
         ));
-        let _cleanup = BudgetSummaryFileCleanup;
-        let _ = std::fs::remove_file(PLUTUS_BUDGET_SUMMARY_FILE);
+        let _summary_file_cleanup = BudgetSummaryFileCleanup::new();
         let _ = std::fs::remove_file(&output_path);
 
         run(Command::Selftest(Some(output_path.clone()))).expect("selftest command");

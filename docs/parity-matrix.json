@@ -399,7 +399,7 @@
       "rust_surface": [
         {
           "path": "crates/tools/bech32/",
-          "role": "Yggdrasil pure-Rust port \u2014 R327 skeleton; concrete implementation lands across the A.1 sub-arc per the R326\u2013R459 sister-tools port plan."
+          "role": "Yggdrasil pure-Rust port \u2014 R327 skeleton + R331 file-mirror tree + R332 byte-equivalent help/version parser + R333 concrete encode/decode implementation + R334 verified closeout. Drop-in bech32 1.1.10 CLI parity is complete; no remaining work is tracked for this entry."
         }
       ],
       "implemented_evidence": [
@@ -486,7 +486,7 @@
       "area": "sister-tools",
       "feature": "HTTP API for transaction submission \u2014 pure-Rust port mirroring upstream cardano-submit-api/src/Cardano/TxSubmit/*.hs.",
       "status": "implemented_needs_11_0_1_evidence",
-      "next_milestone": "R346",
+      "next_milestone": "R825",
       "haskell_reference": [
         {
           "path": ".reference-haskell-cardano-node/cardano-submit-api/",
@@ -496,7 +496,7 @@
       "rust_surface": [
         {
           "path": "crates/tools/cardano-submit-api/",
-          "role": "Yggdrasil pure-Rust port \u2014 R335 skeleton + R339-R343 functional binary (types, util, tracing, cli/types+parsers, rest/types+parsers, web.rs raw-tokio HTTP server, NtC LocalTxSubmission wiring) + R344 Metrics.hs Prometheus surface (MetricsRegistry with AtomicU64 tx_submit/tx_submit_fail counters, register_metrics_server with port-occupied retry up to 1000 adjacent ports, /metrics endpoint, make_metrics_aware_tracer wrapping the operator tracer). Remaining: R345 operator-time integration soak vs upstream binary + R346 closeout (parity-matrix promotion to verified_11_0_1)."
+          "role": "Yggdrasil pure-Rust port \u2014 R335 skeleton + R339-R343 functional binary (types, util, tracing, cli/types+parsers, rest/types+parsers, web.rs raw-tokio HTTP server, NtC LocalTxSubmission wiring) + R344 Metrics.hs Prometheus surface + R569-R688 structured rejection decoder arc + accepted-response TxId derivation. TxValidationErrorInCardanoMode now decodes Shelley-family and Conway submission rejections into typed per-era predicate-failure trees. Remaining: operator-time integration soak vs upstream binary and parity-matrix promotion to verified_11_0_1."
         }
       ],
       "implemented_evidence": [
@@ -508,19 +508,21 @@
         "R342 web round: tokio dep added; rest/web.rs (HttpRequest, HttpResponse with constructors for 202/400/404/405/413/503, parse_request scanning Content-Length/Content-Type/Transfer-Encoding with chunked-rejection + 32 KiB MAX_REQUEST_BYTES cap, encode emitting RFC 7230 wire format with Connection: close, run_settings TCP listener tracing EndpointListeningOnPort + spawning per-connection handlers). web.rs (run_tx_submit_server outer supervisor mirroring runTxSubmitServer; tx_submit_app dispatch closure routing POST /api/submit/tx \u2192 405-other-methods \u2192 404-other-paths).",
         "R343 LocalTxSubmission wiring: yggdrasil-network + hex deps added. Handler type refactored to async (Pin<Box<dyn Future<Output=HttpResponse> + Send>>) so handlers can do real I/O. tx_submit_post now opens a fresh NtC connection per request via yggdrasil_network::ntc_connect, extracts the NTC_LOCAL_TX_SUBMISSION protocol handle, drives LocalTxSubmissionClient::submit, maps MsgAcceptTx \u2192 202 / MsgRejectTx \u2192 400 (TxCmdTxSubmitValidationError) / connect|protocol failure \u2192 503 (TxCmdTxSubmitConnectionError), and traces the appropriate event per outcome. lib.rs::run() now spins a tokio multi-thread runtime + invokes web::run_tx_submit_server_from_params (the prior 'web server not yet implemented' sentinel is gone). MAINNET_NETWORK_MAGIC = 764824073 constant exposed.",
         "R344 Prometheus metrics surface: metrics.rs (MetricsRegistry with atomic AtomicU64 counters for tx_submit / tx_submit_fail; apply(MetricUpdate[]) + observe(TraceSubmitApi) wiring; render_prometheus emitting `# HELP / # TYPE / <name> <value>` byte-equivalent to upstream serveMetrics; register_metrics_server with port-occupied retry up to MAX_PORT_OFFSET=1000 adjacent ports + tracing of MetricsServerError/Started/PortOccupied/PortNotBound events; spawned per-request tokio task serving GET /metrics \u2192 200 / other \u2192 404). web.rs::run_tx_submit_server_from_params now spawns both servers concurrently; make_metrics_aware_tracer wraps the operator tracer with registry observation so counter updates ride the same trace stream the operator sees. ApplicationInitializeMetrics zero-set applied at metrics-server startup matching upstream forMachine semantic.",
-        "Tests: 143 unit + 4 golden + 1 doctest = 148 cardano-submit-api tests (was 133 at R343, +15: 13 metrics.rs unit/integration tests + 2 web.rs metrics_aware_tracer tests). Workspace test contribution: +133 vs R338 baseline (4982 \u2192 5115).",
-        "Carve-outs documented: TxSubmitApi/TxSubmitApiRecord/CBORStream Servant types not ported (raw-tokio HTTP routing replaces). Cardano.CLI.Environment.EnvCli not ported (Yggdrasil parser is environment-blind). LogFormatting/MetaTrace typeclasses not ported (data exposed via inherent methods). Network.Wai.Handler.Warp.runSettingsSocket / Data.Streaming.Network.bindPortTCP replaced by tokio::net::TcpListener::bind. Servant.Application replaced by Handler type alias + async dispatch. Cardano.Api.deserialiseFromCBOR + multi-era FromSomeType table not ported (raw bytes pass through directly to NtC LocalTxSubmission). Cardano.Api.getTxId not ported (operators compute Blake2b-256 client-side). System.Metrics.Prometheus.Http.Scrape.serveMetrics + System.Metrics.Prometheus.Registry.RegistrySample replaced by raw-tokio HTTP + AtomicU64 MetricsRegistry \u2014 no prometheus-client ecosystem dependency.",
-        "Binary runs end-to-end against a real cardano-node socket with /metrics scraping; subject to live-rehearsal validation at R345."
+        "R569-R688 structured rejection decoder arc: `TxValidationErrorInCardanoMode` and `EraApplyTxError` now decode tx-submission rejections into typed per-era predicate-failure trees. Conway coverage includes LEDGER, UTXOW, UTXO, UTXOS, CERT/CERTS, GOV/GOVCERT/DELEG/POOL, `TxCert`, `GovAction`, `PParamsUpdate`, `CollectError`, and `ContextError` leaves; Shelley-family coverage includes the typed LEDGER/UTXOW/UTXO/PPUP/DELEGS/DELPL path and shared TxOut/Value/address leaves. JSON serialization remains rendered-string-only for upstream wire-shape parity.",
+        "Accepted-response TxId derivation: `tx_submit_post` now extracts the first raw transaction-body CBOR item, hashes it with the shared ledger `compute_tx_id_from_tx_cbor` helper, traces the medium TxId, and returns the hex TxId JSON body on `MsgAcceptTx`, matching upstream `Handler TxId` / `PostAccepted '[JSON] TxId` shape.",
+        "Tests: 356 cardano-submit-api lib tests plus the existing CLI help/version golden tests pass after accepted-response TxId derivation; current workspace baseline is captured in the R825 status docs.",
+        "Carve-outs documented: TxSubmitApi/TxSubmitApiRecord/CBORStream Servant types not ported (raw-tokio HTTP routing replaces). Cardano.CLI.Environment.EnvCli not ported (Yggdrasil parser is environment-blind). LogFormatting/MetaTrace typeclasses not ported (data exposed via inherent methods). Network.Wai.Handler.Warp.runSettingsSocket / Data.Streaming.Network.bindPortTCP replaced by tokio::net::TcpListener::bind. Servant.Application replaced by Handler type alias + async dispatch. Cardano.Api.deserialiseFromCBOR + multi-era FromSomeType table not ported (raw bytes pass through directly to NtC LocalTxSubmission after raw transaction-body CBOR extraction for TxId derivation). System.Metrics.Prometheus.Http.Scrape.serveMetrics + System.Metrics.Prometheus.Registry.RegistrySample replaced by raw-tokio HTTP + AtomicU64 MetricsRegistry \u2014 no prometheus-client ecosystem dependency.",
+        "Binary runs end-to-end against a real cardano-node socket with /metrics scraping; subject to R825 operator-evidence validation."
       ],
       "remaining_work": [
-        "R346 closeout: parity-matrix promotion to verified_11_0_1 (gated on operator running scripts/compare_submit_api_to_upstream.sh against a live cardano-node and reporting an empty diff)."
+        "Operator soak: parity-matrix promotion to verified_11_0_1 is gated on `scripts/compare_submit_api_to_upstream.sh` against a live cardano-node plus upstream cardano-submit-api reporting an empty response diff."
       ],
       "acceptance": [
         "`<binary> --help` byte-equivalent to upstream `.reference-haskell-cardano-node/install/bin/cardano-submit-api --help` (modulo program name).",
         "Per-subcommand stdout/stderr byte-equivalent on a defined fixture set, OR documented in `crates/tools/cardano-submit-api/AGENTS.md` as semantically-equivalent.",
         "`scripts/run-tools.sh cardano-submit-api` invokes the yggdrasil binary; replacing upstream binary in an SPO setup produces no observable behavior change.",
         "Strict-mirror gate green (every production .rs declares one of two canonical docstring forms).",
-        "`cargo test -p yggdrasil-cardano-submit-api --test integration` green."
+        "`cargo test -p yggdrasil-cardano-submit-api` green."
       ]
     },
     {
@@ -538,7 +540,7 @@
       "rust_surface": [
         {
           "path": "crates/tools/kes-agent/",
-          "role": "Yggdrasil pure-Rust port \u2014 R327 skeleton; concrete implementation lands across the A.3 sub-arc per the R326\u2013R459 sister-tools port plan."
+          "role": "Yggdrasil pure-Rust port \u2014 R327 skeleton + R443 structured daemon/socket deferral. Concrete implementation resumes in the R444+ daemon follow-on after upstream socket-protocol fixture capture."
         }
       ],
       "implemented_evidence": [
@@ -546,11 +548,12 @@
         "Byte-equivalent --help and --version captured from upstream kes-agent binary as `tests/fixtures/upstream-{help,version}.txt` and embedded via include_str!.",
         "8 tests per tool: 6 parser unit tests + 2 byte-equivalence golden tests.",
         "Workspace test contribution: +8.",
+        "R443 structured deferral: `status.rs::daemon_status()` exposes the daemon/socket/KES lifecycle carve-out and `run()` returns `RunError::DaemonDispatchDeferred` while help/version remain byte-equivalent.",
         "Concrete subcommand dispatch deferred to per-tool implementation rounds per the plan."
       ],
       "remaining_work": [
-        "Skeleton round at R344: file-tree mirror + CLI parser scaffolding.",
-        "Per-subcommand implementation rounds (size-banded 1-3 days each).",
+        "R444+ daemon follow-on: capture byte-equivalent socket protocol fixtures before implementation.",
+        "Wire socket server, KES key lifecycle, and start/stop/run/restart/status command dispatch.",
         "Integration round: end-to-end soak vs upstream binary at .reference-haskell-cardano-node/install/bin/kes-agent.",
         "Closeout round: AGENTS.md operational guide + parity-matrix promotion to verified_11_0_1."
       ],
@@ -567,7 +570,7 @@
       "area": "sister-tools",
       "feature": "kes-agent control CLI \u2014 pure-Rust port mirroring upstream input-output-hk/kes-agent (control binary).",
       "status": "partial",
-      "next_milestone": "R441",
+      "next_milestone": "R444",
       "haskell_reference": [
         {
           "path": ".reference-haskell-cardano-node/deps/kes-agent/kes-agent/",
@@ -577,18 +580,19 @@
       "rust_surface": [
         {
           "path": "crates/tools/kes-agent-control/",
-          "role": "Yggdrasil pure-Rust port \u2014 R335 skeleton + R355 typed-config surface (full ControlMain.hs option-types port). Per-subcommand runtime ControlClient socket logic pending kes-agent server mini-arc."
+          "role": "Yggdrasil pure-Rust port \u2014 R335 skeleton + R355 typed-config surface + R362 typed parser + R370 env-default threading + R440 structured ControlClient socket-I/O deferral. Runtime ControlClient socket logic waits on the R444+ kes-agent daemon/socket follow-on."
         }
       ],
       "implemented_evidence": [
         "R335-pattern skeleton: lib.rs + main.rs + parser.rs + golden test landed for kes-agent-control.",
         "Byte-equivalent --help and --version captured from upstream kes-agent-control binary as `tests/fixtures/upstream-{help,version}.txt` and embedded via include_str!.",
         "R355 typed-config surface: types.rs ports the full upstream ControlMain.hs option types \u2014 CommonOptions (5-field record: control_path, verbosity, retry_delay, retry_exponential, retry_attempts; all optional with merge() method mirroring the Haskell Semigroup instance); GenKeyOptions / QueryKeyOptions / DropStagedKeyOptions / DropKeyOptions / InstallKeyOptions per-subcommand records (each carries CommonOptions + subcommand-specific paths); ProgramOptions 6-variant sum (RunGenKey / RunQueryKey / RunDropStagedKey / RunInstallKey / RunDropKey / RunGetInfo); with_common_options method mirroring upstream's WithCommonOptions typeclass + programOptionsWithCommonOptions dispatcher. Defaults match upstream's defXyzOptions byte-for-byte (control_path = '/tmp/kes-agent-control.socket', verbosity = 0, kes_verification_key_file = 'kes.vkey', etc.).",
-        "R362 typed parser dispatcher: parser.rs ports upstream's pProgramOptions :: Parser ProgramOptions + per-subcommand parsers. Two-pass walk locates the subcommand keyword (gen-staged-key / export-staged-vkey / drop-staged-key / install-key / drop-key / info), splits argv into before/subcommand/after windows, parses common options from both windows + subcommand-specific options from the after window. Common-options accumulation mirrors upstream's WithCommonOptions threading via merge(). lib.rs::run_main() now wires parser \u2192 ProgramOptions \u2192 run() chain; --help and --version short-circuit with byte-equivalent upstream output. lib.rs::run() returns a sentinel reporting which subcommand was selected + roadmap pointer (per-subcommand ControlClient socket I/O lands when kes-agent server mini-arc completes). 36 kes-agent-control tests at R362 (was 17 at R355 + 19 parser unit tests covering each subcommand + common-options before/after subcommand + short/long flag forms + retry-interval/retry-delay alias + retry-exponential boolean switch + missing-value/invalid-verbosity/unknown-flag rejections + full canonical install-key invocation)."
+        "R362 typed parser dispatcher: parser.rs ports upstream's pProgramOptions :: Parser ProgramOptions + per-subcommand parsers. Two-pass walk locates the subcommand keyword (gen-staged-key / export-staged-vkey / drop-staged-key / install-key / drop-key / info), splits argv into before/subcommand/after windows, parses common options from both windows + subcommand-specific options from the after window. Common-options accumulation mirrors upstream's WithCommonOptions threading via merge(). lib.rs::run_main() now wires parser \u2192 ProgramOptions \u2192 run() chain; --help and --version short-circuit with byte-equivalent upstream output. lib.rs::run() returns a sentinel reporting which subcommand was selected + roadmap pointer (per-subcommand ControlClient socket I/O waits on the R444+ kes-agent daemon/socket follow-on). 36 kes-agent-control tests at R362 (was 17 at R355 + 19 parser unit tests covering each subcommand + common-options before/after subcommand + short/long flag forms + retry-interval/retry-delay alias + retry-exponential boolean switch + missing-value/invalid-verbosity/unknown-flag rejections + full canonical install-key invocation).",
+        "R440 structured deferral: `status.rs::control_client_status()` exposes the ControlClient socket-I/O carve-out and `run()` returns `RunError::SubcommandSocketIoDeferred` carrying the selected subcommand while help/version and typed parser/env-default handling remain functional."
       ],
       "remaining_work": [
-        "Skeleton round at R355: file-tree mirror + CLI parser scaffolding.",
-        "Per-subcommand implementation rounds (size-banded 1-3 days each).",
+        "R444+ dependency: wait for the kes-agent daemon/socket follow-on to capture and wire byte-equivalent server-side socket protocol fixtures.",
+        "Wire ControlClient socket I/O for gen-staged-key, export-staged-vkey, drop-staged-key, install-key, drop-key, and info.",
         "Integration round: end-to-end soak vs upstream binary at .reference-haskell-cardano-node/install/bin/kes-agent-control.",
         "Closeout round: AGENTS.md operational guide + parity-matrix promotion to verified_11_0_1."
       ],
@@ -835,7 +839,7 @@
       "area": "sister-tools",
       "feature": "Local testnet harness \u2014 pure-Rust port mirroring upstream cardano-testnet/src/Testnet/*.hs.",
       "status": "partial",
-      "next_milestone": "R534",
+      "next_milestone": "R840",
       "haskell_reference": [
         {
           "path": ".reference-haskell-cardano-node/cardano-testnet/",
@@ -845,21 +849,38 @@
       "rust_surface": [
         {
           "path": "crates/tools/cardano-testnet/",
-          "role": "Yggdrasil pure-Rust port \u2014 R335 skeleton + R359 simple-types port (NumPools/NumRelays/NumDReps/NodeId/InputNodeConfigFile/UpdateTimestamps/RpcSupport/NodeLoggingFormat/GenesisHashesPolicy/PraosCredentialsSource/UserProvidedData<A>). The former cardano-cli CLI-MVS prerequisite is closed; era-aware records plus Process/Property runtime modules remain pending in the cardano-testnet implementation arc."
+          "role": "Yggdrasil pure-Rust port \u2014 R335 skeleton + R359 simple-types seed + R772-R785 era-free Testnet/Start/Types, runtime marker, path/default/component records + R818-R823 Parsers/Cardano option-composition helpers + R825 typed Command payload wiring and version-subcommand dispatch + R826 Testnet/Types.hs runtime record carriers and socket/connect-info helpers + R827 Testnet/Process/Cli/Keys.hs pure key command builders + R828 Testnet/Process/Cli/Transaction.hs sign/submit/txid builders + R829 Testnet/Process/Cli/DRep.hs pure key/cert/vote builders + R830 Testnet/Process/Cli/SPO.hs pure certificate/vote builders + R831 Testnet/Process/Cli/Transaction.hs pure spend-output txbody builders + R832 Testnet/Process/Run.hs flexible process wrappers + R833/R834 Testnet/Process/RunIO.hs plan-json binary-resolution and execution helpers + R835 Testnet/Property/Util.hs pure harness helpers + R836 Testnet/Property/Assert.hs pure assertion helpers + R837 Testnet/Property/Assert.hs CLI-backed assertExpectedSposInLedgerState stake-pool query wrapper + R838/R839 Testnet/Property/Run.hs pure UserProvidedEnv, testnetProperty planning, OS-ignore helpers, failed-start rendering, and running-testnet message rendering. The former cardano-cli CLI-MVS prerequisite is closed. Remaining: port node/KES spawning and supervision, era-genesis, transaction runtime/query orchestration, SPO runtime workflows, DRep runtime workflows, and the remaining Process/Property harness execution for cardano/create-env."
         }
       ],
       "implemented_evidence": [
         "R335-pattern skeleton: lib.rs + main.rs + parser.rs + golden test landed for cardano-testnet.",
         "Byte-equivalent --help and --version captured from upstream cardano-testnet binary as `tests/fixtures/upstream-{help,version}.txt` and embedded via include_str!.",
-        "R359 simple-types port: types.rs ports the operator-facing simple types from upstream's Testnet/Start/Types.hs that don't pull in the Cardano.Api/Cardano.Ledger.* machinery \u2014 DEFAULT_TESTNET_MAGIC=42 const; NodeId(i32) / NumPools(i32) / NumRelays(i32) / NumDReps(i32) numeric newtypes with Ord; InputNodeConfigFile(PathBuf) newtype; UpdateTimestamps (UpdateTimestamps [default] | DontUpdateTimestamps); RpcSupport (RpcDisabled [default] | RpcEnabled); NodeLoggingFormat (AsJson [default] | AsText) with from_string mirroring upstream readNodeLoggingFormat; GenesisHashesPolicy (WithHashes [default] | WithoutHashes); PraosCredentialsSource (UseKesKeyFile [default] | UseKesSocket); UserProvidedData<A> generic wrapper (UserProvidedData a | NoUserProvidedData [default]) with as_ref + into_option helpers. Carve-outs: Cardano.Api era machinery (lands when yggdrasil-ledger era surface exposed at crate boundaries); Cardano.Ledger.Alonzo/Conway.Genesis records (kept as serde_json::Value at use-sites for now); Hedgehog.MonadTest (carved out per plan \u2014 Process/Property modules use tokio::process + proptest synthesis). 22 cardano-testnet tests at R359 (was 8 at R335 + 14 types unit tests).",
-        "R530 cleanup: cardano-cli C-arc / CLI-MVS prerequisite is closed, so cardano-testnet is no longer prerequisite-blocked on cardano-cli; it remains partial until its own era-aware parser/runtime/process arc lands."
+        "R359 simple-types port: types.rs ports the first operator-facing simple types from upstream's Testnet/Start/Types.hs.",
+        "R530 cleanup: cardano-cli C-arc / CLI-MVS prerequisite is closed, so cardano-testnet is no longer prerequisite-blocked on cardano-cli.",
+        "R772-R785 era-free portable surface: types.rs, runtime_types.rs, paths.rs, filepath.rs, defaults.rs, and components/* cover Testnet/Start/Types.hs option records, Testnet/Types.hs portable key/runtime marker records, Cardano.Node.Testnet.Paths, Testnet/Filepath.hs, Testnet/Defaults.hs, and the era-free Components Query/Configuration constants. R772 fixed the UpdateTimestamps default parity bug; R779 completed Sprocket/path helpers; R824 repaired Windows test behavior while preserving upstream-shaped '/' FilePath strings.",
+        "R818-R823 Parsers/Cardano option-composition arc: parser.rs ports pRuntimeOptions, pGenesisOptions, pTestnetNodeOptions, pOnChainParams, pFromEnv, pCreationOptions, optsTestnet, and optsCreateTestnet. The typed CardanoTestnetCliOptions / CardanoTestnetCreateEnvOptions records are produced by helper parsers.",
+        "R825 Command payload wiring: parse_args now returns Command::Cardano(CardanoTestnetCliOptions) and Command::CreateEnv(CardanoTestnetCreateEnvOptions) instead of PassthroughArgs, and Command::Version(VersionOptions) dispatches through run() to the same byte-equivalent version banner as --version. Focused validation: cargo test -p yggdrasil-cardano-testnet (94 lib tests + 3 CLI golden tests).",
+        "R826 Testnet/Types.hs runtime record carriers: runtime_types.rs now includes TestnetRuntime, TestnetNode, TestnetKesAgent, placeholder/child process-handle wrappers, testnet_sprockets, spo_nodes, relay_nodes, node_socket_path, node_rpc_socket_path, and node_connection_info with upstream-shaped LocalNodeConnectInfo. Focused validation: cargo test -p yggdrasil-cardano-testnet runtime_types::tests --lib.",
+        "R827 Testnet/Process/Cli/Keys.hs command builders: process/cli/keys.rs now exposes pure upstream-shaped cardano-cli argv/path plans for Shelley address/stake/VRF/KES keygen, node cold-keygen with operator counter, and legacy Byron key/address helpers. Focused validation: cargo test -p yggdrasil-cardano-testnet process::cli::keys::tests --lib.",
+        "R828 Testnet/Process/Cli/Transaction.hs sign/submit/txid builders: process/cli/transaction.rs exposes upstream-shaped signTx argv/path plans, submitTx argv, failToSubmitTx stderr classification, and retrieveTransactionId argv. Focused validation: cargo test -p yggdrasil-cardano-testnet process::cli::transaction::tests --lib.",
+        "R829 Testnet/Process/Cli/DRep.hs pure builders: process/cli/drep.rs now exposes upstream-shaped generateDRepKeyPair, generateRegistrationCertificate, generateVoteFiles, createCertificatePublicationTxBody, and createVotingTxBody argv/path plans with explicit preselected tx inputs. The registerDRep/delegateToDRep/getLastPParamUpdateActionId/makeActivityChangeProposal workflows remain deferred until query/runtime execution lands. Focused validation: cargo test -p yggdrasil-cardano-testnet process::cli::drep::tests --lib.",
+        "R830 Testnet/Process/Cli/SPO.hs pure builders: process/cli/spo.rs now exposes upstream-shaped stake-key/script stake registration, delegation, deregistration certificate argv/path plans plus SPO vote-file plans using cold verification keys. The registerSingleSpo/checkStakeKeyRegistered/checkStakePoolRegistered workflows remain deferred until query/runtime execution lands. Focused validation: cargo test -p yggdrasil-cardano-testnet process::cli::spo::tests --lib.",
+        "R831 Testnet/Process/Cli/Transaction.hs spend-output txbody builders: process/cli/transaction.rs now exposes upstream-shaped mkSpendOutputsOnlyTx and mkSimpleSpendOutputsOnlyTx argv/path plans with explicit preselected tx inputs and pre-resolved script addresses. Runtime UTxO selection and script-address command execution remain deferred until the process/query layer lands. Focused validation: cargo test -p yggdrasil-cardano-testnet process::cli::transaction::tests --lib.",
+        "R832 Testnet/Process/Run.hs flexible execution wrappers: process/run.rs now exposes ExecConfig env/cwd carriers, mkExecConfig/mkExecConfigOffline/addEnvVarsToConfig, bashPath lookup, procFlex-style binary resolution with environment overrides, CLI/node/KES-agent/submit-api/chairman process plans, create-script-context and kes-agent-control wrappers, execFlex/execFlexAny process capture, JSON stdout parsing, and initiateProcess-style child startup. Higher-level DRep/SPO/transaction runtime workflows, node/KES supervision, and Process/RunIO + Process/Property harnesses remain deferred until orchestration lands. Focused validation: cargo test -p yggdrasil-cardano-testnet process::run::tests --lib.",
+        "R833 Testnet/Process/RunIO.hs plan-json binary-resolution helpers: process/run_io.rs now exposes default ExecConfig, planJsonFile discovery with CABAL_BUILDDIR override shape, nearest dist-newstyle/cache/plan.json search, addExeSuffix, recursive binDist component lookup, binFlex environment override precedence, procFlex process-plan construction, and procNode/procKesAgent plan helpers. Remaining RunIO execution/liftIO helpers, node/KES supervision, DRep/SPO/transaction runtime workflows, and Process/Property harnesses remain deferred until orchestration lands. Focused validation: cargo test -p yggdrasil-cardano-testnet process::run_io_tests --lib.",
+        "R834 Testnet/Process/RunIO.hs execution helpers: process/run_io.rs now exposes mkExecConfig over the inherited environment, execFlexAny'/execFlex' through R832 ProcessPlan execution, execCli', execCli_, execKesAgentControl_, and liftIOAnnotated error wrapping. Node/KES supervision, DRep/SPO/transaction runtime workflows, and Process/Property harnesses remain deferred until orchestration lands. Focused validation: cargo test -p yggdrasil-cardano-testnet process::run_io_tests::run_io_execution_helpers_use_env_override_and_exec_config_shape --lib.",
+        "R835 Testnet/Property/Util.hs pure harness helpers: property/util.rs now exposes integration test-count/workspace-name projections, integrationRetryWorkspace retry/no-retry workspace naming, DISABLE_RETRIES lookup semantics, isLinux OS predicate, and aesonObjectLookUp JSON object lookup/error shape. decodeEraUTxO and the Assert/Run property harness execution remain deferred until Cardano API era-typed UTxO and proptest/tokio orchestration land. Focused validation: cargo test -p yggdrasil-cardano-testnet property_util --lib.",
+        "R836 Testnet/Property/Assert.hs pure assertion helpers: property/assert.rs now exposes readJsonLines-style JSON-lines decoding, TraceNode leader/not-leader slot extraction, assertByDeadlineIOCustom deadline error shape with an injectable predicate, pure assertExpectedSposInLedgerState set-count semantics, and assertErasEqual mismatch messages. Focused validation: cargo test -p yggdrasil-cardano-testnet property_assert --lib.",
+        "R837 Testnet/Property/Assert.hs CLI-backed stake-pool assertion wrapper: property/assert.rs now exposes stake_pools_query_args, assert_expected_spos_in_ledger_state_with_executor, and assert_expected_spos_in_ledger_state, preserving the upstream cardano-cli latest query stake-pools --out-file argv shape and reusing the R836 set-count semantics after the CLI writes JSON. Focused validation: cargo test -p yggdrasil-cardano-testnet property_assert --lib.",
+        "R838 Testnet/Property/Run.hs pure harness-control helpers: property/run.rs now exposes UserProvidedEnv, ignore_on/disabled plus Windows/Mac disposition projections, and render_running_testnet_message for the runTestnet operator guidance using TestnetRuntime/SPO data. Focused validation: cargo test -p yggdrasil-cardano-testnet property_run --lib.",
+        "R839 Testnet/Property/Run.hs testnetProperty planning helpers: property/run.rs now exposes TESTNET_WORKSPACE_NAME, KEEPALIVE_DELAY_MICROS, TestnetPropertyPlan, TestnetPropertyWorkspace, UserProvidedEnvAction, no_user_provided_env_testnet_property_plan, user_provided_env_testnet_property_plan, and render_run_testnet_result. This pins the NoUserProvidedEnv integrationWorkspace branch, UserProvidedEnv create/reuse notes, the 10-second keepalive, the intentional post-run failure fact, and the failed-start message while leaving actual Hedgehog/Tasty execution deferred. Focused validation: cargo test -p yggdrasil-cardano-testnet property_run --lib."
       ],
       "remaining_work": [
-        "Port filepath helpers plus Conf/Process types from Testnet/Start/Types.hs.",
-        "Port era-aware records (CardanoTestnetCliOptions / CardanoTestnetCreateEnvOptions / TestnetCreationOptions / GenesisOptions / NodeOption etc.) once yggdrasil-ledger exposes the required era surface.",
-        "Port Testnet/Types.hs runtime types (TestnetRuntime / TestnetNode / KeyPair<k> / per-key-role phantom types) with the local Cardano.Api equivalent.",
-        "Implement the Process/Property carve-outs with synthesis docstrings, tokio::process, and proptest equivalents per the approved carve-out.",
-        "Wire per-subcommand execution for cardano multi-node spinup, create-env, and version/help.",
+        "Port concrete node/KES-agent process spawning and supervision using the R826 runtime record carriers plus the R832-R834 process-run helpers.",
+        "Port Start/Byron.hs, Start/Cardano.hs, and the era-genesis record builders.",
+        "Port DRep/SPO runtime workflows and transaction runtime/query orchestration from Process/Cli/Transaction.hs.",
+        "Implement the remaining Process/Property Run carve-out with synthesis docstrings, tokio::process, and proptest equivalents per the approved carve-out.",
+        "Wire per-subcommand execution for cardano multi-node spinup and create-env.",
         "Integration: full preview-network synthesis using only yggdrasil binaries.",
         "Closeout: AGENTS.md operational guide + parity-matrix promotion to verified_11_0_1."
       ],
@@ -972,7 +993,7 @@
       "area": "sister-tools",
       "feature": "Delegated Mempool Queue diffusion-layer node (sister project for Mithril) \u2014 pure-Rust port mirroring upstream IntersectMBO/dmq-node.",
       "status": "partial",
-      "next_milestone": "R445",
+      "next_milestone": "R817",
       "haskell_reference": [
         {
           "path": ".reference-haskell-cardano-node/deps/dmq-node/dmq-node/",
@@ -982,20 +1003,25 @@
       "rust_surface": [
         {
           "path": "crates/tools/dmq-node/",
-          "role": "Yggdrasil pure-Rust port \u2014 R335 skeleton + R356 typed-config surface (CLIOptions.hs port: PartialConfig + Configuration + LocalAddress + NetworkMagic). Diffusion + NodeToNode + NodeToClient + NodeKernel implementation pending."
+          "role": "Yggdrasil pure-Rust port \u2014 R335 skeleton + R356 typed-config + R361 parser/config handoff + R369 configuration-file load + R717-R757 DMQ protocol surface + R758-R768 NtN/NtC version and mux protocol surface + R787-R801 signature mempool/inbound-V2 governor + R805-R816 NodeKernel, peer-sharing, KeepAlive, DeltaQ, and NtN/NtC mux-bundle components. Remaining gap: the final run() event loop that binds sockets, performs handshakes, starts mux drivers, and supervises protocol tasks."
         }
       ],
       "implemented_evidence": [
         "R335-pattern skeleton: lib.rs + main.rs + parser.rs + golden test landed for dmq-node.",
         "Byte-equivalent --help and --version captured from upstream dmq-node binary as `tests/fixtures/upstream-{help,version}.txt` and embedded via include_str!.",
-        "R356 typed-config surface: types.rs ports the operator-facing CLI shape from upstream's CLIOptions.hs \u2014 PartialConfig (10-field record with Option<_> fields for env-var/file/CLI merge), Configuration (fully-resolved 10-field record), LocalAddress(PathBuf) newtype, NetworkMagic(u32) newtype, PartialConfig::merge / resolve methods. Defaults match upstream's defaultConfiguration: host=0.0.0.0/IPv6=::, port=3001, local_address=dmq-node.socket, config_file=dmq-node.json, topology_file=dmq-node-topology.json, cardano_node_socket=node.socket, cardano_network_magic=mainnet (764824073), network_magic=0. Carve-outs: Generic-derived Semigroup \u2192 explicit merge() helper; Data.Act gpact action machinery \u2192 straight field-level merging; Configuration.hs's mkDiffusionConfiguration / readConfigurationFile deferred to subsequent rounds.",
-        "R361 typed parser: parser.rs ports upstream's parseCLIOptions :: Parser PartialConfig dispatcher \u2014 the 10-flag grammar (--host-addr, --host-ipv6-addr, -p/--port, --local-socket, -c/--configuration-file, -t/--topology-file, --cardano-node-socket, --cardano-network-magic, --dmq-network-magic, -v/--version, -h/--help). `--version` is an in-grammar switch (sets show_version: Some(true) for downstream dispatch; not a parser short-circuit) matching upstream's optparse-applicative behavior; `--help` short-circuits. lib.rs::run_main() now wires parser \u2192 resolve \u2192 run() chain: HelpRequested emits HELP_TEXT; show_version emits VERSION_TEXT; otherwise resolves PartialConfig\u2192Configuration via PartialConfig::resolve and hands off to run(&Configuration). lib.rs::run() returns a sentinel reporting the resolved-config field values + roadmap pointer (R357+ for Diffusion/NodeKernel/PeerSelection wiring). 33 dmq-node tests at R361 (was 14 at R356 + 19 parser unit tests for each flag + full canonical invocation + missing-value/unknown-flag/invalid-port-number/invalid-network-magic error paths + parsed_args_resolve_to_full_configuration end-to-end + empty_args_resolve_to_full_defaults)."
+        "R356 typed-config surface: types.rs ports the operator-facing CLI shape from upstream's CLIOptions.hs \u2014 PartialConfig (10-field record with Option<_> fields for env-var/file/CLI merge), Configuration (fully-resolved 10-field record), LocalAddress(PathBuf) newtype, NetworkMagic(u32) newtype, PartialConfig::merge / resolve methods. Defaults match upstream's defaultConfiguration: host=0.0.0.0/IPv6=::, port=3001, local_address=dmq-node.socket, config_file=dmq-node.json, topology_file=dmq-node-topology.json, cardano_node_socket=node.socket, cardano_network_magic=mainnet (764824073), network_magic=0.",
+        "R361 typed parser: parser.rs ports upstream's parseCLIOptions :: Parser PartialConfig dispatcher \u2014 the 10-flag grammar (--host-addr, --host-ipv6-addr, -p/--port, --local-socket, -c/--configuration-file, -t/--topology-file, --cardano-node-socket, --cardano-network-magic, --dmq-network-magic, -v/--version, -h/--help). lib.rs::run_main() wires parser \u2192 configuration resolution \u2192 run() and preserves the upstream help/version behavior.",
+        "R369 Configuration.hs file/default resolution: configuration.rs and topology.rs port the config-file load, CLI/file/default merge, and topology-file parsing surface.",
+        "R717-R757 DMQ protocol surface: protocol/* ports SigSubmission, SigSubmissionV2, local message submission, local message notification, signature validation, and the R731/R732 dmq-node-local wire-shape decision.",
+        "R758-R768 runtime protocol descriptors: NodeToNode/NodeToClient version surfaces, mux mini-protocol numbers, and NtN/NtC bundle descriptors land without starting live mux tasks.",
+        "R787-R801 signature mempool + inbound-V2 governor: mempool.rs and inbound_v2.rs port the in-memory signature store, reference-count/state logic, peer selection, download decisions, receivedTxIds/collectTxs paths, and decision orchestration.",
+        "R805-R816 run() integration components: registry.rs, diffusion.rs, peer_sharing.rs, delta_q.rs, keep_alive.rs, node_to_node.rs, and node_to_client.rs provide TxChannels, TxMempoolSem, StakePools, NodeKernel, peer-sharing API/registry, KeepAliveRegistry, DeltaQ/GSV helpers, and the NtN/NtC OuroborosBundle descriptors. The final run() event loop remains deferred."
       ],
       "remaining_work": [
-        "R362+ Configuration.hs port: readConfigurationFile + mkDiffusionConfiguration (touches Ouroboros.Network.Diffusion which is a substantial separate port).",
-        "R363+ NodeToNode + NodeToClient mux wiring (via crates/network).",
-        "R364+ Diffusion/NodeKernel + PeerSelection.",
-        "Tracer + integration + closeout."
+        "R817+ run() event loop: bind configured sockets, accept connections, drive handshakes, start mux drivers, and supervise per-protocol tasks using the shipped NtN/NtC bundle descriptors.",
+        "Tracer integration and operational log parity for the live runtime.",
+        "End-to-end upstream-binary soak evidence against the vendored dmq-node reference binary.",
+        "Closeout: AGENTS.md operational guide refresh + parity-matrix promotion to verified_11_0_1."
       ],
       "acceptance": [
         "`<binary> --help` byte-equivalent to upstream `.reference-haskell-cardano-node/install/bin/dmq-node --help` (modulo program name).",

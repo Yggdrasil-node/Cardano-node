@@ -1,6 +1,6 @@
 # Guidance for the pure-Rust port of upstream `cardano-submit-api`.
 
-**Status:** `partial` (post-R344 functional binary with metrics; integration soak + closeout remain — operator-time gates). Scope band: **MEDIUM**.
+**Status:** `implemented_needs_11_0_1_evidence` (functional binary with metrics, typed rejection decoders, and accepted-response TxId derivation; upstream integration soak + verified promotion remain operator-time gates). Scope band: **MEDIUM**.
 
 ## Strict 1:1 file-mirror policy (R274+)
 
@@ -15,7 +15,7 @@ file(s) the helper surfaces. CI gate:
 
 Vendored at: `.reference-haskell-cardano-node/cardano-submit-api/` (14 `.hs` files).
 
-## Mini-arc rounds (R335-R346)
+## Mini-arc rounds (R335-R688)
 
 | Round | Scope                                                                                                  | Status |
 |-------|--------------------------------------------------------------------------------------------------------|--------|
@@ -26,10 +26,10 @@ Vendored at: `.reference-haskell-cardano-node/cardano-submit-api/` (14 `.hs` fil
 | R342  | Web server: HttpRequest/HttpResponse + parse_request + run_settings (raw tokio TCP); web.rs supervisor scaffolding with placeholder 503 | done   |
 | R343  | LocalTxSubmission wiring: async Handler refactor; submit_via_ntc opens ntc_connect per request, drives LocalTxSubmissionClient::submit, maps outcomes to TxCmdError; lib.rs::run() spins tokio runtime + serves the listener | done   |
 | R344  | Metrics.hs Prometheus surface: `metrics.rs` ships `MetricsRegistry` (lock-free `AtomicU64` `tx_submit` + `tx_submit_fail` counters with `register_metrics_server` doing port-occupied retry up to `MAX_PORT_OFFSET=1000` adjacent ports), `web.rs::run_tx_submit_server_from_params` spawns `register_metrics_server` on `params.metrics_port` + wraps the operator tracer via `make_metrics_aware_tracer` so `TraceSubmitApi::ApplicationTxSubmitPostResult` events increment counters. 13 metrics tests pin the path. | done |
-| R345  | Integration soak: drop-in replacement vs upstream binary at .reference-haskell-cardano-node/install/bin/cardano-submit-api; diff response wire output for matching tx-submission requests | scheduled (operator-time) |
-| R346  | Closeout: parity-matrix promotion `partial → verified_11_0_1`; AGENTS.md operational guide finalized; CHANGELOG closeout entry | scheduled (gated on R345) |
+| R569-R688 | Structured rejection decoder arc: `TxValidationErrorInCardanoMode` and the typed per-era predicate-failure tree decode Shelley-family and Conway submission rejections end-to-end. | done |
+| R825+ | Operator comparison follow-on: run `scripts/compare_submit_api_to_upstream.sh`, then promote the parity-matrix entry to `verified_11_0_1` when response diffs are empty. | scheduled (operator-time) |
 
-## Current functional surface (post-R343)
+## Current functional surface
 
 - ✅ `<binary> --help` byte-equivalent to upstream (golden test pinned
   in `tests/cli_help_golden.rs`).
@@ -42,7 +42,7 @@ Vendored at: `.reference-haskell-cardano-node/cardano-submit-api/` (14 `.hs` fil
 - ✅ `POST /api/submit/tx` handler decodes the request body, opens an
   NtC `LocalTxSubmission` connection to the configured socket path,
   forwards the body bytes, returns:
-  - `202 Accepted` `"OK"` on `MsgAcceptTx`
+  - `202 Accepted` `"<64-char txid>"` on `MsgAcceptTx`
   - `400 Bad Request` `{"tag":"TxSubmitFail","contents":{"tag":"TxCmdTxSubmitValidationError","contents":"rejected: 0x<hex>"}}` on `MsgRejectTx`
   - `503 Service Unavailable` `{"tag":"TxSubmitFail","contents":{"tag":"TxCmdTxSubmitConnectionError","contents":"<err>"}}` on connect/protocol failure
 - ✅ `EndpointSubmittedTransaction` / `EndpointFailedToSubmitTransaction`
@@ -56,9 +56,16 @@ Vendored at: `.reference-haskell-cardano-node/cardano-submit-api/` (14 `.hs` fil
 - ✅ Port-occupied retry (R344) — tries `starting_port..starting_port+1000`;
   on exhaustion traces `TraceSubmitApi::MetricsServerPortNotBound`
   and returns cleanly (mirrors upstream's "disable endpoint" semantic).
-- ❌ TxId in 202 success body — deferred (depends on multi-era CBOR
-  decode; tracked in parity-matrix `remaining_work`).
-- ❌ End-to-end soak vs upstream binary — lands at R345.
+- ✅ Typed rejection model (R569-R688): callers can convert
+  `TxSubmitValidationError` with `into_typed(era)` and inspect
+  `typed_conway_failures` / `typed_shelley_failures` for the decoded
+  per-era predicate-failure tree. The HTTP JSON envelope remains
+  rendered-string-only for upstream wire-shape parity.
+- ✅ TxId in 202 success body: the handler derives the upstream
+  `getTxId . getTxBody` value by hashing the first raw transaction-body
+  CBOR item and returns it as JSON on `MsgAcceptTx`.
+- ❌ End-to-end soak vs upstream binary — current operator-evidence
+  follow-on starts at R825.
 
 ## Build + run
 
@@ -97,6 +104,7 @@ lib.rs::run()
         └── per-connection: parse_request → handler.await → response.encode
             └── tx_submit_post(...)
                 ├── empty body → TxSubmitEmpty
+                ├── compute TxId from first raw transaction-body CBOR item
                 └── submit_via_ntc(socket_path, network_id, body)
                     ├── ntc_connect(socket_path, network_magic, false)
                     ├── extract NTC_LOCAL_TX_SUBMISSION ProtocolHandle
@@ -120,11 +128,9 @@ Key types:
 - `Servant.Application` → `Handler` type alias + path-prefix dispatch.
 - `Cardano.Api.deserialiseFromCBOR` + multi-era `FromSomeType` table
   (`AsTx AsShelleyEra` / ... / `AsTx AsConwayEra`) → raw bytes pass
-  through to NtC LocalTxSubmission (cardano-node returns MsgRejectTx
-  for malformed bytes; equivalent observable behavior).
-- `Cardano.Api.getTxId` (returning the TxId on accept) → empty `"OK"`
-  response body; operators compute Blake2b-256 client-side. Future
-  enhancement riding on multi-era CBOR support.
+  through to NtC LocalTxSubmission after the first raw transaction-body
+  CBOR item is extracted for TxId derivation (cardano-node returns
+  MsgRejectTx for malformed payloads).
 
 ## Rules *Non-Negotiable*
 
@@ -150,7 +156,7 @@ To verify the yggdrasil binary still tracks upstream byte-for-byte:
 bash scripts/setup-reference.sh
 
 # 2. Run cargo test for the crate.
-cargo test -p yggdrasil-cardano-submit-api  # 133 tests pass at R343
+cargo test -p yggdrasil-cardano-submit-api  # 356 lib tests pass after accepted-response TxId derivation
 
 # 3. Compare --help / --version byte-for-byte.
 diff <(.reference-haskell-cardano-node/install/bin/cardano-submit-api --help) \
@@ -159,7 +165,7 @@ diff <(.reference-haskell-cardano-node/install/bin/cardano-submit-api --version)
      <(target/release/cardano-submit-api --version)
 # (empty diffs expected — byte-equivalent)
 
-# 4. Live tx-submission diff against upstream binary (R345 round-doc procedure):
+# 4. Live tx-submission diff against upstream binary (R825 follow-on):
 #    Bring up upstream cardano-node + upstream cardano-submit-api on port 8090;
 #    bring up yggdrasil-cardano-submit-api on port 8091;
 #    POST the same sample tx to both endpoints and diff the responses.
@@ -167,9 +173,8 @@ diff <(.reference-haskell-cardano-node/install/bin/cardano-submit-api --version)
 
 ## Maintenance Guidance
 
-- Update this AGENTS.md when concrete subcommand implementations
-  land (replace `❌ not yet implemented` rows with `✅ shipped` +
-  round number).
+- Update this AGENTS.md when concrete cardano-submit-api surfaces
+  land (replace stale `❌` rows with `✅ shipped` + round number).
 - Keep the per-tool migration round numbers in sync with the
   authoritative plan file at `/home/daniel/.claude/plans/playful-tickling-plum.md`.
 - If upstream ships a new release: refresh the help/version

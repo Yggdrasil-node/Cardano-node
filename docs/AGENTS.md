@@ -6,7 +6,7 @@ Keep these documents synchronized with the implemented workspace, not with specu
 
 `docs/` carries policy + parity + operator-facing markdown, not Rust
 code, so the workspace strict-mirror file-policy (R274+) does not
-apply directly here. Four validators guard this tree's invariants:
+apply directly here. Five validators guard this tree's invariants:
 
 - `python3 scripts/check-parity-matrix.py` (CI gate since R303) —
   validates `parity-matrix.json` schema + every
@@ -14,7 +14,20 @@ apply directly here. Four validators guard this tree's invariants:
   This directory hosts the source-of-truth `parity-matrix.json`.
 - `python3 scripts/check-stale-placement.py` — rejects current-facing
   stale post-reorganization paths and status baselines in living docs,
-  including obsolete parity-summary/proof/upstream verification claims.
+  including obsolete parity-summary/proof/upstream verification claims,
+  stale README/docs-site test baselines, old BlockFetch default-flip
+  wording from before the R258 default graduation, and stale
+  cardano-submit-api structured-decoder/R345-R346 evidence wording plus
+  kes-agent/kes-agent-control early-mini-arc current-status wording and
+  root-manifest sister-tool labels, plus stale dmq-node pre-R816
+  current-status wording and stale cardano-testnet pre-R823,
+  Command-payload, and process-handle type gap wording.
+- `python3 scripts/check-doc-status-headers.py` (CI gate since R824) — keeps central
+  parity-doc status headers aligned with each other, the latest
+  operational-run markdown round, `docs/parity-matrix.json::reference.tag`, and
+  the compact `PARITY_DASHBOARD.md` status-count summary. When editing the
+  guard itself, run `python3 scripts/check-doc-status-headers.py --self-test`
+  before the live scan.
 - `python3 scripts/check-fixture-manifest.py` (CI gate since R303) —
   cross-checks the `cardano-base` SHA pin across
   `crates/node/config/src/upstream_pins.rs::UPSTREAM_CARDANO_BASE_COMMIT`,

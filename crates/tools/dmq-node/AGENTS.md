@@ -149,7 +149,7 @@ component the event loop assembles:
 - ❌ End-to-end behavioral tests against the upstream binary —
   pending that integration.
 
-## Carve-out inventory (R444 structured deferral surface)
+## Carve-out inventory (post-R816 run-loop boundary)
 
 `crates/tools/dmq-node/src/status.rs` ships
 `diffusion_wiring_status()` returning a `DiffusionWiringStatus`
@@ -175,7 +175,7 @@ target/release/dmq-node --help
 
 The binary is named `dmq-node` (matching upstream exactly) — operators
 can swap upstream's binary for the yggdrasil one in their automation
-once concrete dispatch lands at `R451+`.
+once the `run()` event loop and upstream comparison evidence land.
 
 ##  Rules *Non-Negotiable*
 
@@ -194,11 +194,14 @@ once concrete dispatch lands at `R451+`.
 
 ## Round roadmap
 
-Per the R326-R459 plan, this crate's full implementation lands across
-the named mini-arc rounds:
+The historical R326-R459 skeleton/config/parser plan is closed. The
+current A4 continuation has shipped the pure-logic and mux-bundle
+surface through R816; only the final runtime event loop remains.
 
 - ✅ Skeleton shipped (R327 + R335-pattern bulk skeleton at R335-R336).
-- 🟡 Next: **R451** — first concrete-impl round of the mini-arc.
+- ✅ Parser/config/protocol/inbound-governor/NodeKernel/mux-bundle
+  components shipped through R816.
+- 🟡 Next: `run()` event-loop assembly plus upstream comparison soak.
 - 🟡 Closeout — when all subcommands are functional, parity-matrix
   entry advances `partial → verified_11_0_1`. Operators can then
   swap upstream binary for the yggdrasil binary without script

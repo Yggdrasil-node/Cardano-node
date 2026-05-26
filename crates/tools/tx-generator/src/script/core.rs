@@ -81,6 +81,38 @@ pub const MAINNET_NETWORK_MAGIC: u32 = 764_824_073;
 const PROTOCOL_PARAMETERS_QUERIED_FILE: &str = "protocol-parameters-queried.json";
 const PLUTUS_BUDGET_SUMMARY_FILE: &str = "plutus-budget-summary.json";
 
+#[cfg(test)]
+static PLUTUS_BUDGET_SUMMARY_FILE_TEST_COUNTER: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+#[cfg(test)]
+thread_local! {
+    static PLUTUS_BUDGET_SUMMARY_FILE_TEST_PATH: PathBuf = {
+        let suffix = PLUTUS_BUDGET_SUMMARY_FILE_TEST_COUNTER
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "yggdrasil-tx-generator-{PLUTUS_BUDGET_SUMMARY_FILE}-{}-{suffix}",
+            std::process::id()
+        ))
+    };
+}
+
+#[cfg(test)]
+pub(crate) fn plutus_budget_summary_file_for_tests() -> PathBuf {
+    PLUTUS_BUDGET_SUMMARY_FILE_TEST_PATH.with(Clone::clone)
+}
+
+fn plutus_budget_summary_file() -> PathBuf {
+    #[cfg(test)]
+    {
+        plutus_budget_summary_file_for_tests()
+    }
+    #[cfg(not(test))]
+    {
+        PathBuf::from(PLUTUS_BUDGET_SUMMARY_FILE)
+    }
+}
+
 /// Mirror of upstream `withEra`.
 pub fn with_era<T>(
     era: AnyCardanoEra,
@@ -525,15 +557,18 @@ fn dump_budget_summary_if_existing(env: &mut Env) -> Result<(), Error> {
         .unwrap_or_else(|| Value::Object(Default::default()));
     let rendered = serde_json::to_string_pretty(&summary)
         .map_err(|err| lift_tx_gen_error(format!("prettyPrintOrdered: {err}")))?;
-    fs::write(PLUTUS_BUDGET_SUMMARY_FILE, format!("{rendered}\n")).map_err(|err| {
+    let summary_file = plutus_budget_summary_file();
+    fs::write(&summary_file, format!("{rendered}\n")).map_err(|err| {
         lift_tx_gen_error(format!(
-            "dumpBudgetSummaryIfExisting: write {PLUTUS_BUDGET_SUMMARY_FILE}: {err}"
+            "dumpBudgetSummaryIfExisting: write {}: {err}",
+            summary_file.display()
         ))
     })?;
     trace_debug(
         env,
         &format!(
-            "dumpBudgetSummaryIfExisting : budget summary created/updated in: {PLUTUS_BUDGET_SUMMARY_FILE}"
+            "dumpBudgetSummaryIfExisting : budget summary created/updated in: {}",
+            summary_file.display()
         ),
     );
     Ok(())
@@ -3494,9 +3529,16 @@ mod tests {
 
     struct BudgetSummaryFileCleanup;
 
+    impl BudgetSummaryFileCleanup {
+        fn new() -> Self {
+            let _ = fs::remove_file(plutus_budget_summary_file_for_tests());
+            Self
+        }
+    }
+
     impl Drop for BudgetSummaryFileCleanup {
         fn drop(&mut self) {
-            let _ = fs::remove_file(PLUTUS_BUDGET_SUMMARY_FILE);
+            let _ = fs::remove_file(plutus_budget_summary_file_for_tests());
         }
     }
 
@@ -5443,8 +5485,7 @@ TxIn (TxId {{unTxId = SafeHash \"{}\"}}) (TxIx {{unTxIx = 0}})",
 
     #[test]
     fn discard_submit_spends_script_fund_and_updates_destination_wallet() {
-        let _cleanup = BudgetSummaryFileCleanup;
-        let _ = fs::remove_file(PLUTUS_BUDGET_SUMMARY_FILE);
+        let _summary_file_cleanup = BudgetSummaryFileCleanup::new();
         let mut env = Env::empty_env();
         seed_pay_to_addr_env(&mut env);
         seed_static_plutus_protocol_parameters(&mut env);

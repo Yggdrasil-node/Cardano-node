@@ -12,15 +12,14 @@ nav_order: 1
 **Document round**: §1-§9 evidence captured at R248 (2026-05-02);
 header refreshed R308 (2026-05-09); R313-R320 docstring-classification
 arc note added R321 (2026-05-09); live-status header refreshed after
-the R517-R529 post-reorganization cleanup (2026-05-20).
-**Cumulative arc**: R1 -> R529+ for the implementation journal; the
+the R839 cardano-testnet Property/Run testnetProperty planning helpers (2026-05-26).
+**Cumulative arc**: R1 -> R839 for the current living status; the
 detailed proof body below remains the preserved R248/R320 evidence set.
 **Build**: `target/release/yggdrasil-node` (Cargo `release` profile, Rust 1.95.0)
-**Workspace tests**: latest broad baseline captured 2026-05-17 on Rust
-1.95.0: 6,519 passing, 0 failing, 3 ignored, with `cargo fmt --all --
---check`, `cargo check-all`, `cargo lint`, and `cargo test-all` clean.
-The R529 docs/guard refresh revalidated focused status gates, not the
-full cargo suite.
+**Workspace tests**: latest broad baseline captured 2026-05-26 on Rust
+1.95.0: 7,251 passing, 0 failing, 3 ignored (7,254 listed tests total),
+with `cargo fmt --all -- --check`, `cargo check-all`, `cargo lint`, and
+`cargo test-all` clean.
 
 > **R273-rename + R274–R311 file-mirror & tech-debt arc + R313–R320
 > docstring-classification cleanup** (closed 2026-05-09). The
