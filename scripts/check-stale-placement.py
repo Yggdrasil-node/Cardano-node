@@ -44,13 +44,15 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
+import uuid
+from contextlib import contextmanager
 from datetime import date
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
 REFERENCE_TREE = ".reference-haskell-cardano-node"
+SELF_TEST_TMP_ROOT = ROOT / "target" / "check-stale-placement-self-test"
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -588,6 +590,10 @@ STALE_PATTERNS = {
     "stale bech32 pre-verified current-status wording": re.compile(
         r"Yggdrasil pure-Rust port\s*(?:—|-)\s*R327 skeleton; concrete implementation lands across the A\.1 sub-arc per the R326(?:–|-)R459 sister-tools port plan\."
     ),
+    "stale R178 LSQ closure wording": re.compile(
+        r"The Conway-era LSQ wire-protocol gap is fully closed|"
+        r"core node parity closure remains intact"
+    ),
 }
 
 SELF_TEST_STALE_CASES = (
@@ -602,6 +608,11 @@ SELF_TEST_STALE_CASES = (
     ("crates/cardano-submit-api/src/lib.rs", "old top-level cardano-submit-api crate path"),
     ("crates/cardano-tracer/src/lib.rs", "old top-level cardano-tracer crate path"),
     ("crates/db-truncater/src/lib.rs", "old top-level sister-tool crate path"),
+    (
+        "The Conway-era LSQ wire-protocol gap is fully closed",
+        "stale R178 LSQ closure wording",
+    ),
+    ("core node parity closure remains intact", "stale R178 LSQ closure wording"),
     ("node/configuration/preview/config.json", "config nested under node"),
     ("node/scripts/run-tools.sh", "scripts nested under node"),
     (
@@ -1360,6 +1371,24 @@ def reference_git_metadata_failures(root: Path = ROOT) -> list[str]:
     return failures
 
 
+@contextmanager
+def self_test_temp_directory():
+    """Create self-test scratch space under the workspace.
+
+    Some sandboxed local environments deny writes to the process-wide temp
+    directory. CI still gets isolated throwaway directories because
+    `target/` is untracked and job-local.
+    """
+
+    SELF_TEST_TMP_ROOT.mkdir(parents=True, exist_ok=True)
+    temp_root = SELF_TEST_TMP_ROOT / f"case-{uuid.uuid4().hex}"
+    temp_root.mkdir(parents=True)
+    try:
+        yield temp_root
+    finally:
+        shutil.rmtree(temp_root, ignore_errors=True)
+
+
 def reference_gitignore_failures(
     root: Path = ROOT,
     *,
@@ -1552,7 +1581,7 @@ def self_test() -> int:
     if should_scan("scripts/check-stale-placement.py"):
         failures.append("guard source should stay excluded from content scanning")
 
-    with tempfile.TemporaryDirectory() as temp_dir:
+    with self_test_temp_directory() as temp_dir:
         temp_root = Path(temp_dir)
         for relative_path in STALE_DIRECTORIES.values():
             (temp_root / relative_path).mkdir(parents=True)
@@ -1603,7 +1632,7 @@ def self_test() -> int:
                 "expected reference metadata detector to flag .git directories and files"
             )
 
-    with tempfile.TemporaryDirectory() as temp_dir:
+    with self_test_temp_directory() as temp_dir:
         temp_root = Path(temp_dir)
         sample_placements = {
             "node binary crate manifest": "crates/node/cardano-node/Cargo.toml",
@@ -1649,7 +1678,7 @@ def self_test() -> int:
     if not root_shell_script_mode_failures(stage_output=b""):
         failures.append("missing tracked root shell scripts should be rejected")
 
-    with tempfile.TemporaryDirectory() as temp_dir:
+    with self_test_temp_directory() as temp_dir:
         temp_root = Path(temp_dir)
         sample_snippets = (
             (
@@ -1674,13 +1703,13 @@ def self_test() -> int:
         if required_text_snippet_failures(temp_root, sample_snippets):
             failures.append("present required packaging snippets should be accepted")
 
-    with tempfile.TemporaryDirectory() as temp_dir:
+    with self_test_temp_directory() as temp_dir:
         temp_root = Path(temp_dir)
         (temp_root / REFERENCE_TREE / "deps/cardano-ledger").mkdir(parents=True)
         if reference_git_metadata_failures(temp_root):
             failures.append("reference source tree without Git metadata should be allowed")
 
-    with tempfile.TemporaryDirectory() as temp_dir:
+    with self_test_temp_directory() as temp_dir:
         temp_root = Path(temp_dir)
         (temp_root / ".gitignore").write_text(
             f"**/{REFERENCE_TREE}/\n",
@@ -1689,13 +1718,13 @@ def self_test() -> int:
         if reference_gitignore_failures(temp_root, verify_with_git=False):
             failures.append("reference gitignore rule should be accepted")
 
-    with tempfile.TemporaryDirectory() as temp_dir:
+    with self_test_temp_directory() as temp_dir:
         temp_root = Path(temp_dir)
         (temp_root / ".gitignore").write_text("/target/\n", encoding="utf-8")
         if not reference_gitignore_failures(temp_root, verify_with_git=False):
             failures.append("missing reference gitignore rule should be rejected")
 
-    with tempfile.TemporaryDirectory() as temp_dir:
+    with self_test_temp_directory() as temp_dir:
         temp_root = Path(temp_dir)
         (temp_root / ".gitmodules").write_text(
             "\n".join(
@@ -1731,7 +1760,7 @@ def self_test() -> int:
     if unrelated_index_failures:
         failures.append("unrelated Git index entries should be allowed")
 
-    with tempfile.TemporaryDirectory() as temp_dir:
+    with self_test_temp_directory() as temp_dir:
         temp_root = Path(temp_dir)
         (temp_root / ".gitmodules").write_text(
             "\n".join(

@@ -1087,11 +1087,98 @@ fn upstream_hardforkblock_query_dispatches_to_typed_responses() {
     );
 }
 
-/// Round 148 — `[3]` is upstream `GetChainPoint`.  In yggdrasil's
-/// flat table `[3]` is `ProtocolParameters`.  The upstream codec
-/// wins (canonical Cardano ABI); a length-1 array decodes via
-/// `UpstreamQuery::decode` as `GetChainPoint` and the response
-/// is the encoded chain tip Point.
+/// R178 follow-up: Conway `QueryIfCurrent` response envelopes
+/// use the HFC `Right` envelope `[body]` on an era match, while era
+/// mismatches use the HFC `Left` envelope `[requestedEra, ledgerEra]`.
+#[test]
+fn conway_query_if_current_uses_hfc_match_and_mismatch_envelopes() {
+    use yggdrasil_ledger::{CborEncode, Encoder};
+    use yggdrasil_network::protocols::{
+        LocalStateQueryMessage, encode_query_if_current_match, encode_query_if_current_mismatch,
+    };
+
+    let state = LedgerState::new(Era::Conway);
+    let snapshot = state.snapshot();
+
+    let mut constitution = Encoder::new();
+    snapshot
+        .enact_state()
+        .constitution()
+        .encode_cbor(&mut constitution);
+    let conway_cases: [(&str, &[u8], Vec<u8>); 3] = [
+        (
+            "gov-state",
+            &[0x82, 0x00, 0x82, 0x00, 0x82, 0x06, 0x81, 0x18, 0x18],
+            encode_conway_gov_state_for_lsq(&snapshot),
+        ),
+        (
+            "constitution",
+            &[0x82, 0x00, 0x82, 0x00, 0x82, 0x06, 0x81, 0x17],
+            constitution.into_bytes(),
+        ),
+        (
+            "committee-state",
+            &[
+                0x82, 0x00, 0x82, 0x00, 0x82, 0x06, 0x84, 0x18, 0x1b, 0xd9, 0x01, 0x02, 0x80, 0xd9,
+                0x01, 0x02, 0x80, 0xd9, 0x01, 0x02, 0x80,
+            ],
+            encode_committee_members_state_for_lsq(&snapshot),
+        ),
+    ];
+
+    for (label, query, body) in conway_cases {
+        let result = BasicLocalQueryDispatcher::default().dispatch_query(&snapshot, query);
+        let expected = encode_query_if_current_match(&body);
+        assert_eq!(
+            result, expected,
+            "{label} QueryIfCurrent match must be the HFC Right envelope [body]",
+        );
+        assert_eq!(
+            LocalStateQueryMessage::MsgResult {
+                result: result.clone(),
+            }
+            .to_cbor(),
+            {
+                let mut bytes = vec![0x82, 0x04];
+                bytes.extend_from_slice(&expected);
+                bytes
+            },
+            "{label} MsgResult frame must inline the QueryIfCurrent envelope",
+        );
+    }
+
+    let get_gov_state_babbage: &[u8] = &[0x82, 0x00, 0x82, 0x00, 0x82, 0x05, 0x81, 0x18, 0x18];
+    let mismatch =
+        BasicLocalQueryDispatcher::default().dispatch_query(&snapshot, get_gov_state_babbage);
+    assert_eq!(
+        mismatch,
+        encode_query_if_current_mismatch(lsq_era_index::CONWAY, lsq_era_index::BABBAGE),
+        "QueryIfCurrent mismatch must be the HFC Left envelope [requested, ledger]",
+    );
+    assert_eq!(
+        mismatch,
+        vec![
+            0x82, 0x82, 0x05, 0x67, b'B', b'a', b'b', b'b', b'a', b'g', b'e', 0x82, 0x06, 0x66,
+            b'C', b'o', b'n', b'w', b'a', b'y',
+        ],
+        "mismatch envelope must be [NS Babbage, NS Conway]",
+    );
+    assert_eq!(
+        LocalStateQueryMessage::MsgResult {
+            result: mismatch.clone(),
+        }
+        .to_cbor(),
+        {
+            let mut bytes = vec![0x82, 0x04];
+            bytes.extend_from_slice(&mismatch);
+            bytes
+        },
+        "MsgResult frame must inline the QueryIfCurrent mismatch envelope",
+    );
+}
+
+/// Round 148: `[3]` is upstream `GetChainPoint`. In yggdrasil's
+/// flat table `[3]` is `ProtocolParameters`, so the upstream codec wins.
 #[test]
 fn upstream_get_chain_point_returns_encoded_tip_point() {
     use yggdrasil_ledger::{HeaderHash, SlotNo};

@@ -17,7 +17,15 @@ scripts/
 ├── check-parity-matrix.py         # CI gate: parity-matrix.json schema + paths
 ├── check-fixture-manifest.py      # CI gate (R303): cardano-base SHA pin consistency
 ├── check-reference-artifacts.py   # Linux/WSL local-only: validates .reference-haskell-cardano-node/install/
+├── check-core-evidence-harnesses.py # local preflight for core evidence helper self-tests
 ├── check_upstream_drift.sh        # operator pin-drift report
+├── compare_tip_to_haskell.sh      # upstream Haskell tip comparison helper
+├── compare-conway-lsq.py          # R178 Conway LSQ cardano-cli comparison helper
+├── compare-gap-bo-tpraos-vrf.py   # offline Gap BO TPraos VRF evidence diff helper
+├── compare-gap-bp-cek-flushes.py  # offline Gap BP CEK accumulated-step flush diff helper
+├── compare-gap-bp-builtin-costs.py # offline Gap BP per-builtin cost diff helper
+├── compare-gap-bp-script-context.py # offline Gap BP ScriptContext CBOR diff helper
+├── compare-gap-bp-traces.py       # aggregate Gap BP ScriptContext/CEK/builtin evidence helper
 ├── run-tools.sh                   # sister-tool launcher
 └── *producer* / *soak* helpers    # operator runbook harnesses
 ```
@@ -103,7 +111,7 @@ the canonical `configuration/{mainnet,preprod,preview}/` operator bundles
 the preset carries it), `configuration/poolMetaData.json`, `scripts/run-tools.sh`,
 root reference/operator helpers under `scripts/` (`setup-reference.sh`,
 `install_haskell_cardano_node.sh`, `compare_tip_to_haskell.sh`,
-`parallel_blockfetch_soak.sh`, `preview_producer_harness.sh`, and
+`compare-conway-lsq.py`, `parallel_blockfetch_soak.sh`, `preview_producer_harness.sh`, and
 `yggdrasil-node.service`), and
 `.claude/skills/cardano-haskell-node/SKILL.md`.
 Every tracked root `scripts/*.sh` file must also keep Git executable mode
@@ -209,6 +217,109 @@ executables. Validates `.reference-haskell-cardano-node/install/`:
 
 Run after `bash scripts/setup-reference.sh --force` to confirm the
 vendored install lines up with the policy tag.
+
+### `check-core-evidence-harnesses.py` (local preflight)
+
+Runs the local self-tests for the current core evidence helpers:
+
+- `compare-gap-bo-tpraos-vrf.py --self-test`
+- `compare-gap-bp-script-context.py --self-test`
+- `compare-gap-bp-cek-flushes.py --self-test`
+- `compare-gap-bp-builtin-costs.py --self-test`
+- `compare-gap-bp-traces.py --self-test`
+- `compare-conway-lsq.py --self-test`
+- `compare_tip_to_haskell.sh --self-test`
+- `parallel_blockfetch_soak.sh --self-test`
+
+This guard is intentionally local-only: it proves the harnesses still parse,
+compare, and report evidence before an operator starts live Haskell/socket
+comparisons, but it does not prove live parity by itself. It writes
+`target/core-evidence-harnesses/summary.json` with per-helper stdout/stderr,
+exit status, and duration for troubleshooting.
+
+### `compare_tip_to_haskell.sh` (tip comparison evidence)
+
+Compares Yggdrasil and upstream Haskell tips by required `slot` and `hash`.
+The helper fails closed when either command exits nonzero, either output is not
+valid JSON, or either required field is missing. Haskell `block`/`epoch` values
+are logged when present, but they are not sign-off keys until Yggdrasil's
+`query-tip` compatibility surface emits them too.
+
+### `parallel_blockfetch_soak.sh` (BlockFetch Section 6.5 operator evidence)
+
+Starts `yggdrasil-node`, samples Prometheus metrics, asserts worker
+registration/migration, optionally runs `compare_tip_to_haskell.sh`, and writes
+`$LOG_DIR/summary.txt`. Closeout runs must use `REQUIRE_TIP_COMPARISON=1`;
+that strict mode requires `HASKELL_SOCK`,
+`EXPECT_WORKERS >= MAX_CONCURRENT_BLOCK_FETCH_PEERS`, `REQUIRE_WORKERS=1`,
+`REQUIRE_PROGRESS=1`, `MIN_TIP_COMPARE_PASSES >= 2`, final workers at or above
+the expectation, no post-activation worker shortfall samples, and the minimum
+successful Haskell tip comparisons. Diagnostic captures may disable
+worker/progress assertions only when `REQUIRE_TIP_COMPARISON=0`, and cannot be
+cited as Section 6.5 sign-off evidence.
+
+
+### `compare-conway-lsq.py` (R178 operator evidence)
+
+Drives the upstream `cardano-cli conway query` surface against a Yggdrasil
+socket and, optionally, a Haskell reference socket. The harness records the
+upstream `cardano-cli --version`, writes both UTF-8 convenience logs and raw
+binary stdout/stderr artifacts for every query, and includes raw-byte diff
+windows in `summary.json` when Haskell output is supplied. R178 closeout runs
+must pass `--require-haskell` plus either `--require-byte-equal` or
+`--require-normalized-equal`; otherwise the helper is only proving that the
+Yggdrasil socket is decodable by upstream `cardano-cli`. The self-test pins the
+HFC `QueryIfCurrent` envelope facts used by R178: match is a one-element `Right`
+list and mismatch is a two-element `Left` list of requested-era then ledger-era
+`NS` names.
+
+### `compare-gap-bo-tpraos-vrf.py` (Gap BO operator evidence)
+
+Compares `TPRAOS_VRF_EVIDENCE` lines emitted by the Rust sync path against a
+future Haskell/operator capture for the same preprod slot. The Rust emitter
+must include slot, era, verification status, overlay classification, delegate
+hashes, VRF key hashes, nonce debug values, canonical nonce hex values,
+`nonce_state_phase`, TPraos seeds, VRF outputs, and proof hashes. The
+comparator treats those fields as a schema: missing required metadata or any
+default comparison key fails before writing a misleading captured/pass result.
+`--require-equal` requires `--haskell-log`; without Haskell evidence the helper
+is capture-only.
+
+### `compare-gap-bp-cek-flushes.py` (Gap BP operator evidence)
+
+Compares `YGG_DUMP_CEK_FLUSHES` accumulated-step budget spend logs against a
+future Haskell CEK replay transformed into the same key-value shape. The helper
+compares flushes by ordinal index and checks accumulated step count, per-kind
+counts, charged CPU/memory, before/after budget, and status. It is the
+lower-volume companion to per-step CEK traces for narrowing the preview V2 cost
+drift before a live upstream trace is available. `--require-equal` requires
+`--haskell-log`; without Haskell evidence the helper is capture-only.
+
+### `compare-gap-bp-builtin-costs.py` (Gap BP operator evidence)
+
+Compares `YGG_DUMP_BUILTIN_COSTS` per-builtin budget charge logs against a
+future Haskell Plutus replay transformed into the same key-value shape. The
+helper compares builtins by ordinal index and checks builtin name, argument
+memory sizes, charged CPU/memory, and remaining budget. It is the builtin-cost
+companion to the CEK flush helper for isolating the preview V2 cost drift.
+`--require-equal` requires `--haskell-log`; without Haskell evidence the helper
+is capture-only.
+
+### `compare-gap-bp-traces.py` (Gap BP aggregate evidence)
+
+Runs the ScriptContext, CEK flush, and builtin-cost comparators as one Gap BP
+evidence gate. Rust logs for all three streams are required. Haskell logs are
+optional in capture mode, but the parity closeout command must use
+`--require-haskell --require-equal` so missing Haskell evidence or any
+byte/field mismatch fails the aggregate summary in
+`target/gap-bp-trace-comparison/summary.json`.
+
+### `compare-gap-bp-script-context.py` (Gap BP operator evidence)
+
+Compares `YGG_DUMP_SCRIPT_CONTEXT[_FILE]` ScriptContext CBOR captures against a
+future Haskell replay dump for the same preview V2 transaction. It writes raw
+CBOR and hex artifacts plus the first divergent byte window. `--require-byte-equal`
+requires `--haskell-log`; without Haskell evidence the helper is capture-only.
 
 ## Refresh helper
 

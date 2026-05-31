@@ -168,12 +168,13 @@ maud = "0.27"
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "json"] }
 tower = { version = "0.5", default-features = false, features = ["util"] }
 rustls-pemfile = "2"
-# R468 audit: TLS-terminated HTTP server for cardano-tracer Prometheus/
+# R468/R840 audit: TLS-terminated HTTP server for cardano-tracer Prometheus/
 # Monitoring endpoints when operator config has `force_ssl: true`.
-# Pinned `default-features = false, features = ["tls-rustls"]` to use
-# tokio-rustls (no native-tls); same audit posture as `lettre`
-# (R403). MIT/Apache-2.0 dual-licensed; pure Rust transitive deps.
-axum-server = { version = "0.7", default-features = false, features = ["tls-rustls"] }
+# Pinned `default-features = false, features = ["tls-rustls-no-provider"]`
+# so rustls does not enable its default AWS-LC provider path. The
+# workspace-level `rustls` dependency below installs the explicit `ring`
+# provider at runtime.
+axum-server = { version = "0.7", default-features = false, features = ["tls-rustls-no-provider"] }
 # R468 audit: rustls 0.23 requires the application to install a
 # CryptoProvider explicitly before ServerConfig::builder. Yggdrasil
 # picks `ring` (license-clarified in deny.toml — MIT AND ISC AND

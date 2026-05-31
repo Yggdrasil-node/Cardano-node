@@ -321,7 +321,12 @@ scripts/run_mainnet_real_pool_producer.sh
 
 ## 5. Hash comparison vs. Haskell node
 
-Sample the chain tip on both nodes simultaneously to confirm they agree on `{slot, hash, block, epoch}`. Designed for the 15min / 60min / 6h checkpoints per `docs/PARITY_SUMMARY.md` Next Steps item 2.
+Sample the chain tip on both nodes simultaneously to confirm they agree on
+`{slot, hash}`. Haskell `cardano-cli query tip` also reports `{block, epoch}`;
+the comparison harness logs those fields when present, but they are not
+sign-off keys until Yggdrasil's `query-tip` compatibility surface emits them
+too. Designed for the 15min / 60min / 6h checkpoints per
+`docs/PARITY_SUMMARY.md` Next Steps item 2.
 
 ### 5a. Single-shot comparison
 
@@ -405,9 +410,14 @@ asserts worker registration/migration, runs `compare_tip_to_haskell.sh` at
 worker-channel failures, and writes a concise summary under
 `$LOG_DIR/summary.txt`. Keep `REQUIRE_TIP_COMPARISON=1` for sign-off runs; it
 fails before startup when no Haskell socket is configured or when the comparison
-interval cannot fit inside the run window. Use `RUN_SECONDS=86400` for the
-24-hour soak steps and set `TOPOLOGY=/path/to/topology.json` when rehearsing
-with a custom multi-relay topology.
+interval cannot fit inside the run window. In that strict mode the harness also
+refuses `EXPECT_WORKERS < MAX_CONCURRENT_BLOCK_FETCH_PEERS`,
+`REQUIRE_WORKERS=0`, `REQUIRE_PROGRESS=0`, `MIN_TIP_COMPARE_PASSES < 2`, final
+worker collapse, or post-activation worker shortfall samples, so a sign-off run
+cannot bypass the multi-worker activation, sustained-worker, progress, or
+Haskell evidence checks. Use `RUN_SECONDS=86400` for the 24-hour soak steps and
+set `TOPOLOGY=/path/to/topology.json` when rehearsing with a custom multi-relay
+topology.
 
 ### 6.5a Two-peer parity check (preprod)
 
@@ -525,16 +535,21 @@ peer in the registry, (b) `useLedgerAfterSlot` not yet crossed and no
 Run the existing tip-comparison harness from §5 against a Haskell node that's also fully synced on preprod:
 
 ```sh
-YGG_SOCK=/tmp/ygg.sock \
+YGG_SOCK=/tmp/ygg-preprod.sock \
 HASKELL_SOCK=/tmp/cardano.sock \
 NETWORK_MAGIC=1 \
 scripts/compare_tip_to_haskell.sh
 
 # Watch loop, every 15 minutes:
-watch -n 900 'YGG_SOCK=/tmp/ygg.sock HASKELL_SOCK=/tmp/cardano.sock NETWORK_MAGIC=1 scripts/compare_tip_to_haskell.sh'
+watch -n 900 'YGG_SOCK=/tmp/ygg-preprod.sock HASKELL_SOCK=/tmp/cardano.sock NETWORK_MAGIC=1 scripts/compare_tip_to_haskell.sh'
 ```
 
-**Pass criterion:** the Yggdrasil tip `{slot, hash, block, epoch}` must match the Haskell tip at every check for at least 6 hours after the multi-peer mode is engaged. Any divergence under parallel fetch indicates a bug in the dispatch / reorder / tentative-header path that does not surface in the single-peer path.
+**Pass criterion:** the Yggdrasil tip `{slot, hash}` must match the Haskell tip
+at every check for at least 6 hours after the multi-peer mode is engaged. The
+harness logs Haskell `{block, epoch}` when present, but only `{slot, hash}` are
+strict comparison keys until Yggdrasil emits those fields too. Any divergence
+under parallel fetch indicates a bug in the dispatch / reorder /
+tentative-header path that does not surface in the single-peer path.
 
 ### 6.5c Sustained-rate measurement
 
@@ -594,6 +609,10 @@ Record in §9:
 - Preprod knob=4 24h soak: PASS / FAIL
 - Mainnet knob=2 24h hash compare: PASS / FAIL
 - Throughput delta knob=2 vs knob=1 (target: ≥ 1.0×, expected: 1.5–2×)
+- Harness strictness: `REQUIRE_TIP_COMPARISON=1`,
+  `EXPECT_WORKERS >= MAX_CONCURRENT_BLOCK_FETCH_PEERS`, `REQUIRE_WORKERS=1`,
+  `REQUIRE_PROGRESS=1`, `MIN_TIP_COMPARE_PASSES >= 2`, no post-activation
+  worker shortfalls, and final workers still at or above expectation
 
 If all sign-offs pass, record the evidence in a new operational-run note and
 update the living parity docs to close the §6.5 operator gate. The shipped

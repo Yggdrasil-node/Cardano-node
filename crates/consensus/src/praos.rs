@@ -261,6 +261,17 @@ pub fn verify_nonce_proof(
 mod tests {
     use super::*;
 
+    fn hex32(s: &str) -> [u8; 32] {
+        assert_eq!(s.len(), 64, "expected 32-byte hex");
+        let mut out = [0u8; 32];
+        for (idx, pair) in s.as_bytes().chunks_exact(2).enumerate() {
+            let hi = (pair[0] as char).to_digit(16).expect("hex high nibble");
+            let lo = (pair[1] as char).to_digit(16).expect("hex low nibble");
+            out[idx] = ((hi << 4) | lo) as u8;
+        }
+        out
+    }
+
     #[test]
     fn active_slot_coeff_from_rational_mainnet() {
         let asc = ActiveSlotCoeff::from_rational(1, 20).expect("1/20 is valid");
@@ -375,6 +386,89 @@ mod tests {
             ]
             .to_vec(),
             "seedL must match upstream mkNonceFromNumber 1"
+        );
+    }
+
+    #[test]
+    fn tpraos_vrf_seed_matches_preprod_gap_bo_golden_slots() {
+        // Preprod's configured ShelleyGenesisHash. R263 proved this nonce
+        // must remain active across slot 432000; these goldens pin the exact
+        // upstream `mkSeed` bytes consumed by `pbftVrfChecks`.
+        let nonce = Nonce::Hash(hex32(
+            "162d29c4e1cf6b8a84f2d692e67a3ac6bc7851bc3e6e4afe64d15778bed8bd86",
+        ));
+
+        let cases = [
+            (
+                429_460,
+                VrfUsage::Nonce,
+                "affb7eac05132e5fd7740d1f7a46f469fe65960d4ef1023d62ca6c4dfc8e59eb",
+            ),
+            (
+                429_460,
+                VrfUsage::Leader,
+                "3cc20edf9eaf977f255f39a82253ff5d7b865aec956e9bf66a3c7460b25492d7",
+            ),
+            (
+                432_000,
+                VrfUsage::Nonce,
+                "995f0f596dd7b72d065588699fb7d9f2ee097d9935509650517ffe335ae2e84d",
+            ),
+            (
+                432_000,
+                VrfUsage::Leader,
+                "0a667f2af66b0e0df47ebcdec7a2d2c66beab178eecf0f9b5989e61e14382371",
+            ),
+        ];
+
+        for (slot, usage, expected) in cases {
+            assert_eq!(
+                tpraos_vrf_seed(SlotNo(slot), nonce, usage),
+                hex32(expected).to_vec(),
+                "preprod Gap BO slot {slot} {usage:?} seed must match upstream mkSeed",
+            );
+        }
+    }
+
+    #[test]
+    fn tpraos_leader_and_nonce_proofs_are_usage_separated() {
+        let sk = VrfSecretKey::from_seed([0x42; 32]);
+        let vk = sk.verification_key();
+        let slot = SlotNo(429_460);
+        let nonce = Nonce::Hash(hex32(
+            "162d29c4e1cf6b8a84f2d692e67a3ac6bc7851bc3e6e4afe64d15778bed8bd86",
+        ));
+
+        let leader_input = tpraos_vrf_seed(slot, nonce, VrfUsage::Leader);
+        let (leader_output, leader_proof) = sk.prove(&leader_input).expect("leader proof");
+        let leader_proof_bytes = leader_proof.to_bytes();
+
+        assert_eq!(
+            verify_leader_proof_output(&vk, slot, nonce, &leader_proof_bytes, VrfMode::TPraos)
+                .expect("TPraos leader proof verifies"),
+            leader_output,
+            "seedL proof must verify through the TPraos leader path",
+        );
+        assert!(
+            verify_nonce_proof(&vk, slot, nonce, &leader_proof_bytes).is_err(),
+            "seedL proof must not verify as a seedEta nonce proof",
+        );
+        assert!(
+            verify_leader_proof_output(&vk, slot, nonce, &leader_proof_bytes, VrfMode::Praos)
+                .is_err(),
+            "TPraos seedL proof must not verify under Praos mkInputVRF",
+        );
+
+        let nonce_input = tpraos_vrf_seed(slot, nonce, VrfUsage::Nonce);
+        let (_nonce_output, nonce_proof) = sk.prove(&nonce_input).expect("nonce proof");
+        let nonce_proof_bytes = nonce_proof.to_bytes();
+
+        verify_nonce_proof(&vk, slot, nonce, &nonce_proof_bytes)
+            .expect("seedEta nonce proof verifies");
+        assert!(
+            verify_leader_proof_output(&vk, slot, nonce, &nonce_proof_bytes, VrfMode::TPraos)
+                .is_err(),
+            "seedEta proof must not verify as a seedL leader proof",
         );
     }
 

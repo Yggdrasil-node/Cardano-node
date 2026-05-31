@@ -103,6 +103,8 @@ deny = [
     { crate = "openssl",     reason = "FFI to OpenSSL — Yggdrasil is pure Rust" },
     { crate = "openssl-sys", reason = "FFI to OpenSSL — Yggdrasil is pure Rust" },
     { crate = "native-tls",  reason = "Pulls in OpenSSL on Linux" },
+    { crate = "aws-lc-rs",   reason = "Pulls AWS-LC native crypto provider into rustls; Yggdrasil installs the explicit ring provider" },
+    { crate = "aws-lc-sys",  reason = "Bundles native AWS-LC crypto code through rustls defaults" },
 ]
 
 # Skip duplicate-version warnings for crates where multiple major versions

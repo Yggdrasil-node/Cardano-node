@@ -1371,12 +1371,16 @@ drift. **Closes with:** per-block VRF input/seed/key diff vs upstream
 ### C2 — Gap BP: preview Plutus V2 cost-budget overrun (slot ~1,462,057)
 CEK overruns the CPU budget by ≈0.0185% on a real V2 script. Workaround:
 `YGG_SKIP_PHASE2=1` (sync-only; never on a block producer). **Closes with:**
-per-builtin step-cost trace diff vs upstream `Cek/Internal.hs::stepAndMaybeSpend`.
+aggregate `scripts/compare-gap-bp-traces.py --require-haskell --require-equal`
+evidence over ScriptContext CBOR, CEK accumulated-step flushes, and
+per-builtin costs vs upstream `Cek/Internal.hs::stepAndMaybeSpend`.
 
 ### C3 — R178-followup: Conway HFC LSQ response envelope
 cardano-cli's HFC decoder expects a different Conway-era LSQ response envelope
 than yggdrasil's current `[1, body]` shape. **Closes with:** captured upstream
-Conway-era wire fixtures + aligned `encode_query_if_current_match`.
+Conway-era wire fixtures via
+`scripts/compare-conway-lsq.py --require-haskell --require-byte-equal` plus
+any required `encode_query_if_current_match` adjustment.
 
 ### C4 — Performance: 2× Haskell sync throughput
 Yggdrasil ~2,321 slot/s vs Haskell ~5,296 slot/s (0.44×). Needs governor

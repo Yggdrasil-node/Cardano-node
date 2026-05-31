@@ -19,6 +19,7 @@ set -euo pipefail
 #   0  soak completed and all enabled assertions passed
 #   1  parity or liveness assertion failed
 #   2  node startup, metrics, or invocation failure
+#   3  --self-test failed
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -41,6 +42,7 @@ RUN_SECONDS="${RUN_SECONDS:-600}"
 SAMPLE_INTERVAL_S="${SAMPLE_INTERVAL_S:-30}"
 COMPARE_INTERVAL_S="${COMPARE_INTERVAL_S:-900}"
 START_DEADLINE_S="${START_DEADLINE_S:-90}"
+MIN_TIP_COMPARE_PASSES="${MIN_TIP_COMPARE_PASSES:-}"
 CARDANO_CLI="${CARDANO_CLI:-cardano-cli}"
 HASKELL_SOCK="${HASKELL_SOCK:-}"
 REQUIRE_TIP_COMPARISON="${REQUIRE_TIP_COMPARISON:-0}"
@@ -76,6 +78,10 @@ METRICS_URL="http://127.0.0.1:${METRICS_PORT}/metrics"
 usage() {
   cat <<'EOF'
 Usage:
+  scripts/parallel_blockfetch_soak.sh --self-test
+
+  or:
+
   NETWORK={mainnet|preprod|preview} \
   MAX_CONCURRENT_BLOCK_FETCH_PEERS=2 \
   RUN_SECONDS=21600 \
@@ -97,17 +103,25 @@ Optional env:
   HASKELL_SOCK                      Optional cardano-node socket. Enables tip comparison.
   CARDANO_CLI                       Default: cardano-cli
   COMPARE_INTERVAL_S                Default: 900
+  MIN_TIP_COMPARE_PASSES            Default: floor(RUN_SECONDS / COMPARE_INTERVAL_S), minimum 2 in sign-off mode
   REQUIRE_TIP_COMPARISON            Default: 0. Set 1 for sign-off runs that require Haskell comparison evidence.
   EXPECT_WORKERS                    Default: MAX_CONCURRENT_BLOCK_FETCH_PEERS
-  REQUIRE_WORKERS                   Default: 1. Set 0 only for diagnostic captures.
-  REQUIRE_PROGRESS                  Default: 1. Set 0 only when attaching to a deliberately idle network.
+                                    Must stay >= MAX_CONCURRENT_BLOCK_FETCH_PEERS for REQUIRE_TIP_COMPARISON=1 sign-off runs.
+  REQUIRE_WORKERS                   Default: 1. Set 0 only for diagnostic captures; sign-off runs require 1.
+  REQUIRE_PROGRESS                  Default: 1. Set 0 only when attaching to a deliberately idle network; sign-off runs require 1.
 
 Exit codes:
   0  soak completed and all enabled assertions passed
   1  parity/liveness assertion failed
   2  startup, metrics, or invocation failure
+  3  --self-test failed
 EOF
 }
+
+if [[ "${1:-}" == "--self-test" ]]; then
+  SELF_TEST=1
+  shift
+fi
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   usage
@@ -136,71 +150,113 @@ require_bool01() {
   fi
 }
 
-require_uint "MAX_CONCURRENT_BLOCK_FETCH_PEERS" "$MAX_CONCURRENT_BLOCK_FETCH_PEERS"
-require_uint "EXPECT_WORKERS" "$EXPECT_WORKERS"
-require_uint "REQUIRE_WORKERS" "$REQUIRE_WORKERS"
-require_uint "REQUIRE_PROGRESS" "$REQUIRE_PROGRESS"
-require_uint "RUN_SECONDS" "$RUN_SECONDS"
-require_uint "SAMPLE_INTERVAL_S" "$SAMPLE_INTERVAL_S"
-require_uint "COMPARE_INTERVAL_S" "$COMPARE_INTERVAL_S"
-require_uint "START_DEADLINE_S" "$START_DEADLINE_S"
-require_bool01 "REQUIRE_TIP_COMPARISON" "$REQUIRE_TIP_COMPARISON"
-
-if (( MAX_CONCURRENT_BLOCK_FETCH_PEERS < 2 )); then
-  echo "ERROR: MAX_CONCURRENT_BLOCK_FETCH_PEERS must be >= 2 for parallel BlockFetch rehearsal" >&2
-  exit 2
-fi
-
-if (( SAMPLE_INTERVAL_S == 0 )); then
-  echo "ERROR: SAMPLE_INTERVAL_S must be > 0" >&2
-  exit 2
-fi
-
-if (( COMPARE_INTERVAL_S == 0 )); then
-  echo "ERROR: COMPARE_INTERVAL_S must be > 0" >&2
-  exit 2
-fi
-
-if [[ ! -x "$YGG_BIN" ]]; then
-  echo "ERROR: yggdrasil-node binary not found at $YGG_BIN" >&2
-  exit 2
-fi
-
-if ! command -v curl >/dev/null 2>&1; then
-  echo "ERROR: curl is required for Prometheus metrics sampling" >&2
-  exit 2
-fi
-
-if [[ -n "$CONFIG" && ! -f "$CONFIG" ]]; then
-  echo "ERROR: CONFIG file not found: $CONFIG" >&2
-  exit 2
-fi
-
-if [[ -n "$TOPOLOGY" && ! -f "$TOPOLOGY" ]]; then
-  echo "ERROR: TOPOLOGY file not found: $TOPOLOGY" >&2
-  exit 2
-fi
-
-if [[ -n "$HASKELL_SOCK" ]]; then
-  if ! command -v "$CARDANO_CLI" >/dev/null 2>&1; then
-    echo "ERROR: CARDANO_CLI not found in PATH (set CARDANO_CLI=/abs/path)" >&2
-    exit 2
+validate_signoff_contract() {
+  if [[ "$REQUIRE_TIP_COMPARISON" != "1" ]]; then
+    return 0
   fi
-  if [[ ! -S "$HASKELL_SOCK" ]]; then
-    echo "ERROR: HASKELL_SOCK is not a unix socket: $HASKELL_SOCK" >&2
-    exit 2
-  fi
-fi
 
-if [[ "$REQUIRE_TIP_COMPARISON" == "1" ]]; then
+  local failed=0
   if [[ -z "$HASKELL_SOCK" ]]; then
     echo "ERROR: REQUIRE_TIP_COMPARISON=1 requires HASKELL_SOCK" >&2
-    exit 2
+    failed=2
+  fi
+  if (( EXPECT_WORKERS < MAX_CONCURRENT_BLOCK_FETCH_PEERS )); then
+    echo "ERROR: REQUIRE_TIP_COMPARISON=1 requires EXPECT_WORKERS >= MAX_CONCURRENT_BLOCK_FETCH_PEERS" >&2
+    failed=2
+  fi
+  if (( REQUIRE_WORKERS == 0 )); then
+    echo "ERROR: REQUIRE_TIP_COMPARISON=1 requires REQUIRE_WORKERS=1 so worker activation cannot be bypassed" >&2
+    failed=2
+  fi
+  if (( REQUIRE_PROGRESS == 0 )); then
+    echo "ERROR: REQUIRE_TIP_COMPARISON=1 requires REQUIRE_PROGRESS=1 so idle tip equality cannot pass sign-off" >&2
+    failed=2
   fi
   if (( COMPARE_INTERVAL_S > RUN_SECONDS )); then
     echo "ERROR: REQUIRE_TIP_COMPARISON=1 but COMPARE_INTERVAL_S=$COMPARE_INTERVAL_S exceeds RUN_SECONDS=$RUN_SECONDS" >&2
+    failed=2
+  fi
+  if (( MIN_TIP_COMPARE_PASSES < 2 )); then
+    echo "ERROR: REQUIRE_TIP_COMPARISON=1 requires MIN_TIP_COMPARE_PASSES >= 2" >&2
+    failed=2
+  fi
+  if (( COMPARE_INTERVAL_S * MIN_TIP_COMPARE_PASSES > RUN_SECONDS )); then
+    echo "ERROR: REQUIRE_TIP_COMPARISON=1 cannot fit MIN_TIP_COMPARE_PASSES=$MIN_TIP_COMPARE_PASSES at COMPARE_INTERVAL_S=$COMPARE_INTERVAL_S inside RUN_SECONDS=$RUN_SECONDS" >&2
+    failed=2
+  fi
+
+  if (( failed != 0 )); then
+    return "$failed"
+  fi
+  return 0
+}
+
+if [[ "${SELF_TEST:-0}" != "1" ]]; then
+  require_uint "MAX_CONCURRENT_BLOCK_FETCH_PEERS" "$MAX_CONCURRENT_BLOCK_FETCH_PEERS"
+  require_uint "EXPECT_WORKERS" "$EXPECT_WORKERS"
+  require_bool01 "REQUIRE_WORKERS" "$REQUIRE_WORKERS"
+  require_bool01 "REQUIRE_PROGRESS" "$REQUIRE_PROGRESS"
+  require_uint "RUN_SECONDS" "$RUN_SECONDS"
+  require_uint "SAMPLE_INTERVAL_S" "$SAMPLE_INTERVAL_S"
+  require_uint "COMPARE_INTERVAL_S" "$COMPARE_INTERVAL_S"
+  require_uint "START_DEADLINE_S" "$START_DEADLINE_S"
+  require_bool01 "REQUIRE_TIP_COMPARISON" "$REQUIRE_TIP_COMPARISON"
+
+  if (( MAX_CONCURRENT_BLOCK_FETCH_PEERS < 2 )); then
+    echo "ERROR: MAX_CONCURRENT_BLOCK_FETCH_PEERS must be >= 2 for parallel BlockFetch rehearsal" >&2
     exit 2
   fi
+
+  if (( SAMPLE_INTERVAL_S == 0 )); then
+    echo "ERROR: SAMPLE_INTERVAL_S must be > 0" >&2
+    exit 2
+  fi
+
+  if (( COMPARE_INTERVAL_S == 0 )); then
+    echo "ERROR: COMPARE_INTERVAL_S must be > 0" >&2
+    exit 2
+  fi
+
+  if [[ -z "$MIN_TIP_COMPARE_PASSES" ]]; then
+    MIN_TIP_COMPARE_PASSES=$(( RUN_SECONDS / COMPARE_INTERVAL_S ))
+    if (( MIN_TIP_COMPARE_PASSES < 2 )); then
+      MIN_TIP_COMPARE_PASSES=2
+    fi
+  fi
+  require_uint "MIN_TIP_COMPARE_PASSES" "$MIN_TIP_COMPARE_PASSES"
+
+  if [[ ! -x "$YGG_BIN" ]]; then
+    echo "ERROR: yggdrasil-node binary not found at $YGG_BIN" >&2
+    exit 2
+  fi
+
+  if ! command -v curl >/dev/null 2>&1; then
+    echo "ERROR: curl is required for Prometheus metrics sampling" >&2
+    exit 2
+  fi
+
+  if [[ -n "$CONFIG" && ! -f "$CONFIG" ]]; then
+    echo "ERROR: CONFIG file not found: $CONFIG" >&2
+    exit 2
+  fi
+
+  if [[ -n "$TOPOLOGY" && ! -f "$TOPOLOGY" ]]; then
+    echo "ERROR: TOPOLOGY file not found: $TOPOLOGY" >&2
+    exit 2
+  fi
+
+  if [[ -n "$HASKELL_SOCK" ]]; then
+    if ! command -v "$CARDANO_CLI" >/dev/null 2>&1; then
+      echo "ERROR: CARDANO_CLI not found in PATH (set CARDANO_CLI=/abs/path)" >&2
+      exit 2
+    fi
+    if [[ ! -S "$HASKELL_SOCK" ]]; then
+      echo "ERROR: HASKELL_SOCK is not a unix socket: $HASKELL_SOCK" >&2
+      exit 2
+    fi
+  fi
+
+  validate_signoff_contract || exit $?
 fi
 
 mkdir -p "$DB_DIR" "$LOG_DIR" "$METRICS_DIR"
@@ -316,6 +372,153 @@ avg_metric() {
   }'
 }
 
+run_self_test() {
+  local self_dir="$ROOT_DIR/target/blockfetch-soak-self-test"
+  local metrics_file="$self_dir/sample.prom"
+  mkdir -p "$self_dir"
+  cat >"$metrics_file" <<'EOF'
+yggdrasil_blocks_synced 10
+yggdrasil_current_slot 429460
+yggdrasil_blockfetch_workers_registered 2
+yggdrasil_blockfetch_workers_migrated_total 2
+yggdrasil_fetch_batch_duration_seconds_sum 9
+yggdrasil_fetch_batch_duration_seconds_count 3
+EOF
+
+  if [[ "$(metric_value yggdrasil_blockfetch_workers_registered "$metrics_file")" != "2" ]]; then
+    echo "ERROR: metric_value failed worker lookup" >&2
+    return 3
+  fi
+  if [[ "$(metric_or_zero missing_metric "$metrics_file")" != "0" ]]; then
+    echo "ERROR: metric_or_zero failed missing-metric fallback" >&2
+    return 3
+  fi
+  if ! numeric_gt 3 2 || numeric_gt 2 3; then
+    echo "ERROR: numeric_gt comparison failed" >&2
+    return 3
+  fi
+  if ! numeric_ge 2 2 || numeric_ge 1 2; then
+    echo "ERROR: numeric_ge comparison failed" >&2
+    return 3
+  fi
+  if [[ "$(avg_metric 9 3)" != "3.000s" ]]; then
+    echo "ERROR: avg_metric calculation failed" >&2
+    return 3
+  fi
+  if (
+    REQUIRE_TIP_COMPARISON=1
+    MAX_CONCURRENT_BLOCK_FETCH_PEERS=2
+    HASKELL_SOCK=
+    EXPECT_WORKERS=2
+    REQUIRE_WORKERS=1
+    REQUIRE_PROGRESS=1
+    RUN_SECONDS=600
+    COMPARE_INTERVAL_S=60
+    MIN_TIP_COMPARE_PASSES=2
+    validate_signoff_contract >/dev/null 2>&1
+  ); then
+    echo "ERROR: sign-off contract accepted missing HASKELL_SOCK" >&2
+    return 3
+  fi
+  if (
+    REQUIRE_TIP_COMPARISON=1
+    MAX_CONCURRENT_BLOCK_FETCH_PEERS=2
+    HASKELL_SOCK=/tmp/cardano.sock
+    EXPECT_WORKERS=1
+    REQUIRE_WORKERS=1
+    REQUIRE_PROGRESS=1
+    RUN_SECONDS=600
+    COMPARE_INTERVAL_S=60
+    MIN_TIP_COMPARE_PASSES=2
+    validate_signoff_contract >/dev/null 2>&1
+  ); then
+    echo "ERROR: sign-off contract accepted EXPECT_WORKERS below the configured knob" >&2
+    return 3
+  fi
+  if (
+    REQUIRE_TIP_COMPARISON=1
+    MAX_CONCURRENT_BLOCK_FETCH_PEERS=2
+    HASKELL_SOCK=/tmp/cardano.sock
+    EXPECT_WORKERS=2
+    REQUIRE_WORKERS=0
+    REQUIRE_PROGRESS=1
+    RUN_SECONDS=600
+    COMPARE_INTERVAL_S=60
+    MIN_TIP_COMPARE_PASSES=2
+    validate_signoff_contract >/dev/null 2>&1
+  ); then
+    echo "ERROR: sign-off contract accepted REQUIRE_WORKERS=0" >&2
+    return 3
+  fi
+  if (
+    REQUIRE_TIP_COMPARISON=1
+    MAX_CONCURRENT_BLOCK_FETCH_PEERS=2
+    HASKELL_SOCK=/tmp/cardano.sock
+    EXPECT_WORKERS=2
+    REQUIRE_WORKERS=1
+    REQUIRE_PROGRESS=0
+    RUN_SECONDS=600
+    COMPARE_INTERVAL_S=60
+    MIN_TIP_COMPARE_PASSES=2
+    validate_signoff_contract >/dev/null 2>&1
+  ); then
+    echo "ERROR: sign-off contract accepted REQUIRE_PROGRESS=0" >&2
+    return 3
+  fi
+  if (
+    REQUIRE_TIP_COMPARISON=1
+    MAX_CONCURRENT_BLOCK_FETCH_PEERS=2
+    HASKELL_SOCK=/tmp/cardano.sock
+    EXPECT_WORKERS=2
+    REQUIRE_WORKERS=1
+    REQUIRE_PROGRESS=1
+    RUN_SECONDS=600
+    COMPARE_INTERVAL_S=60
+    MIN_TIP_COMPARE_PASSES=1
+    validate_signoff_contract >/dev/null 2>&1
+  ); then
+    echo "ERROR: sign-off contract accepted MIN_TIP_COMPARE_PASSES < 2" >&2
+    return 3
+  fi
+  if (
+    REQUIRE_TIP_COMPARISON=1
+    MAX_CONCURRENT_BLOCK_FETCH_PEERS=2
+    HASKELL_SOCK=/tmp/cardano.sock
+    EXPECT_WORKERS=2
+    REQUIRE_WORKERS=1
+    REQUIRE_PROGRESS=1
+    RUN_SECONDS=600
+    COMPARE_INTERVAL_S=400
+    MIN_TIP_COMPARE_PASSES=2
+    validate_signoff_contract >/dev/null 2>&1
+  ); then
+    echo "ERROR: sign-off contract accepted too few comparison slots in the run window" >&2
+    return 3
+  fi
+  if ! (
+    REQUIRE_TIP_COMPARISON=1
+    MAX_CONCURRENT_BLOCK_FETCH_PEERS=2
+    HASKELL_SOCK=/tmp/cardano.sock
+    EXPECT_WORKERS=2
+    REQUIRE_WORKERS=1
+    REQUIRE_PROGRESS=1
+    RUN_SECONDS=600
+    COMPARE_INTERVAL_S=60
+    MIN_TIP_COMPARE_PASSES=2
+    validate_signoff_contract >/dev/null 2>&1
+  ); then
+    echo "ERROR: sign-off contract rejected a valid strict configuration" >&2
+    return 3
+  fi
+
+  echo "[ok] parallel_blockfetch_soak self-test passed"
+}
+
+if [[ "${SELF_TEST:-0}" == "1" ]]; then
+  run_self_test
+  exit $?
+fi
+
 run_tip_compare() {
   local ts
   ts="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -330,7 +533,7 @@ run_tip_compare() {
 }
 
 echo "[info] parallel_blockfetch_soak: NETWORK=$NETWORK magic=$NETWORK_MAGIC knob=$MAX_CONCURRENT_BLOCK_FETCH_PEERS expected_workers=$EXPECT_WORKERS"
-echo "[info] RUN_SECONDS=$RUN_SECONDS SAMPLE_INTERVAL_S=$SAMPLE_INTERVAL_S COMPARE_INTERVAL_S=$COMPARE_INTERVAL_S"
+echo "[info] RUN_SECONDS=$RUN_SECONDS SAMPLE_INTERVAL_S=$SAMPLE_INTERVAL_S COMPARE_INTERVAL_S=$COMPARE_INTERVAL_S MIN_TIP_COMPARE_PASSES=$MIN_TIP_COMPARE_PASSES"
 echo "[info] DB_DIR=$DB_DIR SOCKET_PATH=$SOCKET_PATH METRICS_URL=$METRICS_URL"
 echo "[info] LOG_DIR=$LOG_DIR METRICS_DIR=$METRICS_DIR"
 if [[ -n "$HASKELL_SOCK" ]]; then
@@ -353,6 +556,11 @@ start_reconnects="$(metric_or_zero yggdrasil_reconnects "$start_file")"
 max_workers="$(metric_or_zero yggdrasil_blockfetch_workers_registered "$start_file")"
 last_file="$start_file"
 compare_passes=0
+workers_activated=0
+worker_shortfall_samples=0
+if numeric_ge "$max_workers" "$EXPECT_WORKERS"; then
+  workers_activated=1
+fi
 
 start_epoch="$(date +%s)"
 end_epoch=$(( start_epoch + RUN_SECONDS ))
@@ -379,6 +587,11 @@ while [[ "$(date +%s)" -lt "$end_epoch" ]]; do
   workers="$(metric_or_zero yggdrasil_blockfetch_workers_registered "$last_file")"
   if numeric_gt "$workers" "$max_workers"; then
     max_workers="$workers"
+  fi
+  if numeric_ge "$workers" "$EXPECT_WORKERS"; then
+    workers_activated=1
+  elif (( workers_activated != 0 )); then
+    worker_shortfall_samples=$(( worker_shortfall_samples + 1 ))
   fi
 
   now_epoch="$(date +%s)"
@@ -407,6 +620,11 @@ apply_count="$(metric_or_zero yggdrasil_apply_batch_duration_seconds_count "$end
 
 if numeric_gt "$end_workers" "$max_workers"; then
   max_workers="$end_workers"
+fi
+if numeric_ge "$end_workers" "$EXPECT_WORKERS"; then
+  workers_activated=1
+elif (( workers_activated != 0 )); then
+  worker_shortfall_samples=$(( worker_shortfall_samples + 1 ))
 fi
 
 stop_node "$pid"
@@ -445,6 +663,24 @@ if [[ "$REQUIRE_TIP_COMPARISON" == "1" && "$compare_passes" -eq 0 ]]; then
   exit 1
 fi
 
+if [[ "$REQUIRE_TIP_COMPARISON" == "1" ]]; then
+  if ! numeric_ge "$end_workers" "$EXPECT_WORKERS"; then
+    echo "ERROR: REQUIRE_TIP_COMPARISON=1 but final workers_registered=$end_workers < EXPECT_WORKERS=$EXPECT_WORKERS" >&2
+    echo "[forensic] metrics snapshots: $METRICS_DIR" >&2
+    exit 1
+  fi
+  if (( worker_shortfall_samples != 0 )); then
+    echo "ERROR: REQUIRE_TIP_COMPARISON=1 observed $worker_shortfall_samples post-activation worker shortfall samples" >&2
+    echo "[forensic] metrics snapshots: $METRICS_DIR" >&2
+    exit 1
+  fi
+  if (( compare_passes < MIN_TIP_COMPARE_PASSES )); then
+    echo "ERROR: REQUIRE_TIP_COMPARISON=1 observed $compare_passes tip comparisons, below MIN_TIP_COMPARE_PASSES=$MIN_TIP_COMPARE_PASSES" >&2
+    echo "[forensic] compare logs: $LOG_DIR" >&2
+    exit 1
+  fi
+fi
+
 fetch_avg="$(avg_metric "$fetch_sum" "$fetch_count")"
 apply_avg="$(avg_metric "$apply_sum" "$apply_count")"
 
@@ -461,8 +697,10 @@ reconnects: $start_reconnects -> $end_reconnects
 max_workers_registered: $max_workers
 workers_registered_final: $end_workers
 workers_migrated_total: $migrated_total
+worker_shortfall_samples: $worker_shortfall_samples
 fetch_avg_per_batch: $fetch_avg
 apply_avg_per_batch: $apply_avg
+min_tip_compare_passes: $MIN_TIP_COMPARE_PASSES
 tip_compare_passes: $compare_passes
 node_log: $node_log
 metrics_dir: $METRICS_DIR

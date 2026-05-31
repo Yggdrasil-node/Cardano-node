@@ -47,24 +47,10 @@ fn gap_bp_v2_script_context_structural_shape() {
     // relative include_str! walks 4 `..` (src/ → plutus-eval/ →
     // node/ → crates/ → workspace root). Older monolithic layouts
     // needed a deeper relative walk.
-    let captured_hex = include_str!(
-        "../../../../docs/operational-runs/2026-05-06-round-266c-gap-bp-script-context.log"
-    );
-    let cbor_hex = captured_hex
-        .lines()
-        .next()
-        .and_then(|line| line.split("cbor_hex=").nth(1))
-        .expect("operational-runs log missing cbor_hex marker");
-    let cbor_bytes = hex::decode(cbor_hex).expect("captured hex must decode cleanly");
-
-    let context_data =
-        PlutusData::from_cbor_bytes(&cbor_bytes).expect("decode captured V2 ScriptContext");
+    let context_data = gap_bp_captured_script_context();
 
     // ScriptContext = Constr 0 [TxInfo, ScriptPurpose].
-    let (sc_tag, sc_fields) = match &context_data {
-        PlutusData::Constr(tag, fields) => (*tag, fields),
-        other => panic!("V2 ScriptContext must be Constr at top level, got {other:?}"),
-    };
+    let (sc_tag, sc_fields) = expect_constr(&context_data, "V2 ScriptContext");
     assert_eq!(
         sc_tag, 0,
         "V2 ScriptContext outer Constr tag must be 0 (PlutusLedgerApi.V2.Contexts.ScriptContext); \
@@ -77,10 +63,7 @@ fn gap_bp_v2_script_context_structural_shape() {
     );
 
     // TxInfo = Constr 0 [12 fields] for V2.
-    let (txinfo_tag, txinfo_fields) = match &sc_fields[0] {
-        PlutusData::Constr(tag, fields) => (*tag, fields),
-        other => panic!("V2 TxInfo must be Constr, got {other:?}"),
-    };
+    let (txinfo_tag, txinfo_fields) = expect_constr(&sc_fields[0], "V2 TxInfo");
     assert_eq!(txinfo_tag, 0, "V2 TxInfo outer Constr tag must be 0");
     assert_eq!(
         txinfo_fields.len(),
@@ -94,38 +77,261 @@ fn gap_bp_v2_script_context_structural_shape() {
     // Field 0 (inputs) and field 1 (referenceInputs) must be Lists.
     // Field 2 (outputs) must also be a List.
     for (i, label) in [(0, "inputs"), (1, "referenceInputs"), (2, "outputs")] {
-        match &txinfo_fields[i] {
-            PlutusData::List(_) => {}
-            other => {
-                panic!("V2 TxInfo field {i} ({label}) must be List per upstream, got {other:?}")
-            }
-        }
+        expect_list(&txinfo_fields[i], label);
     }
 
     // Field 3 (fee) must be a Map (V1/V2 fee is a Value, not a plain Lovelace
     // Integer; V3 changed to Lovelace, but this is V2).
-    match &txinfo_fields[3] {
-        PlutusData::Map(_) => {}
-        other => panic!("V2 TxInfo fee must be Map (Value), got {other:?}"),
-    }
+    expect_map(&txinfo_fields[3], "fee");
     // Field 4 (mint) must be a Map and must include the upstream's
     // `transMintValue` zero-ADA prepend (empty-bytes policy with empty-bytes
     // asset → 0 quantity).
-    match &txinfo_fields[4] {
-        PlutusData::Map(entries) => {
-            assert!(
-                !entries.is_empty(),
-                "V2 TxInfo mint must include zero-ADA prepend per upstream transMintValue"
-            );
-            match &entries[0].0 {
-                PlutusData::Bytes(b) if b.is_empty() => {}
-                other => panic!(
-                    "V2 TxInfo mint first key must be empty-bytes per zero-ADA prepend, got {other:?}"
-                ),
-            }
+    let mint = expect_map(&txinfo_fields[4], "mint");
+    assert!(
+        !mint.is_empty(),
+        "V2 TxInfo mint must include zero-ADA prepend per upstream transMintValue"
+    );
+    assert_empty_bytes(&mint[0].0, "V2 TxInfo mint first key");
+}
+
+#[test]
+fn gap_bp_v2_script_context_deep_field_shape() {
+    let context_data = gap_bp_captured_script_context();
+    let (_, sc_fields) = expect_constr(&context_data, "V2 ScriptContext");
+    let (_, txinfo_fields) = expect_constr(&sc_fields[0], "V2 TxInfo");
+
+    let inputs = expect_list(&txinfo_fields[0], "inputs");
+    let reference_inputs = expect_list(&txinfo_fields[1], "referenceInputs");
+    let outputs = expect_list(&txinfo_fields[2], "outputs");
+    assert_eq!(inputs.len(), 3, "Gap BP fixture input count drifted");
+    assert_eq!(
+        reference_inputs.len(),
+        4,
+        "Gap BP fixture reference-input count drifted"
+    );
+    assert_eq!(outputs.len(), 3, "Gap BP fixture output count drifted");
+    assert_eq!(
+        expect_list(&txinfo_fields[5], "dcert").len(),
+        0,
+        "Gap BP fixture must keep empty V2 dcert list"
+    );
+    assert_eq!(
+        expect_list(&txinfo_fields[8], "signatories").len(),
+        1,
+        "Gap BP fixture signatory count drifted"
+    );
+    assert_eq!(
+        expect_map(&txinfo_fields[10], "data").len(),
+        0,
+        "Gap BP fixture datum map drifted"
+    );
+
+    for (label, items) in [("inputs", inputs), ("referenceInputs", reference_inputs)] {
+        for item in items {
+            let (_, fields) = expect_constr(item, label);
+            assert_eq!(fields.len(), 2, "{label} TxInInfo must have 2 fields");
+            assert_v2_tx_out_ref(&fields[0], None, label);
+            assert_v2_babbage_tx_out(&fields[1], label);
         }
-        other => panic!("V2 TxInfo mint must be Map, got {other:?}"),
     }
+    for output in outputs {
+        assert_v2_babbage_tx_out(output, "outputs");
+    }
+
+    let fee = expect_map(&txinfo_fields[3], "fee");
+    assert_eq!(
+        fee.len(),
+        1,
+        "Gap BP V2 fee Value must have one policy entry"
+    );
+    assert_ada_value_entry(&fee[0], "fee");
+
+    let mint = expect_map(&txinfo_fields[4], "mint");
+    assert_eq!(
+        mint.len(),
+        2,
+        "Gap BP V2 mint must include zero-ADA plus one policy"
+    );
+    assert_ada_value_entry(&mint[0], "mint zero-ADA prepend");
+    assert_bytes_len(&mint[1].0, 28, "mint policy id");
+    let minted_assets = expect_map(&mint[1].1, "minted assets");
+    assert_eq!(
+        minted_assets.len(),
+        1,
+        "Gap BP fixture minted asset count drifted"
+    );
+    assert_bytes_len(&minted_assets[0].0, 7, "minted asset name");
+    assert_eq!(
+        minted_assets[0].1,
+        PlutusData::integer(-1),
+        "Gap BP fixture minted quantity drifted"
+    );
+
+    let (valid_range_tag, valid_range_fields) =
+        expect_constr(&txinfo_fields[7], "validRange interval");
+    assert_eq!(valid_range_tag, 0, "validRange must be an Interval");
+    assert_eq!(valid_range_fields.len(), 2, "validRange field count");
+    assert_bound(&valid_range_fields[0], 0, 1, "lower bound");
+    assert_bound(&valid_range_fields[1], 2, 1, "upper bound");
+
+    let redeemers = expect_map(&txinfo_fields[9], "redeemers");
+    assert_eq!(
+        redeemers.len(),
+        3,
+        "Gap BP fixture redeemer map count drifted"
+    );
+    let mut redeemer_key_tags = Vec::new();
+    let mut redeemer_value_tags = Vec::new();
+    for (key, value) in redeemers {
+        let (key_tag, key_fields) = expect_constr(key, "redeemer key ScriptPurpose");
+        redeemer_key_tags.push(key_tag);
+        match key_tag {
+            0 => {
+                assert_eq!(key_fields.len(), 1, "Minting key must carry policy id");
+                assert_bytes_len(&key_fields[0], 28, "Minting key policy id");
+            }
+            1 => {
+                assert_eq!(key_fields.len(), 1, "Spending key must carry TxOutRef");
+                assert_v2_tx_out_ref(&key_fields[0], None, "Spending redeemer key");
+            }
+            other => panic!("unexpected Gap BP V2 redeemer key tag {other}"),
+        }
+        let (value_tag, value_fields) = expect_constr(value, "redeemer value");
+        assert!(
+            value_fields.is_empty(),
+            "Gap BP redeemer values are zero-field constructors"
+        );
+        redeemer_value_tags.push(value_tag);
+    }
+    redeemer_key_tags.sort_unstable();
+    redeemer_value_tags.sort_unstable();
+    assert_eq!(redeemer_key_tags, vec![0, 1, 1]);
+    assert_eq!(redeemer_value_tags, vec![0, 1, 3]);
+
+    let (purpose_tag, purpose_fields) = expect_constr(&sc_fields[1], "ScriptPurpose field");
+    assert_eq!(purpose_tag, 1, "Gap BP active purpose must be Spending");
+    assert_eq!(purpose_fields.len(), 1, "Spending purpose field count");
+    assert_v2_tx_out_ref(&purpose_fields[0], Some(0), "active Spending purpose");
+}
+
+fn gap_bp_captured_script_context() -> PlutusData {
+    let captured_hex = include_str!(
+        "../../../../docs/operational-runs/2026-05-06-round-266c-gap-bp-script-context.log"
+    );
+    let cbor_hex = captured_hex
+        .lines()
+        .next()
+        .and_then(|line| line.split("cbor_hex=").nth(1))
+        .expect("operational-runs log missing cbor_hex marker");
+    let cbor_bytes = hex::decode(cbor_hex).expect("captured hex must decode cleanly");
+
+    PlutusData::from_cbor_bytes(&cbor_bytes).expect("decode captured V2 ScriptContext")
+}
+
+fn expect_constr<'a>(data: &'a PlutusData, label: &str) -> (u64, &'a [PlutusData]) {
+    match data {
+        PlutusData::Constr(tag, fields) => (*tag, fields),
+        other => panic!("{label} must be Constr, got {other:?}"),
+    }
+}
+
+fn expect_list<'a>(data: &'a PlutusData, label: &str) -> &'a [PlutusData] {
+    match data {
+        PlutusData::List(items) => items,
+        other => panic!("{label} must be List, got {other:?}"),
+    }
+}
+
+fn expect_map<'a>(data: &'a PlutusData, label: &str) -> &'a [(PlutusData, PlutusData)] {
+    match data {
+        PlutusData::Map(entries) => entries,
+        other => panic!("{label} must be Map, got {other:?}"),
+    }
+}
+
+fn assert_bytes_len(data: &PlutusData, expected_len: usize, label: &str) {
+    match data {
+        PlutusData::Bytes(bytes) => {
+            assert_eq!(bytes.len(), expected_len, "{label} byte length must match")
+        }
+        other => panic!("{label} must be Bytes, got {other:?}"),
+    }
+}
+
+fn assert_empty_bytes(data: &PlutusData, label: &str) {
+    match data {
+        PlutusData::Bytes(bytes) if bytes.is_empty() => {}
+        other => panic!("{label} must be empty Bytes, got {other:?}"),
+    }
+}
+
+fn assert_ada_value_entry(entry: &(PlutusData, PlutusData), label: &str) {
+    assert_empty_bytes(&entry.0, label);
+    let inner = expect_map(&entry.1, label);
+    assert_eq!(inner.len(), 1, "{label} must have one ADA asset");
+    assert_empty_bytes(&inner[0].0, label);
+}
+
+fn assert_v2_tx_out_ref(data: &PlutusData, expected_index: Option<i128>, label: &str) {
+    let (tag, fields) = expect_constr(data, label);
+    assert_eq!(tag, 0, "{label} TxOutRef tag must be 0");
+    assert_eq!(fields.len(), 2, "{label} TxOutRef must have 2 fields");
+    let (tx_id_tag, tx_id_fields) = expect_constr(&fields[0], label);
+    assert_eq!(tx_id_tag, 0, "{label} V1/V2 TxId wrapper tag must be 0");
+    assert_eq!(tx_id_fields.len(), 1, "{label} TxId wrapper field count");
+    assert_bytes_len(&tx_id_fields[0], 32, label);
+    if let Some(index) = expected_index {
+        assert_eq!(
+            fields[1],
+            PlutusData::integer(index),
+            "{label} index drifted"
+        );
+    } else {
+        match &fields[1] {
+            PlutusData::Integer(_) => {}
+            other => panic!("{label} index must be Integer, got {other:?}"),
+        }
+    }
+}
+
+fn assert_v2_babbage_tx_out(data: &PlutusData, label: &str) {
+    let (tag, fields) = expect_constr(data, label);
+    assert_eq!(tag, 0, "{label} TxOut tag must be 0");
+    assert_eq!(
+        fields.len(),
+        4,
+        "{label} Babbage V2 TxOut must have 4 fields"
+    );
+    expect_map(&fields[1], label);
+    let (datum_tag, _) = expect_constr(&fields[2], label);
+    assert!(
+        matches!(datum_tag, 0..=2),
+        "{label} OutputDatum tag must be 0, 1, or 2"
+    );
+    let (script_ref_tag, script_ref_fields) = expect_constr(&fields[3], label);
+    match script_ref_tag {
+        0 => {
+            assert_eq!(script_ref_fields.len(), 1, "{label} script ref Some");
+            assert_bytes_len(&script_ref_fields[0], 28, label);
+        }
+        1 => assert!(script_ref_fields.is_empty(), "{label} script ref None"),
+        other => panic!("{label} script ref tag must be 0 or 1, got {other}"),
+    }
+}
+
+fn assert_bound(data: &PlutusData, bound_tag: u64, closed_tag: u64, label: &str) {
+    let (tag, fields) = expect_constr(data, label);
+    assert_eq!(tag, 0, "{label} Bound wrapper tag must be 0");
+    assert_eq!(fields.len(), 2, "{label} Bound field count");
+    let (extended_tag, extended_fields) = expect_constr(&fields[0], label);
+    assert_eq!(extended_tag, bound_tag, "{label} Extended tag drifted");
+    assert!(
+        extended_fields.is_empty(),
+        "{label} fixture should use infinite bound"
+    );
+    let (closed, closed_fields) = expect_constr(&fields[1], label);
+    assert_eq!(closed, closed_tag, "{label} closure tag drifted");
+    assert!(closed_fields.is_empty(), "{label} closure field count");
 }
 
 fn dummy_hash() -> [u8; 28] {
@@ -206,6 +412,31 @@ fn mint_eval(script_bytes: Vec<u8>, version: PlutusVersion) -> PlutusScriptEval 
         },
         cost_model: None,
     }
+}
+
+#[test]
+fn script_context_evidence_line_is_replayable() {
+    let eval = test_eval(
+        PlutusVersion::V2,
+        ScriptPurpose::Spending {
+            tx_id: [0x11; 32],
+            index: 7,
+        },
+        None,
+        PlutusData::integer(0),
+    );
+    let tx_ctx = test_tx_ctx();
+    let context = PlutusData::Constr(0, vec![PlutusData::List(vec![])]);
+    let encoded = CborEncode::to_cbor_bytes(&context);
+
+    let line = format_script_context_evidence(&eval, &tx_ctx, &context);
+
+    assert!(line.starts_with("YGG_DUMP_SCRIPT_CONTEXT: "));
+    assert!(line.contains(&format!("tx_hash={}", hex::encode(tx_ctx.tx_hash))));
+    assert!(line.contains(&format!("script_hash={}", hex::encode(eval.script_hash))));
+    assert!(line.contains("version=V2"));
+    assert!(line.contains(&format!("cbor_len={}", encoded.len())));
+    assert!(line.ends_with(&format!("cbor_hex={}", hex::encode(encoded))));
 }
 
 #[test]

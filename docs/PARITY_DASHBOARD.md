@@ -23,4 +23,5 @@ _Last updated: 2026-05-26._
 ## Notes
 
 - First-pass counts are taken directly from the current `parity-matrix.json` entry statuses.
+- Counts are evidence statuses, not marketing labels. Code-level implementation can be complete while the entry still stays `implemented_needs_11_0_1_evidence` until upstream binary comparison or operator soak evidence lands.
 - This page is intended as a compact index; details and evidence remain in the linked source docs.

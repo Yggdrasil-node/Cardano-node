@@ -26,6 +26,7 @@ use std::time::Duration;
 
 use std::collections::BTreeMap;
 use std::fs;
+use std::io::Write as _;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
@@ -38,8 +39,9 @@ use yggdrasil_consensus::{
     ActiveSlotCoeff, ChainEntry, ChainState, ClockSkew, ConsensusError, EpochSchedule,
     FutureSlotJudgement, Header as ConsensusHeader, HeaderBody as ConsensusHeaderBody,
     NonceDerivation, NonceEvolutionConfig, NonceEvolutionState, OcertCounters,
-    OpCert as ConsensusOpCert, SecurityParam, TentativeState, VrfMode, judge_header_slot,
-    verify_header, verify_leader_proof, verify_leader_proof_output, verify_nonce_proof,
+    OpCert as ConsensusOpCert, SecurityParam, TentativeState, VrfMode, VrfUsage, judge_header_slot,
+    tpraos_vrf_seed, verify_header, verify_leader_proof, verify_leader_proof_output,
+    verify_nonce_proof,
 };
 use yggdrasil_crypto::blake2b::hash_bytes_256;
 use yggdrasil_crypto::ed25519::{Signature as Ed25519Signature, VerificationKey};
@@ -960,6 +962,17 @@ enum TpraosOverlaySlot<'a> {
     },
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct TpraosOverlaySlotContext<'a> {
+    first_slot: SlotNo,
+    decentralisation_param: UnitInterval,
+    offset: u64,
+    position: u128,
+    asc_inv: u128,
+    genesis_idx: Option<usize>,
+    classification: TpraosOverlaySlot<'a>,
+}
+
 fn is_tpraos_block(block: &MultiEraBlock) -> bool {
     matches!(block, MultiEraBlock::Shelley(_) | MultiEraBlock::Alonzo(_))
 }
@@ -990,6 +1003,7 @@ fn is_overlay_slot(first_slot: SlotNo, d: UnitInterval, slot: SlotNo) -> bool {
     overlay_step(offset, d) < overlay_step(offset.saturating_add(1), d)
 }
 
+#[cfg(test)]
 fn lookup_tpraos_overlay_schedule<'a>(
     first_slot: SlotNo,
     gen_delegs: &'a BTreeMap<GenesisHash, GenesisDelegationState>,
@@ -997,30 +1011,208 @@ fn lookup_tpraos_overlay_schedule<'a>(
     active_slot_coeff: &ActiveSlotCoeff,
     slot: SlotNo,
 ) -> Option<TpraosOverlaySlot<'a>> {
+    lookup_tpraos_overlay_schedule_context(first_slot, gen_delegs, d, active_slot_coeff, slot)
+        .map(|ctx| ctx.classification)
+}
+
+fn lookup_tpraos_overlay_schedule_context<'a>(
+    first_slot: SlotNo,
+    gen_delegs: &'a BTreeMap<GenesisHash, GenesisDelegationState>,
+    d: UnitInterval,
+    active_slot_coeff: &ActiveSlotCoeff,
+    slot: SlotNo,
+) -> Option<TpraosOverlaySlotContext<'a>> {
     if !is_overlay_slot(first_slot, d, slot) {
         return None;
-    }
-
-    if gen_delegs.is_empty() {
-        return Some(TpraosOverlaySlot::NonActive);
     }
 
     let offset = slot.0 - first_slot.0;
     let position = overlay_step(offset, d);
     let asc_inv = (1.0 / active_slot_coeff.to_f64()).floor() as u128;
+
+    if gen_delegs.is_empty() {
+        return Some(TpraosOverlaySlotContext {
+            first_slot,
+            decentralisation_param: d,
+            offset,
+            position,
+            asc_inv,
+            genesis_idx: None,
+            classification: TpraosOverlaySlot::NonActive,
+        });
+    }
+
     if asc_inv == 0 || !position.is_multiple_of(asc_inv) {
-        return Some(TpraosOverlaySlot::NonActive);
+        return Some(TpraosOverlaySlotContext {
+            first_slot,
+            decentralisation_param: d,
+            offset,
+            position,
+            asc_inv,
+            genesis_idx: None,
+            classification: TpraosOverlaySlot::NonActive,
+        });
     }
 
     let genesis_idx = ((position / asc_inv) % gen_delegs.len() as u128) as usize;
     gen_delegs
         .iter()
         .nth(genesis_idx)
-        .map(|(genesis_hash, delegation)| TpraosOverlaySlot::Active {
-            genesis_hash: *genesis_hash,
-            delegation,
+        .map(|(genesis_hash, delegation)| TpraosOverlaySlotContext {
+            first_slot,
+            decentralisation_param: d,
+            offset,
+            position,
+            asc_inv,
+            genesis_idx: Some(genesis_idx),
+            classification: TpraosOverlaySlot::Active {
+                genesis_hash: *genesis_hash,
+                delegation,
+            },
         })
-        .or(Some(TpraosOverlaySlot::NonActive))
+        .or(Some(TpraosOverlaySlotContext {
+            first_slot,
+            decentralisation_param: d,
+            offset,
+            position,
+            asc_inv,
+            genesis_idx: None,
+            classification: TpraosOverlaySlot::NonActive,
+        }))
+}
+
+fn format_hex_or_none(bytes: Option<&[u8]>) -> String {
+    bytes.map(hex::encode).unwrap_or_else(|| "none".to_owned())
+}
+
+fn format_nonce_hex(nonce: Nonce) -> String {
+    match nonce {
+        Nonce::Neutral => "neutral".to_owned(),
+        Nonce::Hash(bytes) => hex::encode(bytes),
+    }
+}
+
+fn format_tpraos_overlay_vrf_evidence(
+    block: &MultiEraBlock,
+    nonce_state: &NonceEvolutionState,
+    overlay: &TpraosOverlaySlotContext<'_>,
+    result: &Result<bool, ConsensusError>,
+) -> String {
+    let slot = block.slot();
+    let (classification, genesis_hash, expected_delegate_hash, expected_vrf_hash) =
+        match overlay.classification {
+            TpraosOverlaySlot::NonActive => ("non_active", None, None, None),
+            TpraosOverlaySlot::Active {
+                genesis_hash,
+                delegation,
+            } => (
+                "active",
+                Some(genesis_hash),
+                Some(delegation.delegate),
+                Some(delegation.vrf),
+            ),
+        };
+
+    let actual_issuer_hash =
+        block_issuer_vkey(block).map(|vk| yggdrasil_crypto::blake2b::hash_bytes_224(&vk).0);
+    let actual_vrf_hash =
+        block_vrf_vkey(block).map(|vk| yggdrasil_crypto::blake2b::hash_bytes_256(&vk).0);
+    let leader_seed = tpraos_vrf_seed(slot, nonce_state.epoch_nonce, VrfUsage::Leader);
+    let nonce_seed = tpraos_vrf_seed(slot, nonce_state.epoch_nonce, VrfUsage::Nonce);
+
+    let (leader_output, leader_proof_hash, nonce_output, nonce_proof_hash) = match block {
+        MultiEraBlock::Shelley(s) => (
+            Some(s.header.body.leader_vrf.output.as_slice()),
+            Some(hash_bytes_256(&s.header.body.leader_vrf.proof).0),
+            Some(s.header.body.nonce_vrf.output.as_slice()),
+            Some(hash_bytes_256(&s.header.body.nonce_vrf.proof).0),
+        ),
+        MultiEraBlock::Alonzo(a) => (
+            Some(a.header.body.leader_vrf.output.as_slice()),
+            Some(hash_bytes_256(&a.header.body.leader_vrf.proof).0),
+            Some(a.header.body.nonce_vrf.output.as_slice()),
+            Some(hash_bytes_256(&a.header.body.nonce_vrf.proof).0),
+        ),
+        _ => (None, None, None, None),
+    };
+
+    let verification = match result {
+        Ok(valid) => format!("ok:{valid}"),
+        Err(err) => format!("err:{err}"),
+    };
+
+    format!(
+        "TPRAOS_VRF_EVIDENCE slot={} era={} verification={} classification={} \
+         first_slot={} d={}/{} offset={} position={} asc_inv={} genesis_idx={} \
+         genesis_hash={} expected_delegate_hash={} actual_delegate_hash={} \
+         expected_vrf_key_hash={} actual_vrf_key_hash={} current_epoch={} \
+         epoch_nonce={:?} evolving_nonce={:?} candidate_nonce={:?} \
+         prev_hash_nonce={:?} lab_nonce={:?} nonce_state_phase=ticked_for_verification \
+         epoch_nonce_hex={} evolving_nonce_hex={} candidate_nonce_hex={} \
+         prev_hash_nonce_hex={} lab_nonce_hex={} leader_seed={} nonce_seed={} \
+         leader_output={} nonce_output={} leader_proof_hash={} nonce_proof_hash={} \
+         haskell_refs=Cardano.Protocol.TPraos.Rules.Overlay.classifyOverlaySlot,\
+Cardano.Protocol.TPraos.Rules.Overlay.pbftVrfChecks",
+        slot.0,
+        block.era_label(),
+        verification,
+        classification,
+        overlay.first_slot.0,
+        overlay.decentralisation_param.numerator,
+        overlay.decentralisation_param.denominator,
+        overlay.offset,
+        overlay.position,
+        overlay.asc_inv,
+        overlay
+            .genesis_idx
+            .map(|idx| idx.to_string())
+            .unwrap_or_else(|| "none".to_owned()),
+        format_hex_or_none(genesis_hash.as_ref().map(|h| &h[..])),
+        format_hex_or_none(expected_delegate_hash.as_ref().map(|h| &h[..])),
+        format_hex_or_none(actual_issuer_hash.as_ref().map(|h| &h[..])),
+        format_hex_or_none(expected_vrf_hash.as_ref().map(|h| &h[..])),
+        format_hex_or_none(actual_vrf_hash.as_ref().map(|h| &h[..])),
+        nonce_state.current_epoch.0,
+        nonce_state.epoch_nonce,
+        nonce_state.evolving_nonce,
+        nonce_state.candidate_nonce,
+        nonce_state.prev_hash_nonce,
+        nonce_state.lab_nonce,
+        format_nonce_hex(nonce_state.epoch_nonce),
+        format_nonce_hex(nonce_state.evolving_nonce),
+        format_nonce_hex(nonce_state.candidate_nonce),
+        format_nonce_hex(nonce_state.prev_hash_nonce),
+        format_nonce_hex(nonce_state.lab_nonce),
+        hex::encode(leader_seed),
+        hex::encode(nonce_seed),
+        format_hex_or_none(leader_output),
+        format_hex_or_none(nonce_output),
+        format_hex_or_none(leader_proof_hash.as_ref().map(|h| &h[..])),
+        format_hex_or_none(nonce_proof_hash.as_ref().map(|h| &h[..])),
+    )
+}
+
+fn dump_tpraos_overlay_vrf_evidence(
+    block: &MultiEraBlock,
+    nonce_state: &NonceEvolutionState,
+    overlay: &TpraosOverlaySlotContext<'_>,
+    result: &Result<bool, ConsensusError>,
+) {
+    if std::env::var_os("YGG_DUMP_TPRAOS_VRF").is_none() {
+        return;
+    }
+
+    let line = format_tpraos_overlay_vrf_evidence(block, nonce_state, overlay, result);
+    let path = std::env::var_os("YGG_DUMP_TPRAOS_VRF_FILE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| std::env::temp_dir().join("ygg-tpraos-vrf.log"));
+
+    match fs::OpenOptions::new().create(true).append(true).open(&path) {
+        Ok(mut file) => {
+            let _ = writeln!(file, "{line}");
+        }
+        Err(_) => eprintln!("{line}"),
+    }
 }
 
 pub struct ChainDepStateTracking<'a> {
@@ -1093,7 +1285,7 @@ pub fn advance_ledger_with_epoch_boundary(
                         // where `_dsGenDelegs` is populated from chain
                         // birth.  Without this, preview/preprod cold sync
                         // rejects slot 0 as `TpraosOverlaySlotNotActive`.
-                        lookup_tpraos_overlay_schedule(
+                        lookup_tpraos_overlay_schedule_context(
                             first_slot,
                             ledger_state.effective_gen_delegs(),
                             d,
@@ -1105,27 +1297,60 @@ pub fn advance_ledger_with_epoch_boundary(
                 None
             };
 
+            let nonce_state_for_block = next_vrf_nonce_cursor
+                .as_ref()
+                .or(vrf_nonce_cursor.as_ref())
+                .unwrap_or(ctx.nonce_state);
+
             let valid = match overlay_slot {
-                Some(TpraosOverlaySlot::NonActive) => {
-                    return Err(SyncError::VrfVerification {
+                Some(
+                    overlay @ TpraosOverlaySlotContext {
+                        classification: TpraosOverlaySlot::NonActive,
+                        ..
+                    },
+                ) => {
+                    let result = Err(ConsensusError::TpraosOverlaySlotNotActive {
                         slot: block.slot().0,
-                        era: block.era_label(),
-                        epoch_nonce,
-                        source: ConsensusError::TpraosOverlaySlotNotActive {
-                            slot: block.slot().0,
-                        },
                     });
+                    dump_tpraos_overlay_vrf_evidence(
+                        block,
+                        nonce_state_for_block,
+                        &overlay,
+                        &result,
+                    );
+                    match result {
+                        Err(source) => {
+                            return Err(SyncError::VrfVerification {
+                                slot: block.slot().0,
+                                era: block.era_label(),
+                                epoch_nonce,
+                                source,
+                            });
+                        }
+                        Ok(_) => unreachable!("non-active overlay always constructs an error"),
+                    }
                 }
-                Some(TpraosOverlaySlot::Active {
-                    genesis_hash: _,
-                    delegation,
-                }) => verify_block_vrf_with_genesis_delegate(block, epoch_nonce, delegation)
-                    .map_err(|source| SyncError::VrfVerification {
+                Some(
+                    overlay @ TpraosOverlaySlotContext {
+                        classification: TpraosOverlaySlot::Active { delegation, .. },
+                        ..
+                    },
+                ) => {
+                    let result =
+                        verify_block_vrf_with_genesis_delegate(block, epoch_nonce, delegation);
+                    dump_tpraos_overlay_vrf_evidence(
+                        block,
+                        nonce_state_for_block,
+                        &overlay,
+                        &result,
+                    );
+                    result.map_err(|source| SyncError::VrfVerification {
                         slot: block.slot().0,
                         era: block.era_label(),
                         epoch_nonce,
                         source,
-                    })?,
+                    })?
+                }
                 None => {
                     let stake_dist = snapshots.set.pool_stake_distribution();
                     if stake_dist.total_active_stake() == 0 {
@@ -6137,6 +6362,135 @@ mod tests {
                 assert_eq!(delegation.delegate, [0xB0; 28]);
             }
             other => panic!("expected active overlay slot, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn tpraos_overlay_context_records_upstream_forensic_fields() {
+        let mut gen_delegs = BTreeMap::new();
+        gen_delegs.insert([0x10; 28], genesis_delegation(0xA0));
+        gen_delegs.insert([0x20; 28], genesis_delegation(0xB0));
+        let d = UnitInterval {
+            numerator: 1,
+            denominator: 1,
+        };
+        let asc = ActiveSlotCoeff::from_rational(1, 20).expect("valid asc");
+
+        let ctx = lookup_tpraos_overlay_schedule_context(
+            SlotNo(86_400),
+            &gen_delegs,
+            d,
+            &asc,
+            SlotNo(86_420),
+        )
+        .expect("overlay context");
+
+        assert_eq!(ctx.first_slot, SlotNo(86_400));
+        assert_eq!(ctx.decentralisation_param, d);
+        assert_eq!(ctx.offset, 20);
+        assert_eq!(ctx.position, 20);
+        assert_eq!(ctx.asc_inv, 20);
+        assert_eq!(ctx.genesis_idx, Some(1));
+        match ctx.classification {
+            TpraosOverlaySlot::Active { genesis_hash, .. } => {
+                assert_eq!(genesis_hash, [0x20; 28]);
+            }
+            other => panic!("expected active overlay context, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn tpraos_overlay_vrf_evidence_line_carries_required_comparison_keys() {
+        use yggdrasil_ledger::{EpochNo, ShelleyVrfCert};
+
+        let block = MultiEraBlock::Shelley(Box::new(ShelleyBlock {
+            header: ShelleyHeader {
+                body: ShelleyHeaderBody {
+                    block_number: 7,
+                    slot: 429_460,
+                    prev_hash: Some([0x01; 32]),
+                    issuer_vkey: [0x02; 32],
+                    vrf_vkey: [0x03; 32],
+                    nonce_vrf: ShelleyVrfCert {
+                        output: vec![0x04; 32],
+                        proof: [0x05; 80],
+                    },
+                    leader_vrf: ShelleyVrfCert {
+                        output: vec![0x06; 32],
+                        proof: [0x07; 80],
+                    },
+                    block_body_size: 0,
+                    block_body_hash: [0x08; 32],
+                    operational_cert: ShelleyOpCert {
+                        hot_vkey: [0x09; 32],
+                        sequence_number: 1,
+                        kes_period: 2,
+                        sigma: [0x0a; 64],
+                    },
+                    protocol_version: (2, 0),
+                },
+                signature: vec![0x0b; 448],
+            },
+            transaction_bodies: Vec::new(),
+            transaction_witness_sets: Vec::new(),
+            transaction_metadata_set: std::collections::HashMap::new(),
+        }));
+        let nonce_state = NonceEvolutionState {
+            current_epoch: EpochNo(4),
+            epoch_nonce: Nonce::Hash([0x11; 32]),
+            evolving_nonce: Nonce::Hash([0x22; 32]),
+            candidate_nonce: Nonce::Hash([0x33; 32]),
+            prev_hash_nonce: Nonce::Hash([0x44; 32]),
+            lab_nonce: Nonce::Neutral,
+        };
+        let delegation = GenesisDelegationState {
+            delegate: [0x55; 28],
+            vrf: [0x66; 32],
+        };
+        let overlay = TpraosOverlaySlotContext {
+            first_slot: SlotNo(86_400),
+            decentralisation_param: UnitInterval {
+                numerator: 1,
+                denominator: 1,
+            },
+            offset: 343_060,
+            position: 343_060,
+            asc_inv: 20,
+            genesis_idx: Some(3),
+            classification: TpraosOverlaySlot::Active {
+                genesis_hash: [0x77; 28],
+                delegation: &delegation,
+            },
+        };
+
+        let line = format_tpraos_overlay_vrf_evidence(&block, &nonce_state, &overlay, &Ok(true));
+
+        for key in [
+            "slot=429460",
+            "era=Shelley",
+            "verification=ok:true",
+            "classification=active",
+            "first_slot=86400",
+            "d=1/1",
+            "offset=343060",
+            "position=343060",
+            "asc_inv=20",
+            "genesis_idx=3",
+            "genesis_hash=77777777777777777777777777777777777777777777777777777777",
+            "expected_delegate_hash=55555555555555555555555555555555555555555555555555555555",
+            "expected_vrf_key_hash=6666666666666666666666666666666666666666666666666666666666666666",
+            "current_epoch=4",
+            "nonce_state_phase=ticked_for_verification",
+            "epoch_nonce_hex=1111111111111111111111111111111111111111111111111111111111111111",
+            "evolving_nonce_hex=2222222222222222222222222222222222222222222222222222222222222222",
+            "candidate_nonce_hex=3333333333333333333333333333333333333333333333333333333333333333",
+            "prev_hash_nonce_hex=4444444444444444444444444444444444444444444444444444444444444444",
+            "lab_nonce_hex=neutral",
+            "leader_output=0606060606060606060606060606060606060606060606060606060606060606",
+            "nonce_output=0404040404040404040404040404040404040404040404040404040404040404",
+            "haskell_refs=Cardano.Protocol.TPraos.Rules.Overlay.classifyOverlaySlot,Cardano.Protocol.TPraos.Rules.Overlay.pbftVrfChecks",
+        ] {
+            assert!(line.contains(key), "missing {key} in {line}");
         }
     }
 

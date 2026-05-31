@@ -57,10 +57,12 @@ The crate ships:
   clean producer-drop + bearer-EOF exits both `Ok` (mirrors upstream
   `Network.Mux.run`'s `JobPool` + `monitor` loop and `withJobPool`
   sibling-cancel). `run` returns a `MuxRunResult { read_outcome,
-  muxer_outcome, first_failure }`. The full Network.Mux semantics
-  arc (slices a + b + c) is COMPLETE; the only remaining
-  pre-`verified_11_0_1` item is the operator-driven 24h conformance
-  soak.
+  muxer_outcome, first_failure }`. The reusable Mux semantics
+  components are complete, but the node binary still emits through
+  the legacy best-effort datagram `TraceForwarder` path and surfaces
+  `Startup.TraceForwarderStub` when the operator enables the backend.
+  Remaining pre-`verified_11_0_1` work is runtime wiring to the
+  stream/Mux pipeline plus the operator-driven 24h conformance soak.
 
 ## Rules — Non-Negotiable
 

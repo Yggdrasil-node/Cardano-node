@@ -105,5 +105,5 @@ Both default-on; the default build is byte-identical to the pre-gate build.
 
 ## Next Steps
 1. Add integration tests with on-chain script samples and upstream vector parity checks for budget accounting.
-2. Wire `into_ledger_error()` into the ledger/node boundary so operational errors are collapsed before reporting.
+2. Close Gap BP with a captured preview V2 script/transaction fixture and per-step/per-builtin CEK cost comparison against upstream `Cek/Internal.hs::stepAndMaybeSpend`.
 3. Extend Conway-array support when vendored genesis files pick up later V3+/Plomin tail parameters beyond the current 302-entry surface. **Where to edit**: the array-length pin and named-parameter mapping live in `crates/node/genesis/src/lib.rs` (`SUPPORTED_CONWAY_V3_ARRAY_LENGTHS`, `conway_v3_named_params` table, `UnsupportedConwayV3ArrayLength` / `IncompleteConwayV3Mapping` errors), not in this crate. `cost_model.rs::from_alonzo_genesis_params` consumes the already-mapped named map. A future Plomin-tail extension is a node-side change with a new fail-loud drift-pin test in this crate's per-builtin coverage tests.

@@ -130,15 +130,15 @@ Two new dependencies approved at R468 to close the long-deferred
 `tls_bind_plan_status` + `tls_termination_status` descriptors in
 `crates/tools/cardano-tracer/src/handlers/`.
 
-- **`axum-server` 0.7 (LANDED at R468)**: TLS-terminated HTTP server
+- **`axum-server` 0.7 (LANDED at R468, provider hardened at R840)**: TLS-terminated HTTP server
   for cardano-tracer Prometheus + Monitoring endpoints when the
   operator config has `force_ssl: true`. Final pin:
-  `default-features = false, features = ["tls-rustls"]`. Pulls
-  rustls + tokio-rustls + rustls-pki-types + rustls-webpki. Audited
-  against `deny.toml:90` no-openssl ban via `cargo tree -p
-  yggdrasil-cardano-tracer`: no `openssl`, `openssl-sys`,
-  `native-tls`. License: MIT/Apache-2.0 (dual-licensed). Pure Rust
-  transitive tree.
+  `default-features = false, features = ["tls-rustls-no-provider"]`.
+  Pulls tokio-rustls + rustls-pki-types + rustls-webpki without
+  enabling rustls' default AWS-LC provider. Audited against
+  `deny.toml` bans via `cargo tree -i aws-lc-sys`, `cargo tree -i
+  openssl-sys`, and `cargo tree -i native-tls`: none may appear.
+  License: MIT/Apache-2.0 (dual-licensed).
 
 - **`rustls` 0.23 (LANDED at R468)**: required directly so
   `cardano-tracer`'s `serve_router_with_tls` can call
@@ -151,6 +151,11 @@ Two new dependencies approved at R468 to close the long-deferred
   spirit). `ring` is license-clarified in `deny.toml` (MIT AND ISC
   AND OpenSSL). Pure Rust transitive tree (uses assembly internally
   for crypto primitives, no external C libraries linked).
+
+`aws-lc-rs` and `aws-lc-sys` are explicitly banned in `deny.toml`.
+If a future rustls-using dependency re-enables them through default
+features, that dependency must be switched to a no-provider feature set
+or replaced before the change is accepted.
 
 ## Review Required
 - Any new cryptography crate.

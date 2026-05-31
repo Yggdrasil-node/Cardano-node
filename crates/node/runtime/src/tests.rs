@@ -1413,6 +1413,44 @@ async fn shared_fetch_worker_pool_is_visible_across_arc_clones() {
     assert!(sync_side_view.read().await.worker(&a).is_some());
 }
 
+#[tokio::test]
+async fn direct_bootstrap_worker_registers_shared_pool_and_metrics() {
+    let a: std::net::SocketAddr = "1.2.3.4:3304".parse().unwrap();
+    let pool = super::new_shared_fetch_worker_pool();
+    let mut config = sample_sync_config();
+    config.max_concurrent_block_fetch_peers = 2;
+    config.shared_fetch_worker_pool = Some(pool.clone());
+    let metrics = yggdrasil_node_tracer::NodeMetrics::new();
+    let mut session = fake_peer_session_async(a).await;
+
+    assert!(session.has_block_fetch());
+    assert!(
+        super::reconnecting_sync::register_direct_bootstrap_fetch_worker(
+            &mut session,
+            &config,
+            &NodeTracer::disabled(),
+            Some(&metrics),
+        )
+        .await
+    );
+    assert!(!session.has_block_fetch());
+    assert!(pool.read().await.worker(&a).is_some());
+    let snap = metrics.snapshot();
+    assert_eq!(snap.blockfetch_workers_registered, 1);
+    assert_eq!(snap.blockfetch_workers_migrated_total, 1);
+
+    assert!(
+        super::reconnecting_sync::unregister_direct_bootstrap_fetch_worker(
+            &config,
+            a,
+            Some(&metrics),
+        )
+        .await
+    );
+    assert!(pool.read().await.worker(&a).is_none());
+    assert_eq!(metrics.snapshot().blockfetch_workers_registered, 0);
+}
+
 #[test]
 fn with_hot_block_fetch_clients_empty_slice_when_no_hot_peers() {
     // Empty-slice contract: callers should treat this as "fall

@@ -33,6 +33,8 @@
 //! so the trait lives in `crates/ledger/src/plutus_validation.rs`
 //! and the impl + ScriptContext construction lives here.
 
+use std::{fs, io::Write as _, path::PathBuf};
+
 use yggdrasil_ledger::{
     Address, CborEncode, DCert, LedgerError, Script, StakeCredential,
     plutus::PlutusData,
@@ -137,17 +139,7 @@ impl PlutusEvaluator for CekPlutusEvaluator {
         // Used to localise the residual ~14-step CEK divergence on the Gap BP
         // failing tx (preview slot ~1,462,057). Production-safe: zero overhead
         // when unset.
-        if std::env::var_os("YGG_DUMP_SCRIPT_CONTEXT").is_some() {
-            let cbor = yggdrasil_ledger::CborEncode::to_cbor_bytes(&context_data);
-            eprintln!(
-                "YGG_DUMP_SCRIPT_CONTEXT: tx_hash={} script_hash={} version={:?} cbor_len={} cbor_hex={}",
-                hex::encode(tx_ctx.tx_hash),
-                hex::encode(eval.script_hash),
-                eval.version,
-                cbor.len(),
-                hex::encode(&cbor),
-            );
-        }
+        dump_script_context_evidence(eval, tx_ctx, &context_data);
         let context_term = Term::Constant(Constant::Data(context_data));
 
         // 3. Apply arguments in the order specified by the Plutus script ABI.
@@ -292,6 +284,45 @@ impl PlutusEvaluator for CekPlutusEvaluator {
 /// Wrap a [`PlutusData`] value in a `Term::Constant`.
 fn data_term(data: PlutusData) -> Term {
     Term::Constant(Constant::Data(data))
+}
+
+fn dump_script_context_evidence(
+    eval: &PlutusScriptEval,
+    tx_ctx: &TxContext,
+    context_data: &PlutusData,
+) {
+    if std::env::var_os("YGG_DUMP_SCRIPT_CONTEXT").is_none() {
+        return;
+    }
+
+    let line = format_script_context_evidence(eval, tx_ctx, context_data);
+    let Some(path) = std::env::var_os("YGG_DUMP_SCRIPT_CONTEXT_FILE").map(PathBuf::from) else {
+        eprintln!("{line}");
+        return;
+    };
+
+    match fs::OpenOptions::new().create(true).append(true).open(&path) {
+        Ok(mut file) => {
+            let _ = writeln!(file, "{line}");
+        }
+        Err(_) => eprintln!("{line}"),
+    }
+}
+
+fn format_script_context_evidence(
+    eval: &PlutusScriptEval,
+    tx_ctx: &TxContext,
+    context_data: &PlutusData,
+) -> String {
+    let cbor = CborEncode::to_cbor_bytes(context_data);
+    format!(
+        "YGG_DUMP_SCRIPT_CONTEXT: tx_hash={} script_hash={} version={:?} cbor_len={} cbor_hex={}",
+        hex::encode(tx_ctx.tx_hash),
+        hex::encode(eval.script_hash),
+        eval.version,
+        cbor.len(),
+        hex::encode(&cbor),
+    )
 }
 
 fn decode_script_bytes_for_version(

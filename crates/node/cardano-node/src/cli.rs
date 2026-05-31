@@ -108,9 +108,10 @@ pub(crate) enum Command {
         /// `BlockFetchClient` into a per-peer worker task and the sync
         /// loop dispatches fetch ranges in parallel via the shared
         /// `FetchWorkerPool` (mirrors upstream
-        /// `Ouroboros.Network.BlockFetch.ClientRegistry`).  Default
-        /// ships at `1`; the §6.5 runbook rehearsal raises this to
-        /// `2` (then `4`) once parity is established.
+        /// `Ouroboros.Network.BlockFetch.ClientRegistry`). The shipped
+        /// default is `2`; operators can set `1` for strict single-peer
+        /// audit/replay runs or raise it above `2` for rich-topology
+        /// stress rehearsals.
         #[arg(long)]
         max_concurrent_block_fetch_peers: Option<u8>,
         /// Path to the NtC Unix domain socket for local client connections.

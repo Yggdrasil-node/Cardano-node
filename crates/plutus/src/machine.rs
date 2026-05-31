@@ -475,6 +475,54 @@ impl CekMachine {
         }
     }
 
+    /// R266 follow-up diagnostic — gated on `YGG_DUMP_CEK_FLUSHES=1`,
+    /// appends one line per accumulated-step budget spend. This is the
+    /// direct Rust analogue of upstream `spendAccumulatedBudget` and is
+    /// lower-volume than `YGG_DUMP_CEK_STEPS` while still preserving the
+    /// per-kind counters needed to compare Gap BP against Haskell.
+    fn dump_step_flush(
+        &self,
+        steps: u64,
+        counts: [u64; StepKind::COUNT],
+        cost: ExBudget,
+        before: ExBudget,
+        result: &Result<(), MachineError>,
+    ) {
+        if std::env::var_os("YGG_DUMP_CEK_FLUSHES").is_none() {
+            return;
+        }
+        use std::fmt::Write as _;
+        use std::io::Write as _;
+
+        let path = std::env::var("YGG_DUMP_CEK_FLUSHES_FILE")
+            .unwrap_or_else(|_| "/tmp/ygg-cek-flushes.log".to_string());
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+        {
+            let mut per_kind = String::with_capacity(128);
+            for kind in StepKind::ALL {
+                if !per_kind.is_empty() {
+                    per_kind.push(',');
+                }
+                let _ = write!(&mut per_kind, "{kind:?}:{}", counts[kind.index()]);
+            }
+            let status = match result {
+                Ok(()) => "ok".to_owned(),
+                Err(err) => format!("err:{err}"),
+            };
+            let mut line = String::with_capacity(256);
+            let _ = writeln!(
+                &mut line,
+                "steps={steps} counts=[{per_kind}] cpu={} mem={} before_cpu={} before_mem={} \
+                 after_cpu={} after_mem={} status={status}",
+                cost.cpu, cost.mem, before.cpu, before.mem, self.budget.cpu, self.budget.mem,
+            );
+            let _ = f.write_all(line.as_bytes());
+        }
+    }
+
     fn spend_accumulated_step_budget(&mut self) -> Result<(), MachineError> {
         if self.pending_steps_total == 0 {
             return Ok(());
@@ -492,9 +540,13 @@ impl CekMachine {
         }
 
         let steps = self.pending_steps_total;
+        let counts = self.pending_step_counts;
         self.pending_step_counts = [0; StepKind::COUNT];
         self.pending_steps_total = 0;
-        self.spend_budget(format!("{steps} accumulated steps").as_str(), cost)
+        let before = self.budget;
+        let result = self.spend_budget(format!("{steps} accumulated steps").as_str(), cost);
+        self.dump_step_flush(steps, counts, cost, before, &result);
+        result
     }
 
     fn spend_budget(&mut self, context: &str, cost: ExBudget) -> Result<(), MachineError> {
@@ -519,6 +571,9 @@ mod tests {
     use super::*;
     use crate::cost_model::CostModel;
     use crate::types::{Constant, DefaultFun, ExBudget, Term};
+    use std::sync::Mutex;
+
+    static CEK_TRACE_ENV_LOCK: Mutex<()> = Mutex::new(());
 
     /// Helper: create a machine with generous budget.
     fn machine() -> CekMachine {
@@ -1361,6 +1416,97 @@ mod tests {
         m.spend_step(StepKind::Constant).unwrap();
         assert_eq!(m.remaining_budget().cpu, initial.cpu - (200 * 20));
         assert_eq!(m.remaining_budget().mem, initial.mem - (200 * 2));
+    }
+
+    #[test]
+    fn cek_flush_trace_line_carries_required_comparison_keys() {
+        let _guard = CEK_TRACE_ENV_LOCK.lock().unwrap();
+        let path =
+            std::env::temp_dir().join(format!("ygg-cek-flush-contract-{}.log", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+
+        let model = custom_model(crate::cost_model::StepCosts {
+            var_cpu: 10,
+            var_mem: 1,
+            constant_cpu: 20,
+            constant_mem: 2,
+            lam_cpu: 30,
+            lam_mem: 3,
+            apply_cpu: 40,
+            apply_mem: 4,
+            ..crate::cost_model::StepCosts::default()
+        });
+        let mut m = CekMachine::with_step_slippage(ExBudget::new(1_000, 500), model, 4);
+        let term = Term::Apply(
+            Box::new(Term::LamAbs(Box::new(Term::Var(1)))),
+            Box::new(Term::Constant(Constant::integer(42))),
+        );
+
+        // SAFETY: CEK_TRACE_ENV_LOCK serializes process-wide environment
+        // mutation for this test module.
+        unsafe {
+            std::env::set_var("YGG_DUMP_CEK_FLUSHES", "1");
+            std::env::set_var("YGG_DUMP_CEK_FLUSHES_FILE", &path);
+        }
+        let result = m.evaluate(term);
+        // SAFETY: CEK_TRACE_ENV_LOCK serializes process-wide environment
+        // mutation for this test module.
+        unsafe {
+            std::env::remove_var("YGG_DUMP_CEK_FLUSHES");
+            std::env::remove_var("YGG_DUMP_CEK_FLUSHES_FILE");
+        }
+        result.unwrap();
+
+        let line = std::fs::read_to_string(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(
+            line.trim(),
+            "steps=4 counts=[Constant:1,Var:1,LamAbs:1,Apply:1,Delay:0,Force:0,\
+             Builtin:0,Constr:0,Case:0] cpu=100 mem=10 before_cpu=1000 before_mem=500 \
+             after_cpu=900 after_mem=490 status=ok",
+        );
+    }
+
+    #[test]
+    fn builtin_cost_trace_line_carries_required_comparison_keys() {
+        let _guard = CEK_TRACE_ENV_LOCK.lock().unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "ygg-builtin-cost-contract-{}.log",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+
+        let model = custom_model(crate::cost_model::StepCosts::default());
+        let mut m = CekMachine::new(ExBudget::new(5_000, 4_000), model);
+        let term = Term::Apply(
+            Box::new(Term::Apply(
+                Box::new(Term::Builtin(DefaultFun::AddInteger)),
+                Box::new(Term::Constant(Constant::integer(3))),
+            )),
+            Box::new(Term::Constant(Constant::integer(4))),
+        );
+
+        // SAFETY: CEK_TRACE_ENV_LOCK serializes process-wide environment
+        // mutation for this test module.
+        unsafe {
+            std::env::set_var("YGG_DUMP_BUILTIN_COSTS", "1");
+            std::env::set_var("YGG_DUMP_BUILTIN_COSTS_FILE", &path);
+        }
+        let result = m.evaluate(term);
+        // SAFETY: CEK_TRACE_ENV_LOCK serializes process-wide environment
+        // mutation for this test module.
+        unsafe {
+            std::env::remove_var("YGG_DUMP_BUILTIN_COSTS");
+            std::env::remove_var("YGG_DUMP_BUILTIN_COSTS_FILE");
+        }
+        result.unwrap();
+
+        let line = std::fs::read_to_string(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(
+            line.trim(),
+            "fun=AddInteger args=[1,1] cpu=1000 mem=1000 remaining_cpu=5000 remaining_mem=4000",
+        );
     }
 
     #[test]

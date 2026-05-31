@@ -4,13 +4,16 @@
 > Update descriptions in the manifest, then run `python .claude/scripts/filetree.py accept-current`.
 
 - Schema version: 1
-- Generated at: 2026-05-26T18:14:23Z
-- Files described: 1748
+- Generated at: 2026-05-31T22:20:24Z
+- Files described: 1758
 
 ## Workspace
 
 - `.dockerignore`
   - Project file at .dockerignore.
+- `.gitattributes`
+  - Repository line-ending and text normalization rules.
+  - Keeps generated and source files stable across Windows and Unix tooling.
 - `.gitignore`
   - Ignore rules for build outputs, local caches, vendored Haskell reference source, and operator artifacts.
   - Keeps heavyweight generated artifacts and secrets out of version control.
@@ -3256,6 +3259,8 @@
   - Project file at scripts/audit-strict-mirror.py.
 - `scripts/backup_db.sh`
   - Shell helper script for backup db workflows.
+- `scripts/check-core-evidence-harnesses.py`
+  - Project file at scripts/check-core-evidence-harnesses.py.
 - `scripts/check-doc-status-headers.py`
   - Stdlib-only validator for canonical status headers in living parity documents.
   - Ensures classification, round ceiling, parity tag, and baseline fields stay aligned.
@@ -3274,6 +3279,18 @@
   - Project file at scripts/check-strict-mirror.py.
 - `scripts/check_upstream_drift.sh`
   - Shell helper script for check upstream drift workflows.
+- `scripts/compare-conway-lsq.py`
+  - Project file at scripts/compare-conway-lsq.py.
+- `scripts/compare-gap-bo-tpraos-vrf.py`
+  - Project file at scripts/compare-gap-bo-tpraos-vrf.py.
+- `scripts/compare-gap-bp-builtin-costs.py`
+  - Project file at scripts/compare-gap-bp-builtin-costs.py.
+- `scripts/compare-gap-bp-cek-flushes.py`
+  - Project file at scripts/compare-gap-bp-cek-flushes.py.
+- `scripts/compare-gap-bp-script-context.py`
+  - Project file at scripts/compare-gap-bp-script-context.py.
+- `scripts/compare-gap-bp-traces.py`
+  - Project file at scripts/compare-gap-bp-traces.py.
 - `scripts/compare_db_truncater_to_upstream.sh`
   - Shell helper script for compare db truncater to upstream workflows.
 - `scripts/compare_submit_api_to_upstream.sh`
@@ -3657,6 +3674,10 @@
   - TOML configuration file for audits.
 - `supply-chain/config.toml`
   - TOML configuration file for config.
+- `tasks/lessons.md`
+  - Lessons: Start by restoring local parity infrastructure before making behavior claims. A green Rust build does not prove upstream parity when the Haskell reference tree is absent.
+- `tasks/todo.md`
+  - Core-First Completion TODO: [x] Create task tracking files before code changes.
 - `xtask/AGENTS.md`
   - xtask — workspace developer subcommands: Wave 9 PR 27. Lives at the workspace root (not under `crates/`) so.
 - `xtask/Cargo.toml`

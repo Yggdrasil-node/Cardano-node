@@ -51,7 +51,7 @@ use yggdrasil_node_sync::{
     restore_chain_dep_sidecar_state_to_point, sync_batch_apply_verified,
     sync_batch_verified_with_tentative, track_chain_state,
 };
-use yggdrasil_node_tracer::{NodeTracer, trace_fields};
+use yggdrasil_node_tracer::{NodeMetrics, NodeTracer, trace_fields};
 
 type CheckpointPersistenceOutcome = LedgerCheckpointUpdateOutcome;
 
@@ -67,9 +67,99 @@ fn alternate_reconnect_peer(
         .or_else(|| (primary_peer != failed_peer).then_some(primary_peer))
 }
 
+/// Migrate the direct bootstrap session's BlockFetch handle into the shared
+/// worker pool when multi-peer dispatch is enabled.
+///
+/// Governor-promoted peers already use `OutboundPeerManager::migrate_session_to_worker`.
+/// The reconnecting bootstrap path owns its session directly, so it needs the
+/// equivalent registration here; otherwise `yggdrasil_blockfetch_workers_registered`
+/// can stay at 0 while sync is actively fetching through the bootstrap peer.
+pub(super) async fn register_direct_bootstrap_fetch_worker(
+    session: &mut PeerSession,
+    config: &VerifiedSyncServiceConfig,
+    tracer: &NodeTracer,
+    metrics: Option<&NodeMetrics>,
+) -> bool {
+    if config.max_concurrent_block_fetch_peers <= 1 {
+        return false;
+    }
+    let Some(pool) = config.shared_fetch_worker_pool.as_ref() else {
+        return false;
+    };
+    let peer = session.connected_peer_addr;
+    let Some(block_fetch) = session.take_block_fetch() else {
+        return false;
+    };
+
+    let handle =
+        yggdrasil_node_sync::blockfetch_worker::FetchWorkerHandle::spawn_with_block_fetch_client(
+            peer,
+            block_fetch,
+        );
+    let (previous, registered) = {
+        let mut guard = pool.write().await;
+        let previous = guard.register(handle);
+        (previous, guard.len() as u64)
+    };
+    drop(previous);
+
+    if let Some(m) = metrics {
+        m.inc_blockfetch_workers_migrated();
+        m.set_blockfetch_workers_registered(registered);
+    }
+    tracer.trace_runtime(
+        "Net.BlockFetch.Worker",
+        "Info",
+        "direct bootstrap BlockFetch migrated to per-peer worker",
+        trace_fields([
+            ("peer", json!(peer.to_string())),
+            (
+                "maxConcurrent",
+                json!(config.max_concurrent_block_fetch_peers),
+            ),
+            ("workersRegistered", json!(registered)),
+        ]),
+    );
+    true
+}
+
+/// Remove a direct bootstrap worker from the shared pool during reconnect,
+/// handoff, or shutdown. Governor-owned workers are removed through
+/// `OutboundPeerManager::unregister_worker`; this helper covers the direct
+/// reconnecting-session path.
+pub(super) async fn unregister_direct_bootstrap_fetch_worker(
+    config: &VerifiedSyncServiceConfig,
+    peer: std::net::SocketAddr,
+    metrics: Option<&NodeMetrics>,
+) -> bool {
+    let Some(pool) = config.shared_fetch_worker_pool.as_ref() else {
+        return false;
+    };
+    let (removed, registered) = {
+        let mut guard = pool.write().await;
+        let removed = guard.unregister(&peer);
+        (removed, guard.len() as u64)
+    };
+    let removed = removed.is_some();
+    if let Some(m) = metrics {
+        m.set_blockfetch_workers_registered(registered);
+    }
+    removed
+}
+
+async fn abort_session_and_unregister_fetch_worker(
+    session: &mut PeerSession,
+    config: &VerifiedSyncServiceConfig,
+    metrics: Option<&NodeMetrics>,
+) {
+    let _ = unregister_direct_bootstrap_fetch_worker(config, session.connected_peer_addr, metrics)
+        .await;
+    session.mux.abort();
+}
+
 use super::keep_alive::{KeepAliveScheduler, trace_verified_sync_batch_applied};
 use super::peer_session::{
-    ReconnectingSyncServiceOutcome, ReconnectingVerifiedSyncRequest,
+    PeerSession, ReconnectingSyncServiceOutcome, ReconnectingVerifiedSyncRequest,
     ResumeReconnectingVerifiedSyncRequest, ResumedSyncServiceOutcome,
 };
 use super::reconnecting::{
@@ -285,6 +375,7 @@ where
         // maintains one session per call, so the effective concurrency
         // always returns 1; future multi-session orchestration can fan
         // this out across N peers without re-plumbing the config read.
+        register_direct_bootstrap_fetch_worker(&mut session, config, tracer, metrics).await;
         let _effective_block_fetch_concurrency = config.effective_block_fetch_concurrency(1);
         if had_session && run_state.reconnect_count > 0 {
             if let Some(m) = metrics {
@@ -314,7 +405,7 @@ where
                 &err,
                 from_point,
             );
-            session.mux.abort();
+            abort_session_and_unregister_fetch_worker(&mut session, config, metrics).await;
             registry_mark_bootstrap_cooling(peer_registry.as_ref(), session.connected_peer_addr);
             preferred_peer = alternate_reconnect_peer(
                 node_config.peer_addr,
@@ -345,7 +436,7 @@ where
                     &err,
                     from_point,
                 );
-                session.mux.abort();
+                abort_session_and_unregister_fetch_worker(&mut session, config, metrics).await;
                 // Round 175 — companion teardown for R168's bootstrap-Hot
                 // promotion.  Without this, a KeepAlive timeout left the
                 // bootstrap peer marked `PeerHot` until the next session
@@ -400,7 +491,7 @@ where
                         session.connected_peer_addr,
                         from_point,
                     );
-                    session.mux.abort();
+                    abort_session_and_unregister_fetch_worker(&mut session, config, metrics).await;
                     return Ok(run_state.finish(from_point, nonce_state, chain_state));
                 }
 
@@ -694,7 +785,7 @@ where
                                     ]),
                                 );
                                 preferred_peer = Some(next_hot_peer);
-                                session.mux.abort();
+                                abort_session_and_unregister_fetch_worker(&mut session, config, metrics).await;
                                 // Round 175 — the previous bootstrap peer
                                 // is no longer the active sync target;
                                 // demote in registry so `/metrics` reflects
@@ -733,7 +824,7 @@ where
                                 config.block_fetch_pool.as_ref(),
                                 session.connected_peer_addr,
                             );
-                            session.mux.abort();
+                            abort_session_and_unregister_fetch_worker(&mut session, config, metrics).await;
                             match disposition {
                                 BatchErrorDisposition::ReconnectAndPunish => {
                                     // Demote offending peer to Cold so the governor's
@@ -968,6 +1059,7 @@ where
         // maintains one session per call, so the effective concurrency
         // always returns 1; future multi-session orchestration can fan
         // this out across N peers without re-plumbing the config read.
+        register_direct_bootstrap_fetch_worker(&mut session, config, tracer, metrics).await;
         let _effective_block_fetch_concurrency = config.effective_block_fetch_concurrency(1);
         if had_session && run_state.reconnect_count > 0 {
             if let Some(m) = metrics {
@@ -997,7 +1089,7 @@ where
                 &err,
                 from_point,
             );
-            session.mux.abort();
+            abort_session_and_unregister_fetch_worker(&mut session, config, metrics).await;
             registry_mark_bootstrap_cooling(peer_registry.as_ref(), session.connected_peer_addr);
             preferred_peer = alternate_reconnect_peer(
                 node_config.peer_addr,
@@ -1028,7 +1120,7 @@ where
                     &err,
                     from_point,
                 );
-                session.mux.abort();
+                abort_session_and_unregister_fetch_worker(&mut session, config, metrics).await;
                 // Round 175 — companion teardown for R168's bootstrap-Hot
                 // promotion.  Without this, a KeepAlive timeout left the
                 // bootstrap peer marked `PeerHot` until the next session
@@ -1083,7 +1175,7 @@ where
                         session.connected_peer_addr,
                         from_point,
                     );
-                    session.mux.abort();
+                    abort_session_and_unregister_fetch_worker(&mut session, config, metrics).await;
                     return Ok(run_state.finish(from_point, nonce_state, chain_state));
                 }
 
@@ -1374,7 +1466,7 @@ where
                                     ]),
                                 );
                                 preferred_peer = Some(next_hot_peer);
-                                session.mux.abort();
+                                abort_session_and_unregister_fetch_worker(&mut session, config, metrics).await;
                                 // Round 175 — the previous bootstrap peer
                                 // is no longer the active sync target;
                                 // demote in registry so `/metrics` reflects
@@ -1422,7 +1514,7 @@ where
                                 peer_registry.as_ref(),
                                 session.connected_peer_addr,
                             );
-                            session.mux.abort();
+                            abort_session_and_unregister_fetch_worker(&mut session, config, metrics).await;
                             match disposition {
                                 BatchErrorDisposition::ReconnectAndPunish => {
                                     if let Some(ref registry) = peer_registry {
@@ -1572,6 +1664,7 @@ where
             session.connected_peer_addr,
         );
 
+        register_direct_bootstrap_fetch_worker(&mut session, config, tracer, None).await;
         trace_session_established(
             tracer,
             session.connected_peer_addr,
@@ -1595,7 +1688,7 @@ where
                 &err,
                 from_point,
             );
-            session.mux.abort();
+            abort_session_and_unregister_fetch_worker(&mut session, config, None).await;
             if let Some(peer) = alternate_reconnect_peer(
                 node_config.peer_addr,
                 fallback_peer_addrs,
@@ -1621,7 +1714,7 @@ where
                     &err,
                     from_point,
                 );
-                session.mux.abort();
+                abort_session_and_unregister_fetch_worker(&mut session, config, None).await;
                 // No registry cooling here — `with_tracer` doesn't
                 // carry a peer_registry and never registers a Hot
                 // bootstrap peer (R168 wired the registry hooks only
@@ -1660,7 +1753,7 @@ where
                         session.connected_peer_addr,
                         from_point,
                     );
-                    session.mux.abort();
+                    abort_session_and_unregister_fetch_worker(&mut session, config, None).await;
                     return Ok(run_state.finish(from_point, nonce_state, chain_state));
                 }
 
@@ -1728,7 +1821,7 @@ where
                                 config.block_fetch_pool.as_ref(),
                                 session.connected_peer_addr,
                             );
-                            session.mux.abort();
+                            abort_session_and_unregister_fetch_worker(&mut session, config, None).await;
                             match disposition {
                                 BatchErrorDisposition::ReconnectAndPunish
                                 | BatchErrorDisposition::Reconnect => {

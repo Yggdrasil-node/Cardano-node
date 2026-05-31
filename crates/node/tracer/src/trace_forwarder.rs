@@ -27,15 +27,16 @@
 //!
 //! # Current runtime behaviour
 //!
-//! Until layer 2/3 land we keep the existing best-effort `SOCK_DGRAM`
-//! fire-and-forget egress so the `Forwarder` backend doesn't crash
-//! the tracer pipeline when the operator configures it.  A startup
-//! `Startup.TraceForwarderStub` Warning makes the parity gap explicit
-//! to operators (see `crates/node/cardano-node/src/main.rs`).  A real `cardano-tracer`
-//! will reject the wire format at the transport level; events routed
-//! only to the `Forwarder` backend are silently dropped.  Plain stdout
-//! backends (`Stdout HumanFormatColoured`, `Stdout HumanFormat`,
-//! `StdoutMachine`) are unaffected.
+//! The Layer 2/3 building blocks have landed, but `NodeTracer` still
+//! uses the legacy best-effort `SOCK_DGRAM` fire-and-forget egress so
+//! the `Forwarder` backend does not crash the tracer pipeline when an
+//! operator configures it. A startup `Startup.TraceForwarderStub`
+//! warning makes the runtime wiring gap explicit to operators (see
+//! `crates/node/cardano-node/src/run_node.rs`). A real `cardano-tracer`
+//! will reject the legacy datagram wire format at the transport level;
+//! events routed only to the `Forwarder` backend are silently dropped.
+//! Plain stdout backends (`Stdout HumanFormatColoured`,
+//! `Stdout HumanFormat`, `StdoutMachine`) are unaffected.
 //!
 //! # Wiring the full Mux Layer 2/3 forwarder (Wave 6 PR 17 Phase 2.B)
 //!
@@ -75,9 +76,9 @@
 //! ));
 //! ```
 //!
-//! The remaining piece for full Network.Mux parity (per-mini-protocol
-//! limits, scheduler fairness, bearer-task supervision, live binary-
-//! against-binary conformance soak) is the single open item in
+//! The remaining runtime piece is to replace the legacy datagram
+//! `TraceForwarder` with this stream/Mux pipeline in the node binary,
+//! then run the live binary-against-binary conformance soak tracked in
 //! `docs/TECH-DEBT.md`'s "cardano-tracer Mux Layer 2/3" entry.
 //!
 //! Reference: `cardano-node:trace-dispatcher`, the `trace-forward`

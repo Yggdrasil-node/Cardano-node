@@ -1,0 +1,147 @@
+# Core-First Completion TODO
+
+## Plan
+
+- [x] Create task tracking files before code changes.
+- [x] Restore parity infrastructure.
+  - [x] Make `.reference-haskell-cardano-node` ignored at the repository root.
+  - [x] Verify `scripts/check-stale-placement.py --self-test`.
+  - [x] Verify `scripts/check-stale-placement.py`.
+  - [x] Provision `.reference-haskell-cardano-node` sources via `scripts/setup-reference.sh --sources-only` under WSL/Linux.
+  - [x] Verify `scripts/check-parity-matrix.py`.
+  - [x] Pin LF checkout bytes for shell scripts, vendored network JSON, and upstream CLI help/version fixtures.
+- [x] Remove supply-chain drift.
+  - [x] Remove the `aws-lc-rs` / `aws-lc-sys` dependency path.
+  - [x] Add explicit cargo-deny bans for AWS-LC native crypto crates.
+  - [x] Update dependency policy docs.
+- [x] Clean stale status documentation.
+  - [x] Align Plutus next steps with current wiring.
+  - [x] Align network/tracer status wording around evidence vs implementation.
+  - [x] Clarify parity dashboard/core evidence status.
+- [ ] Core closure follow-up arcs.
+  - [x] Stabilize missing local/WSL tooling.
+    - [x] Install or otherwise provision `cargo-deny`.
+    - [x] Install or otherwise provision `check-jsonschema` / Python `jsonschema`.
+    - [x] Provision full `.reference-haskell-cardano-node/install/` under WSL/Linux.
+    - [x] Verify `scripts/check-reference-artifacts.py`.
+  - [x] Keep core evidence helpers self-tested as one local preflight.
+    - [x] Add `scripts/check-core-evidence-harnesses.py` to run the Gap BO, Gap BP, R178, and BlockFetch helper self-tests together.
+  - [ ] Gap BO TPraos VRF replay and regression fixture.
+    - [x] Add `YGG_DUMP_TPRAOS_VRF` / `YGG_DUMP_TPRAOS_VRF_FILE` evidence logging for overlay classification, delegate/key hashes, nonce state, TPraos seeds, VRF outputs, and proof hashes.
+    - [x] Add preprod Gap BO `mkSeed` golden coverage for slots 429460 and 432000.
+    - [x] Add `scripts/compare-gap-bo-tpraos-vrf.py` to compare Rust and future Haskell/operator TPraos VRF evidence by slot.
+    - [x] Require complete Gap BO evidence schema before writing captured/pass comparison output.
+    - [x] Add canonical nonce hex fields, a nonce-state phase marker, and a Rust evidence-line contract test for Gap BO captures.
+    - [x] Add deterministic TPraos proof plumbing coverage for seedL/seedEta verification and cross-usage rejection.
+    - [x] Make `scripts/compare-gap-bo-tpraos-vrf.py --require-equal` fail unless Haskell evidence is supplied.
+    - [ ] Capture upstream Haskell replay output for the failing preprod slot and add the final fixture.
+  - [ ] Gap BP Plutus V2 cost replay and regression fixture.
+    - [x] Add `YGG_DUMP_CEK_FLUSHES` / `YGG_DUMP_CEK_FLUSHES_FILE` accumulated-step CEK flush logging with per-kind counters and budget deltas.
+    - [x] Add `YGG_DUMP_SCRIPT_CONTEXT_FILE` append support while preserving the existing `YGG_DUMP_SCRIPT_CONTEXT` stderr capture.
+    - [x] Deepen the captured Gap BP V2 ScriptContext regression for field counts, V2 TxOutRef wrapping, Babbage TxOut shape, fee/mint maps, validity range, redeemer keys, and active spending purpose.
+    - [x] Add `scripts/compare-gap-bp-script-context.py` to compare Rust and future Haskell ScriptContext CBOR dumps and report first divergent byte windows.
+    - [x] Add `scripts/compare-gap-bp-script-context.py --self-test` to validate parser, declared-length checks, byte comparison, diff windows, and artifact writing without the captured fixture.
+    - [x] Add `scripts/compare-gap-bp-cek-flushes.py` to compare Rust and future Haskell accumulated-step CEK flush traces by ordinal index.
+    - [x] Add a Rust CEK flush trace contract test proving `YGG_DUMP_CEK_FLUSHES` emits the fields consumed by the comparator.
+    - [x] Add `scripts/compare-gap-bp-builtin-costs.py` to compare Rust and future Haskell per-builtin cost traces by ordinal index.
+    - [x] Add a Rust builtin-cost trace contract test proving `YGG_DUMP_BUILTIN_COSTS` emits the fields consumed by the comparator.
+    - [x] Add `scripts/compare-gap-bp-traces.py` to run ScriptContext, CEK flush, and builtin-cost comparisons as one Gap BP evidence gate.
+    - [x] Make `scripts/compare-gap-bp-traces.py --require-equal` fail unless all three Haskell evidence logs are supplied.
+    - [x] Make each individual Gap BP comparator equality mode fail unless its Haskell evidence log is supplied.
+    - [ ] Capture the preview V2 failing transaction/script and compare the Rust flush trace against upstream Haskell.
+  - [ ] R178 Conway HFC LSQ envelope comparison and fix.
+    - [x] Add a Conway `QueryIfCurrent` regression proving HFC `Right` match and `Left` mismatch response envelopes.
+    - [x] Extend the R178 regression across `gov-state`, `constitution`, and `committee-state`, including full `MsgResult` frame bytes.
+    - [x] Add `scripts/compare-conway-lsq.py` to drive upstream `cardano-cli conway query` against Yggdrasil and optional Haskell sockets, recording raw stdout hashes and optional byte-equality checks.
+    - [x] Add `scripts/compare-conway-lsq.py --self-test` to validate network-argument selection, JSON normalization, and byte/normalized comparison assertions without sockets.
+    - [x] Harden `scripts/compare-conway-lsq.py` to write raw binary artifacts, include raw-byte diff windows, and record the upstream `cardano-cli --version` used for evidence.
+    - [x] Require `--haskell-socket` when `scripts/compare-conway-lsq.py --require-haskell` is used for R178 closeout evidence.
+    - [x] Make `--require-byte-equal` / `--require-normalized-equal` fail unless `--haskell-socket` is supplied.
+    - [ ] Run byte-for-byte `cardano-cli` Conway LSQ comparison against the installed upstream 11.0.1 reference binary.
+  - [ ] Section 6.5 BlockFetch worker activation and Haskell tip-comparison soak.
+    - [x] Migrate direct bootstrap BlockFetch handles into the shared worker pool when `max_concurrent_block_fetch_peers > 1`.
+    - [x] Add a runtime regression proving the shared worker pool and `yggdrasil_blockfetch_workers_registered` gauge become nonzero for the direct bootstrap path.
+    - [x] Align `--max-concurrent-block-fetch-peers` CLI help with the shipped default `2`.
+    - [x] Add `scripts/parallel_blockfetch_soak.sh --self-test` to validate metrics parsing and assertion helpers without starting a live node.
+    - [x] Harden `scripts/parallel_blockfetch_soak.sh` so `REQUIRE_TIP_COMPARISON=1` also requires multi-worker expectations, worker assertions, and progress assertions.
+    - [x] Harden `scripts/compare_tip_to_haskell.sh` so missing/invalid JSON tip fields cannot compare as empty-string matches.
+    - [x] Harden `scripts/parallel_blockfetch_soak.sh` strict mode to require expected workers through final sample, no post-activation worker shortfalls, and a minimum tip-comparison count.
+    - [ ] Run preprod Section 6.5 two-peer and knob=4 Haskell tip-comparison soaks.
+    - [ ] Run mainnet Section 6.5 knob=2 24h Haskell tip-comparison soak.
+
+## Review
+
+- Initial local audit before implementation: `cargo fmt --all -- --check`, `cargo check-all`, `cargo lint`, and `cargo lint-no-default` passed.
+- Initial blocked gates: `scripts/check-parity-matrix.py` failed because `.reference-haskell-cardano-node` was absent; `scripts/check-stale-placement.py` failed because Git did not ignore the bare root reference path.
+- Implemented local parity-infrastructure fix: root reference path is now ignored, and stale-placement self-test/live checks pass with the bundled Python runtime.
+- Provisioned the source-only Haskell reference tree at upstream tag `11.0.1`; `scripts/check-parity-matrix.py` passes against the local reference tree.
+- Implemented supply-chain fix: `cargo tree -i aws-lc-sys` and `cargo tree -i aws-lc-rs` no longer find packages after switching `axum-server` to the no-provider Rustls feature.
+- Hardened line-ending policy and normalized the current checkout for byte-sensitive shell, JSON genesis, and CLI help/version fixtures; this fixed Windows-only raw-byte parity failures in `cargo test-all`.
+- Verification passed: `cargo fmt --all -- --check`, `cargo check-all`, `cargo lint`, `cargo lint-no-default`, and `cargo test-all` (full test alias run outside the sandbox because Git Bash is blocked inside the sandbox with Win32 access-denied before scripts can start).
+- Parity/documentation guards passed after the final edits: doc-status headers, fixture manifest, strict mirror, parity matrix, stale-placement self-test/live checks, and filetree check.
+- Security dependency checks passed by absence for `aws-lc-sys`, `aws-lc-rs`, `native-tls`, and `openssl-sys`; feature tree shows `axum-server` using `tls-rustls-no-provider` and `rustls` using `ring`.
+- New execution plan accepted: stabilize missing tooling and full reference install first, then close Gap BO, Gap BP, R178, and BlockFetch in that order.
+- Installed `cargo-deny` 0.19.8 and ran `cargo deny check advisories bans licenses sources`: passed with warnings only for pre-existing duplicate/unused-license allowances.
+- Installed `check-jsonschema` / `jsonschema` and validated `docs/parity-matrix.json` against `docs/parity-matrix.schema.json`.
+- Provisioned the full IntersectMBO `cardano-node` 11.0.1 Linux reference install tree under WSL/Linux with `scripts/setup-reference.sh`.
+- Verified the full reference install with `python3 scripts/check-reference-artifacts.py`: 9 binaries and 3 network share dirs passed.
+- Gap BO evidence slice: added opt-in TPraos VRF evidence logging and preprod `mkSeed` golden coverage; focused `yggdrasil-node-sync` TPraos overlay tests and `yggdrasil-consensus` preprod seed test pass.
+- Gap BP evidence slice: added opt-in CEK accumulated-step flush logging; focused `yggdrasil-plutus` machine tests pass.
+- R178 evidence slice: added Conway `QueryIfCurrent` match/mismatch envelope regression; focused `yggdrasil-node-ntc-server` test passes.
+- BlockFetch Section 6.5 code slice: direct bootstrap sessions now migrate their BlockFetch handle into the shared worker pool when `max_concurrent_block_fetch_peers > 1`, unregister on reconnect/handoff/shutdown, and update the worker gauge; focused `yggdrasil-node-runtime` regression passes.
+- Current post-slice Rust gates pass: `cargo fmt --all -- --check`, `cargo check-all`, `cargo lint`, `cargo lint-no-default`, and `cargo test-all`.
+- Current post-slice parity/status guards pass: stale-placement self-test/live check, doc-status headers, fixture manifest, strict mirror, parity matrix, filetree check, JSON schema validation, and `git diff --check`.
+- Current post-slice security gates pass: `cargo deny check advisories bans licenses sources` exits clean with only pre-existing warnings, and `cargo tree -i aws-lc-sys`, `aws-lc-rs`, `native-tls`, and `openssl-sys` report no matching package IDs.
+- R178 comparison harness slice: added `scripts/compare-conway-lsq.py`, verified it with `python -m py_compile` and `--help`, and strengthened the local Conway envelope test to compare full HFC match/mismatch bytes. Live socket comparison still remains open.
+- R178 harness verification passed: `cargo fmt --all -- --check`, focused `cargo test -p yggdrasil-node-ntc-server conway_query_if_current_uses_hfc_match_and_mismatch_envelopes --lib`, `cargo check-all`, `python scripts/check-stale-placement.py`, filetree check, and `git diff --check`.
+- Gap BP ScriptContext evidence slice: added `YGG_DUMP_SCRIPT_CONTEXT_FILE` file append support, preserved stderr fallback, added a replayable evidence-line formatter test, and pinned deeper captured V2 ScriptContext field shapes. Focused `yggdrasil-node-plutus-eval` tests pass, including the full crate `--lib` suite.
+- Gap BP slice guards passed: `cargo fmt --all -- --check`, `cargo check-all`, `cargo lint`, `cargo lint-no-default`, `python scripts/check-stale-placement.py`, `python scripts/check-strict-mirror.py`, and `git diff --check`.
+- Gap BP offline comparison harness slice: added `scripts/compare-gap-bp-script-context.py`, documented it in `scripts/AGENTS.md`, and self-tested it against the captured Rust log both without Haskell input and with self-comparison plus `--require-byte-equal`.
+- Gap BP harness guards passed: `python -m py_compile scripts/compare-gap-bp-script-context.py`, `python scripts/compare-gap-bp-script-context.py --help`, `python scripts/check-stale-placement.py`, filetree accept/check, and `git diff --check`.
+- Full post-Gap-BP-harness Rust gate passed: `cargo test-all` completed successfully with the new Plutus evaluator tests included.
+- Gap BP status-doc cleanup: `docs/UPSTREAM_PARITY.md` now records the R266/R266b/R266c narrowing and points operators at the ScriptContext/CEK flush captures instead of treating step-cost drift as the only active suspect.
+- Post-doc cleanup guards passed: `python scripts/check-doc-status-headers.py`, `python scripts/check-stale-placement.py`, and `git diff --check`.
+- BlockFetch soak harness hardening: added `scripts/parallel_blockfetch_soak.sh --self-test` so the Section 6.5 helper validates worker metric lookup, missing-metric fallback, numeric comparisons, and average-duration formatting without requiring a live node.
+- BlockFetch harness guards passed: `bash scripts/parallel_blockfetch_soak.sh --self-test`, `bash scripts/parallel_blockfetch_soak.sh --help`, `bash -n scripts/parallel_blockfetch_soak.sh`, `python scripts/check-stale-placement.py`, executable-mode check (`100755`), filetree accept/check, and `git diff --check`.
+- R178 LSQ harness hardening: added `scripts/compare-conway-lsq.py --self-test` and documented the helper in `scripts/AGENTS.md`.
+- R178 LSQ harness guards passed: `python -m py_compile scripts/compare-conway-lsq.py`, `python scripts/compare-conway-lsq.py --self-test`, `python scripts/compare-conway-lsq.py --help`, `python scripts/check-stale-placement.py`, filetree accept/check, and `git diff --check`.
+- Gap BO TPraos evidence harness slice: added `scripts/compare-gap-bo-tpraos-vrf.py` to parse `TPRAOS_VRF_EVIDENCE` lines, compare stable parity keys by slot, emit `target/gap-bo-tpraos-vrf-comparison/summary.json`, and self-test parsing of nonce values containing spaces.
+- Gap BO harness guards passed: `python -m py_compile scripts/compare-gap-bo-tpraos-vrf.py`, `python scripts/compare-gap-bo-tpraos-vrf.py --self-test`, `python scripts/compare-gap-bo-tpraos-vrf.py --help`, `python scripts/check-stale-placement.py`, filetree accept/check, and `git diff --check`.
+- Gap BP comparator hardening: added `scripts/compare-gap-bp-script-context.py --self-test` to validate raw-hex and `cbor_hex=` parsing, declared-length mismatches, equal/mismatched CBOR comparison, diff-window generation, and artifact writes without depending on the captured preview fixture.
+- Gap BP comparator guards passed: `python -m py_compile scripts/compare-gap-bp-script-context.py`, `python scripts/compare-gap-bp-script-context.py --self-test`, `python scripts/compare-gap-bp-script-context.py --help`, `python scripts/check-stale-placement.py`, filetree accept/check, and `git diff --check`.
+- Core evidence preflight slice: added `scripts/check-core-evidence-harnesses.py` so local preflight runs the Gap BO, Gap BP, R178, and BlockFetch evidence helper self-tests together and writes `target/core-evidence-harnesses/summary.json`.
+- Core evidence preflight guards passed: `python -m py_compile scripts/check-core-evidence-harnesses.py`, `python scripts/check-core-evidence-harnesses.py --help`, `python scripts/check-stale-placement.py`, `python scripts/check-core-evidence-harnesses.py`, and `git diff --check`.
+- Filetree manifest refreshed after the new preflight script and tracker updates; `python .claude/scripts/filetree.py check` passes.
+- WSL reference artifact recheck passed: `python3 scripts/check-reference-artifacts.py` validates the full IntersectMBO 11.0.1 install tree; `cardano-cli --version` reports `cardano-cli 11.0.0.0` with git rev `97036a66bcf8c89f687ae57a048eecc0389977ef`.
+- Gap BO comparator schema hardening: `scripts/compare-gap-bo-tpraos-vrf.py` now requires `slot` plus every compared parity key before accepting Rust or Haskell evidence, so truncated operator logs fail loudly instead of producing weak captured/pass output.
+- Gap BO schema hardening guards passed: `python -m py_compile scripts/compare-gap-bo-tpraos-vrf.py scripts/check-core-evidence-harnesses.py`, `python scripts/compare-gap-bo-tpraos-vrf.py --self-test`, `python scripts/check-stale-placement.py`, and `python scripts/check-core-evidence-harnesses.py`.
+- R178 comparator hardening: `scripts/compare-conway-lsq.py` now records `cardano-cli --version`, writes raw binary stdout/stderr artifacts beside UTF-8 convenience logs, includes raw stdout/stderr diff windows when a Haskell socket is supplied, and self-tests the HFC `QueryIfCurrent` match/mismatch envelope byte facts.
+- R178 comparator guards passed: `python -m py_compile scripts/compare-conway-lsq.py scripts/check-core-evidence-harnesses.py`, `python scripts/compare-conway-lsq.py --self-test`, and `python scripts/check-core-evidence-harnesses.py`.
+- R178 Rust regression hardening: `conway_query_if_current_uses_hfc_match_and_mismatch_envelopes` now covers the three default Conway operator queries (`gov-state`, `constitution`, `committee-state`), verifies the HFC match envelope payloads, corrects mismatch wording to `[requested, ledger]`, and asserts full `MsgResult` frames inline the match/mismatch envelopes.
+- R178 Rust regression guards passed: `cargo fmt --all -- --check`, `cargo test -p yggdrasil-node-ntc-server conway_query_if_current_uses_hfc_match_and_mismatch_envelopes --lib`, `cargo check-all`, `cargo lint`, `cargo lint-no-default`, and `python scripts/check-core-evidence-harnesses.py`.
+- Gap BO Rust evidence contract hardening: `format_tpraos_overlay_vrf_evidence` now emits `nonce_state_phase=ticked_for_verification` plus canonical `{epoch,evolving,candidate,prev_hash,lab}_nonce_hex` fields, and `tpraos_overlay_vrf_evidence_line_carries_required_comparison_keys` pins the Rust-emitted key set against the comparator schema.
+- Gap BO comparator metadata hardening: `scripts/compare-gap-bo-tpraos-vrf.py` now requires `era` and `verification` metadata in addition to `slot` and all default comparison keys, including the new nonce hex/phase fields.
+- Gap BO evidence contract guards passed: `cargo fmt --all -- --check`, `cargo test -p yggdrasil-node-sync tpraos_overlay_vrf_evidence_line_carries_required_comparison_keys --lib`, `python -m py_compile scripts/compare-gap-bo-tpraos-vrf.py scripts/check-core-evidence-harnesses.py`, `python scripts/compare-gap-bo-tpraos-vrf.py --self-test`, `python scripts/check-core-evidence-harnesses.py`, `cargo check-all`, `cargo lint`, and `cargo lint-no-default`.
+- Gap BO TPraos proof plumbing hardening: added `tpraos_leader_and_nonce_proofs_are_usage_separated`, using deterministic VRF key material to prove over `seedL` and `seedEta`, verify each intended path, reject seedL as seedEta, reject seedEta as seedL, and reject TPraos seedL under Praos `mkInputVRF`.
+- Gap BO TPraos proof plumbing guards passed: `cargo fmt --all -- --check`, `cargo test -p yggdrasil-consensus tpraos_leader_and_nonce_proofs_are_usage_separated --lib`, `python scripts/check-core-evidence-harnesses.py`, and `cargo check-all`.
+- Gap BP CEK flush comparison harness: added `scripts/compare-gap-bp-cek-flushes.py` to parse `YGG_DUMP_CEK_FLUSHES` lines, require accumulated-step flush keys, compare Rust/Haskell flushes by ordinal index, report mismatched budget/count fields, and write `target/gap-bp-cek-flush-comparison/summary.json`.
+- Gap BP CEK flush harness guards passed: `python -m py_compile scripts/compare-gap-bp-cek-flushes.py scripts/check-core-evidence-harnesses.py`, `python scripts/compare-gap-bp-cek-flushes.py --self-test`, and `python scripts/check-core-evidence-harnesses.py`.
+- Gap BP CEK flush emitter contract: added `cek_flush_trace_line_carries_required_comparison_keys`, which runs a deterministic four-step CEK term with `YGG_DUMP_CEK_FLUSHES=1` and pins the exact accumulated-step flush line consumed by `scripts/compare-gap-bp-cek-flushes.py`.
+- Gap BP CEK flush emitter guards passed: `cargo fmt --all -- --check`, `cargo test -p yggdrasil-plutus cek_flush_trace_line_carries_required_comparison_keys --lib`, `python scripts/compare-gap-bp-cek-flushes.py --self-test`, `python scripts/check-core-evidence-harnesses.py`, `cargo check-all`, `cargo lint`, and `cargo lint-no-default`.
+- Gap BP builtin-cost comparison harness: added `scripts/compare-gap-bp-builtin-costs.py` to parse `YGG_DUMP_BUILTIN_COSTS` lines, require builtin name, arg-size, charge, and remaining-budget keys, compare Rust/Haskell builtin charges by ordinal index, and write `target/gap-bp-builtin-cost-comparison/summary.json`.
+- Gap BP builtin-cost harness guards passed: `python -m py_compile scripts/compare-gap-bp-builtin-costs.py scripts/check-core-evidence-harnesses.py`, `python scripts/compare-gap-bp-builtin-costs.py --self-test`, `python scripts/check-core-evidence-harnesses.py`, `python scripts/check-stale-placement.py`, filetree accept/check, and `git diff --check`.
+- Gap BP builtin-cost emitter contract: added `builtin_cost_trace_line_carries_required_comparison_keys`, which runs a deterministic `AddInteger` builtin with `YGG_DUMP_BUILTIN_COSTS=1` and pins the exact per-builtin trace line consumed by `scripts/compare-gap-bp-builtin-costs.py`.
+- Gap BP builtin-cost emitter guards passed: `cargo fmt --all -- --check`, `cargo test -p yggdrasil-plutus builtin_cost_trace_line_carries_required_comparison_keys --lib`, `cargo check-all`, `cargo lint`, and `cargo lint-no-default`.
+- Post-builtin-cost final guards passed: `python scripts/check-core-evidence-harnesses.py`, `python scripts/check-stale-placement.py`, filetree accept/check, and `git diff --check`.
+- Gap BP aggregate evidence harness: added `scripts/compare-gap-bp-traces.py` so the preview V2 closeout can run ScriptContext CBOR, CEK flush, and builtin-cost comparisons together; capture mode allows Rust-only artifacts, while parity closeout requires `--require-haskell --require-equal`.
+- Gap BP aggregate harness guards passed: `python -m py_compile scripts/compare-gap-bp-traces.py scripts/check-core-evidence-harnesses.py`, `python scripts/compare-gap-bp-traces.py --self-test`, `python scripts/check-core-evidence-harnesses.py`, `python scripts/check-doc-status-headers.py`, `python scripts/check-stale-placement.py`, filetree accept/check, and `git diff --check`.
+- R178 closeout hardening: `scripts/compare-conway-lsq.py` now has `--require-haskell` so byte/normalized equality closeout cannot silently run with only a Yggdrasil socket, and living docs no longer claim Conway LSQ wire parity is fully closed before the upstream socket comparison lands.
+- R178 closeout/documentation guards passed: `python -m py_compile scripts/compare-conway-lsq.py scripts/check-stale-placement.py scripts/check-core-evidence-harnesses.py`, `python scripts/compare-conway-lsq.py --self-test`, `python scripts/check-stale-placement.py --self-test`, `python scripts/check-core-evidence-harnesses.py`, `python scripts/check-doc-status-headers.py`, `python scripts/check-stale-placement.py`, stale-phrase scan, and `git diff --check`.
+- Closeout equality guard hardening: `scripts/compare-conway-lsq.py` now rejects equality flags without `--haskell-socket`, and `scripts/compare-gap-bp-traces.py --require-equal` rejects missing Haskell ScriptContext, CEK flush, or builtin-cost logs.
+- Direct comparator equality hardening: `scripts/compare-gap-bo-tpraos-vrf.py`, `scripts/compare-gap-bp-script-context.py`, `scripts/compare-gap-bp-cek-flushes.py`, and `scripts/compare-gap-bp-builtin-costs.py` now reject strict equality flags unless their Haskell evidence log is supplied.
+- Direct comparator equality guards passed: focused `--self-test` runs for Gap BO, Gap BP ScriptContext, Gap BP CEK flushes, and Gap BP builtin costs; `python scripts/check-core-evidence-harnesses.py`; doc-status and stale-placement scans; `git diff --check`; and manual negative CLI checks proving each direct comparator rejects strict equality mode without `--haskell-log`.
+- BlockFetch sign-off hardening: `scripts/parallel_blockfetch_soak.sh` now treats `REQUIRE_TIP_COMPARISON=1` as strict sign-off mode and rejects missing `HASKELL_SOCK`, `EXPECT_WORKERS < 2`, `REQUIRE_WORKERS=0`, `REQUIRE_PROGRESS=0`, or a comparison interval longer than the run window before startup.
+- BlockFetch sign-off hardening guards passed: `bash -n scripts/parallel_blockfetch_soak.sh`, `bash scripts/parallel_blockfetch_soak.sh --self-test`, and `python -m py_compile scripts/check-core-evidence-harnesses.py`.
+- BlockFetch review follow-up: `scripts/compare_tip_to_haskell.sh` now has a self-test and fails closed on command failure, invalid JSON, or missing required `slot`/`hash`; `scripts/check-core-evidence-harnesses.py` runs that self-test.
+- BlockFetch strict soak follow-up: `scripts/parallel_blockfetch_soak.sh` now requires `EXPECT_WORKERS >= MAX_CONCURRENT_BLOCK_FETCH_PEERS`, `MIN_TIP_COMPARE_PASSES >= 2`, enough run window for the required comparisons, final worker count at expectation, and zero post-activation worker shortfall samples in `REQUIRE_TIP_COMPARISON=1` mode.
+- BlockFetch strict follow-up guards passed: `bash -n scripts/compare_tip_to_haskell.sh`, `bash scripts/compare_tip_to_haskell.sh --self-test`, `bash -n scripts/parallel_blockfetch_soak.sh`, `bash scripts/parallel_blockfetch_soak.sh --self-test`, `python -m py_compile scripts/check-core-evidence-harnesses.py`, `python scripts/check-core-evidence-harnesses.py`, `python scripts/check-doc-status-headers.py`, `python scripts/check-stale-placement.py`, `python .claude/scripts/filetree.py check`, `git diff --check`, and executable-mode check for the two shell helpers.

@@ -84,9 +84,9 @@ Full details: [Installing from Releases](https://yggdrasil-node.github.io/Cardan
 - **Validation baseline**: all four cargo gates pass as of 2026-05-26 on the pinned Rust 1.95.0 toolchain — `cargo fmt --all -- --check`, `cargo check-all`, `cargo lint`, and `cargo test-all` (**7,251 tests passing, 0 failing, 3 ignored**; 7,254 listed tests total). The strict 1:1 file-mirror drift-guard (`scripts/check-strict-mirror.py`) and the checked-in parity-flow validators (`check-parity-matrix.py`, `check-fixture-manifest.py`, `check-stale-placement.py`, `check-doc-status-headers.py`, and `.claude/scripts/filetree.py`) are clean. See [`docs/PARITY_DASHBOARD.md`](docs/PARITY_DASHBOARD.md) for the compact status board, [`docs/PARITY_SUMMARY.md`](docs/PARITY_SUMMARY.md), [`docs/PARITY_PROOF.md`](docs/PARITY_PROOF.md), and [`docs/UPSTREAM_PARITY.md`](docs/UPSTREAM_PARITY.md) for the round-by-round parity arc, and [`docs/COMPLETION_ROADMAP.md`](docs/COMPLETION_ROADMAP.md) for the remaining-work backlog.
 - CI workflow and workspace cargo aliases for check/test/lint.
 
-### Status: code-level parity closure
+### Status: core parity closure in progress
 
-As of R839, the core node parity closure remains intact and the active work is evidence collection plus the remaining sister-tool surfaces. The R689-R839 continuation covered tx-generator DumpToFile narrowing, db-analyser genesis-bootstrap correction, dmq-node protocol/peer-driver/registry/bundle surfaces, cardano-testnet era-aware option/parser work, typed Command payload wiring, `Testnet/Types.hs` runtime record carriers, `Testnet/Process/Cli/Keys.hs` command builders, `Testnet/Process/Cli/Transaction.hs` sign/submit/txid and spend-output txbody builders, `Testnet/Process/Cli/DRep.hs` pure key/cert/vote builders, `Testnet/Process/Cli/SPO.hs` pure certificate/vote builders, `Testnet/Process/Run.hs` flexible process wrappers, `Testnet/Process/RunIO.hs` plan-json binary-resolution/execution helpers, `Testnet/Property/Util.hs` pure harness primitives, `Testnet/Property/Assert.hs` pure plus CLI-backed stake-pool assertion helpers, and `Testnet/Property/Run.hs` pure harness-control/planning helpers, plus this workspace audit cleanup. These rounds do not change the remaining operator and wire-comparison gates tracked in [`docs/COMPLETION_ROADMAP.md`](docs/COMPLETION_ROADMAP.md): the §2-9 mainnet endurance rehearsal, the §6.5 parallel-fetch sign-off, Gap BO, Gap BP, and the R178-followup LSQ response-envelope comparison.
+As of R839, the core node has broad Rust-side implementation coverage, but final parity closure remains evidence-gated by Gap BO, Gap BP, the R178-followup LSQ response-envelope comparison, and operator soaks. The R689-R839 continuation covered tx-generator DumpToFile narrowing, db-analyser genesis-bootstrap correction, dmq-node protocol/peer-driver/registry/bundle surfaces, cardano-testnet era-aware option/parser work, typed Command payload wiring, `Testnet/Types.hs` runtime record carriers, `Testnet/Process/Cli/Keys.hs` command builders, `Testnet/Process/Cli/Transaction.hs` sign/submit/txid and spend-output txbody builders, `Testnet/Process/Cli/DRep.hs` pure key/cert/vote builders, `Testnet/Process/Cli/SPO.hs` pure certificate/vote builders, `Testnet/Process/Run.hs` flexible process wrappers, `Testnet/Process/RunIO.hs` plan-json binary-resolution/execution helpers, `Testnet/Property/Util.hs` pure harness primitives, `Testnet/Property/Assert.hs` pure plus CLI-backed stake-pool assertion helpers, and `Testnet/Property/Run.hs` pure harness-control/planning helpers, plus this workspace audit cleanup. These rounds do not close the remaining operator and wire-comparison gates tracked in [`docs/COMPLETION_ROADMAP.md`](docs/COMPLETION_ROADMAP.md): the §2-9 mainnet endurance rehearsal, the §6.5 parallel-fetch sign-off, Gap BO, Gap BP, and the R178-followup LSQ response-envelope comparison.
 
 ### Ongoing operational work
 
@@ -97,14 +97,17 @@ As of R839, the core node parity closure remains intact and the active work is e
 
 ### Remaining gates (current R839 status)
 
-The remaining items are operator-time gates, not known code-level parity blockers:
+The remaining items mix unresolved parity blockers and operator-time gates:
 
 - **Phase E.2** — 24h+ mainnet sync rehearsal. Operator-time gate; yggdrasil's mainnet sync is end-to-end working (R211+R213) and exposes the observability surface needed for sign-off.
 - **Parallel BlockFetch sign-off** — runbook §6.5 remains open on current
   evidence. The current default knob is `max_concurrent_block_fetch_peers = 2`,
-  but R513 bounded preview/mainnet diagnostics both observed
-  `yggdrasil_blockfetch_workers_registered = 0`; sign-off needs fresh worker
-  activation plus Haskell tip comparison evidence.
+  and the direct bootstrap path now registers shared workers in Rust tests;
+  sign-off still needs fresh live worker activation plus Haskell tip comparison
+  evidence.
+- **Gap BO / Gap BP / R178** - current parity blockers requiring upstream
+  Haskell replay or socket comparison evidence before any full core parity
+  claim.
 - **Tracer interoperability** — extended `cardano-tracer` validation across the forwarder and stdout backends remains ongoing operational work.
 
 ## Workspace Layout

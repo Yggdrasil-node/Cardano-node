@@ -78,6 +78,8 @@ yggdrasil-db-*.tar.gz
 # docs/UPSTREAM_PARITY.md). They MUST NOT enter the index — Yggdrasil is a
 # clean-room port and treats upstream code as documentation only.
 **/.reference-haskell-cardano-node/
+/.reference-haskell-cardano-node
+/.reference-haskell-cardano-node/
 **/.referance-haskell-install/
 **/.reference-haskell-install/
 
