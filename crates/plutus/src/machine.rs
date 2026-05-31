@@ -91,6 +91,7 @@ pub struct CekMachine {
     frames: Vec<Frame>,
     budget: ExBudget,
     cost_model: CostModel,
+    trace_id: Option<String>,
     steps: u64,
     max_steps: u64,
     pending_step_counts: [u64; StepKind::COUNT],
@@ -117,6 +118,7 @@ impl CekMachine {
             frames: Vec::with_capacity(64),
             budget,
             cost_model,
+            trace_id: None,
             steps: 0,
             max_steps: 10_000_000_000,
             pending_step_counts: [0; StepKind::COUNT],
@@ -124,6 +126,17 @@ impl CekMachine {
             step_slippage: step_slippage.max(1),
             logs: Vec::new(),
         }
+    }
+
+    /// Attach an operator evidence correlation key to CEK diagnostic traces.
+    ///
+    /// The machine only emits this value when one of the opt-in diagnostic
+    /// dump env vars is enabled. Node-side Plutus evaluation sets it to
+    /// `<tx_hash>:<script_hash>:<version>` so ScriptContext, CEK flush, and
+    /// builtin-cost captures can be proven to belong to the same evaluation.
+    pub fn with_trace_id(mut self, trace_id: impl Into<String>) -> Self {
+        self.trace_id = Some(trace_id.into());
+        self
     }
 
     /// Evaluate a term to a value.
@@ -449,6 +462,9 @@ impl CekMachine {
         if std::env::var_os("YGG_DUMP_BUILTIN_COSTS").is_none() {
             return;
         }
+        let Some(trace_id) = self.trace_id.as_deref() else {
+            return;
+        };
         use std::fmt::Write as _;
         use std::io::Write as _;
         let path = std::env::var("YGG_DUMP_BUILTIN_COSTS_FILE")
@@ -468,8 +484,9 @@ impl CekMachine {
             let mut line = String::with_capacity(128);
             let _ = writeln!(
                 &mut line,
-                "fun={fun:?} args=[{sizes}] cpu={} mem={} remaining_cpu={} remaining_mem={}",
-                cost.cpu, cost.mem, self.budget.cpu, self.budget.mem,
+                "trace_id={} fun={fun:?} args=[{sizes}] cpu={} mem={} remaining_cpu={} \
+                 remaining_mem={}",
+                trace_id, cost.cpu, cost.mem, self.budget.cpu, self.budget.mem,
             );
             let _ = f.write_all(line.as_bytes());
         }
@@ -491,6 +508,9 @@ impl CekMachine {
         if std::env::var_os("YGG_DUMP_CEK_FLUSHES").is_none() {
             return;
         }
+        let Some(trace_id) = self.trace_id.as_deref() else {
+            return;
+        };
         use std::fmt::Write as _;
         use std::io::Write as _;
 
@@ -515,9 +535,15 @@ impl CekMachine {
             let mut line = String::with_capacity(256);
             let _ = writeln!(
                 &mut line,
-                "steps={steps} counts=[{per_kind}] cpu={} mem={} before_cpu={} before_mem={} \
+                "trace_id={} steps={steps} counts=[{per_kind}] cpu={} mem={} before_cpu={} before_mem={} \
                  after_cpu={} after_mem={} status={status}",
-                cost.cpu, cost.mem, before.cpu, before.mem, self.budget.cpu, self.budget.mem,
+                trace_id,
+                cost.cpu,
+                cost.mem,
+                before.cpu,
+                before.mem,
+                self.budget.cpu,
+                self.budget.mem,
             );
             let _ = f.write_all(line.as_bytes());
         }
@@ -1436,7 +1462,8 @@ mod tests {
             apply_mem: 4,
             ..crate::cost_model::StepCosts::default()
         });
-        let mut m = CekMachine::with_step_slippage(ExBudget::new(1_000, 500), model, 4);
+        let mut m = CekMachine::with_step_slippage(ExBudget::new(1_000, 500), model, 4)
+            .with_trace_id("tx:script:V2");
         let term = Term::Apply(
             Box::new(Term::LamAbs(Box::new(Term::Var(1)))),
             Box::new(Term::Constant(Constant::integer(42))),
@@ -1461,7 +1488,7 @@ mod tests {
         let _ = std::fs::remove_file(&path);
         assert_eq!(
             line.trim(),
-            "steps=4 counts=[Constant:1,Var:1,LamAbs:1,Apply:1,Delay:0,Force:0,\
+            "trace_id=tx:script:V2 steps=4 counts=[Constant:1,Var:1,LamAbs:1,Apply:1,Delay:0,Force:0,\
              Builtin:0,Constr:0,Case:0] cpu=100 mem=10 before_cpu=1000 before_mem=500 \
              after_cpu=900 after_mem=490 status=ok",
         );
@@ -1477,7 +1504,8 @@ mod tests {
         let _ = std::fs::remove_file(&path);
 
         let model = custom_model(crate::cost_model::StepCosts::default());
-        let mut m = CekMachine::new(ExBudget::new(5_000, 4_000), model);
+        let mut m =
+            CekMachine::new(ExBudget::new(5_000, 4_000), model).with_trace_id("tx:script:V2");
         let term = Term::Apply(
             Box::new(Term::Apply(
                 Box::new(Term::Builtin(DefaultFun::AddInteger)),
@@ -1505,7 +1533,8 @@ mod tests {
         let _ = std::fs::remove_file(&path);
         assert_eq!(
             line.trim(),
-            "fun=AddInteger args=[1,1] cpu=1000 mem=1000 remaining_cpu=5000 remaining_mem=4000",
+            "trace_id=tx:script:V2 fun=AddInteger args=[1,1] cpu=1000 mem=1000 \
+             remaining_cpu=5000 remaining_mem=4000",
         );
     }
 

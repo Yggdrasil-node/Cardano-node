@@ -432,6 +432,11 @@ fn script_context_evidence_line_is_replayable() {
     let line = format_script_context_evidence(&eval, &tx_ctx, &context);
 
     assert!(line.starts_with("YGG_DUMP_SCRIPT_CONTEXT: "));
+    assert!(line.contains(&format!(
+        "trace_id={}:{}:V2",
+        hex::encode(tx_ctx.tx_hash),
+        hex::encode(eval.script_hash),
+    )));
     assert!(line.contains(&format!("tx_hash={}", hex::encode(tx_ctx.tx_hash))));
     assert!(line.contains(&format!("script_hash={}", hex::encode(eval.script_hash))));
     assert!(line.contains("version=V2"));

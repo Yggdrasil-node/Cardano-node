@@ -199,29 +199,116 @@ def run_comparison(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
     args.artifact_dir.mkdir(parents=True, exist_ok=True)
     results = [run_case(case) for case in build_cases(args)]
     failed = [result for result in results if result["status"] != "pass"]
+    identity = validate_trace_identity(results, require_haskell=args.require_haskell)
     summary = {
         "generated_at_utc": dt.datetime.now(dt.UTC).isoformat(),
-        "status": "fail" if failed else "pass",
+        "status": "fail" if failed or identity["violations"] else "pass",
         "require_haskell": args.require_haskell,
         "require_equal": args.require_equal,
+        "trace_identity": identity,
         "results": results,
     }
     write_summary(args.artifact_dir / "summary.json", summary)
-    return summary, bool(failed)
+    return summary, bool(failed or identity["violations"])
+
+
+def script_context_trace_id(summary: dict[str, Any], side: str) -> str | None:
+    entry = summary.get(side)
+    if entry is None:
+        return None
+    metadata = entry.get("metadata") or {}
+    trace_id = metadata.get("trace_id")
+    if trace_id:
+        return trace_id
+    tx_hash = metadata.get("tx_hash")
+    script_hash = metadata.get("script_hash")
+    version = metadata.get("version")
+    if tx_hash and script_hash and version:
+        return f"{tx_hash}:{script_hash}:{version}"
+    return None
+
+
+def trace_ids_from_results(summary: dict[str, Any], side: str) -> list[str]:
+    trace_ids: set[str] = set()
+    for result in summary.get("results", []):
+        entry = result.get(side)
+        if entry is None:
+            continue
+        trace_id = (entry.get("fields") or {}).get("trace_id")
+        if trace_id:
+            trace_ids.add(trace_id)
+    return sorted(trace_ids)
+
+
+def validate_trace_identity(
+    results: list[dict[str, Any]],
+    require_haskell: bool,
+) -> dict[str, Any]:
+    by_name = {result["name"]: result.get("child_summary") for result in results}
+    violations: list[str] = []
+    observed: dict[str, dict[str, Any]] = {}
+
+    script_summary = by_name.get("script-context")
+    cek_summary = by_name.get("cek-flushes")
+    builtin_summary = by_name.get("builtin-costs")
+    if not isinstance(script_summary, dict):
+        violations.append("missing script-context child summary")
+        script_summary = {}
+    if not isinstance(cek_summary, dict):
+        violations.append("missing cek-flushes child summary")
+        cek_summary = {}
+    if not isinstance(builtin_summary, dict):
+        violations.append("missing builtin-costs child summary")
+        builtin_summary = {}
+
+    for side in ("rust", "haskell"):
+        if side == "haskell" and not require_haskell:
+            continue
+        script_trace_id = script_context_trace_id(script_summary, side)
+        cek_trace_ids = trace_ids_from_results(cek_summary, side)
+        builtin_trace_ids = trace_ids_from_results(builtin_summary, side)
+        observed[side] = {
+            "script_context": script_trace_id,
+            "cek_flushes": cek_trace_ids,
+            "builtin_costs": builtin_trace_ids,
+        }
+
+        if script_trace_id is None:
+            violations.append(f"{side}: script-context evidence has no trace identity")
+            continue
+        if cek_trace_ids != [script_trace_id]:
+            violations.append(
+                f"{side}: CEK flush trace_id set {cek_trace_ids} does not match {script_trace_id}"
+            )
+        if builtin_trace_ids != [script_trace_id]:
+            violations.append(
+                f"{side}: builtin-cost trace_id set {builtin_trace_ids} does not match {script_trace_id}"
+            )
+
+    if require_haskell and not violations:
+        rust_id = observed.get("rust", {}).get("script_context")
+        haskell_id = observed.get("haskell", {}).get("script_context")
+        if rust_id != haskell_id:
+            violations.append(f"rust/haskell trace_id mismatch: {rust_id} != {haskell_id}")
+
+    return {
+        "observed": observed,
+        "violations": violations,
+    }
 
 
 def run_self_test() -> int:
     script_context = (
-        "YGG_DUMP_SCRIPT_CONTEXT: tx_hash=aa script_hash=bb "
+        "YGG_DUMP_SCRIPT_CONTEXT: trace_id=aa:bb:V2 tx_hash=aa script_hash=bb "
         "version=V2 cbor_len=4 cbor_hex=d8799fff\n"
     )
     cek_flush = (
-        "steps=4 counts=[Constant:1,Var:1,LamAbs:1,Apply:1,Delay:0,Force:0,"
+        "trace_id=aa:bb:V2 steps=4 counts=[Constant:1,Var:1,LamAbs:1,Apply:1,Delay:0,Force:0,"
         "Builtin:0,Constr:0,Case:0] cpu=100 mem=10 before_cpu=1000 "
         "before_mem=500 after_cpu=900 after_mem=490 status=ok\n"
     )
     builtin_cost = (
-        "fun=AddInteger args=[1,1] cpu=1000 mem=1000 "
+        "trace_id=aa:bb:V2 fun=AddInteger args=[1,1] cpu=1000 mem=1000 "
         "remaining_cpu=5000 remaining_mem=4000\n"
     )
 
@@ -255,6 +342,7 @@ def run_self_test() -> int:
         assert not failed, summary
         assert summary["status"] == "pass"
         assert summary["results"][0]["child_summary"]["comparison"] is None
+        assert summary["trace_identity"]["observed"]["rust"]["script_context"] == "aa:bb:V2"
 
         equal_args = argparse.Namespace(
             rust_script_context=rust_script,
@@ -271,6 +359,7 @@ def run_self_test() -> int:
         assert not failed, summary
         assert summary["status"] == "pass"
         assert summary["results"][0]["child_summary"]["comparison"]["byte_equal"] is True
+        assert not summary["trace_identity"]["violations"]
 
         haskell_builtin.write_text(
             builtin_cost.replace("remaining_cpu=5000", "remaining_cpu=4999"),
@@ -292,6 +381,25 @@ def run_self_test() -> int:
         assert summary["status"] == "fail"
         assert summary["results"][2]["name"] == "builtin-costs"
         assert summary["results"][2]["status"] == "fail"
+
+        haskell_builtin.write_text(builtin_cost, encoding="utf-8")
+        rust_cek.write_text(cek_flush.replace("aa:bb:V2", "aa:cc:V2"), encoding="utf-8")
+        trace_mismatch_args = argparse.Namespace(
+            rust_script_context=rust_script,
+            haskell_script_context=haskell_script,
+            rust_cek_flushes=rust_cek,
+            haskell_cek_flushes=haskell_cek,
+            rust_builtin_costs=rust_builtin,
+            haskell_builtin_costs=haskell_builtin,
+            artifact_dir=root / "trace-mismatch",
+            require_haskell=True,
+            require_equal=True,
+        )
+        summary, failed = run_comparison(trace_mismatch_args)
+        assert failed, summary
+        assert summary["trace_identity"]["violations"]
+        assert "CEK flush trace_id" in summary["trace_identity"]["violations"][0]
+        rust_cek.write_text(cek_flush, encoding="utf-8")
 
         missing_args = argparse.Namespace(
             rust_script_context=rust_script,

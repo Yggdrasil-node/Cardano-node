@@ -289,7 +289,8 @@ is capture-only.
 
 Compares `YGG_DUMP_CEK_FLUSHES` accumulated-step budget spend logs against a
 future Haskell CEK replay transformed into the same key-value shape. The helper
-compares flushes by ordinal index and checks accumulated step count, per-kind
+requires a `trace_id=<tx_hash>:<script_hash>:<version>` correlation key,
+compares flushes by ordinal index, and checks accumulated step count, per-kind
 counts, charged CPU/memory, before/after budget, and status. It is the
 lower-volume companion to per-step CEK traces for narrowing the preview V2 cost
 drift before a live upstream trace is available. `--require-equal` requires
@@ -299,8 +300,9 @@ drift before a live upstream trace is available. `--require-equal` requires
 
 Compares `YGG_DUMP_BUILTIN_COSTS` per-builtin budget charge logs against a
 future Haskell Plutus replay transformed into the same key-value shape. The
-helper compares builtins by ordinal index and checks builtin name, argument
-memory sizes, charged CPU/memory, and remaining budget. It is the builtin-cost
+helper requires the same `trace_id=<tx_hash>:<script_hash>:<version>`
+correlation key, compares builtins by ordinal index, and checks builtin name,
+argument memory sizes, charged CPU/memory, and remaining budget. It is the builtin-cost
 companion to the CEK flush helper for isolating the preview V2 cost drift.
 `--require-equal` requires `--haskell-log`; without Haskell evidence the helper
 is capture-only.
@@ -312,7 +314,10 @@ evidence gate. Rust logs for all three streams are required. Haskell logs are
 optional in capture mode, but the parity closeout command must use
 `--require-haskell --require-equal` so missing Haskell evidence or any
 byte/field mismatch fails the aggregate summary in
-`target/gap-bp-trace-comparison/summary.json`.
+`target/gap-bp-trace-comparison/summary.json`. The aggregate gate also proves
+all three streams carry the same trace identity on each side and, in Haskell
+closeout mode, that the Rust and Haskell trace identities match; noisy
+multi-script captures must be split before they can pass.
 
 ### `compare-gap-bp-script-context.py` (Gap BP operator evidence)
 
@@ -320,6 +325,9 @@ Compares `YGG_DUMP_SCRIPT_CONTEXT[_FILE]` ScriptContext CBOR captures against a
 future Haskell replay dump for the same preview V2 transaction. It writes raw
 CBOR and hex artifacts plus the first divergent byte window. `--require-byte-equal`
 requires `--haskell-log`; without Haskell evidence the helper is capture-only.
+Rust captures now include `trace_id=<tx_hash>:<script_hash>:<version>` beside
+the existing `tx_hash`, `script_hash`, and `version` metadata so aggregate Gap
+BP evidence can be correlated without guessing.
 
 ## Refresh helper
 

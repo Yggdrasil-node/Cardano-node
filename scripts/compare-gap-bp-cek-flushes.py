@@ -22,6 +22,7 @@ from typing import Any
 
 KEY_RE = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)=")
 REQUIRED_KEYS = (
+    "trace_id",
     "steps",
     "counts",
     "cpu",
@@ -202,7 +203,7 @@ def expect_system_exit(func: Any, expected_fragment: str) -> None:
 
 def run_self_test() -> int:
     line = (
-        "steps=200 counts=[Var:12,LamAbs:4,Apply:3,Delay:0,Force:1,Constant:2,"
+        "trace_id=aa:bb:V2 steps=200 counts=[Var:12,LamAbs:4,Apply:3,Delay:0,Force:1,Constant:2,"
         "Builtin:1,Constr:0,Case:0] cpu=4600000 mem=20000 before_cpu=4293691 "
         "before_mem=67426 after_cpu=-306309 after_mem=47426 "
         "status=err:out of budget: 200 accumulated steps"
@@ -210,6 +211,7 @@ def run_self_test() -> int:
     fields = parse_key_values(line)
     assert fields is not None
     validate_required_keys("self", 1, fields)
+    assert fields["trace_id"] == "aa:bb:V2"
     assert fields["steps"] == "200"
     assert fields["status"] == "err:out of budget: 200 accumulated steps"
     counts = parse_counts(fields["counts"], "self")

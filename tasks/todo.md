@@ -48,6 +48,8 @@
     - [x] Add `scripts/compare-gap-bp-traces.py` to run ScriptContext, CEK flush, and builtin-cost comparisons as one Gap BP evidence gate.
     - [x] Make `scripts/compare-gap-bp-traces.py --require-equal` fail unless all three Haskell evidence logs are supplied.
     - [x] Make each individual Gap BP comparator equality mode fail unless its Haskell evidence log is supplied.
+    - [x] Add `trace_id=<tx_hash>:<script_hash>:<version>` to ScriptContext, CEK flush, and builtin-cost evidence so noisy captures cannot compare the wrong evaluation.
+    - [x] Make the aggregate Gap BP trace gate fail when ScriptContext, CEK flush, and builtin-cost evidence do not share the same trace identity.
     - [ ] Capture the preview V2 failing transaction/script and compare the Rust flush trace against upstream Haskell.
   - [ ] R178 Conway HFC LSQ envelope comparison and fix.
     - [x] Add a Conway `QueryIfCurrent` regression proving HFC `Right` match and `Left` mismatch response envelopes.
@@ -145,3 +147,11 @@
 - BlockFetch review follow-up: `scripts/compare_tip_to_haskell.sh` now has a self-test and fails closed on command failure, invalid JSON, or missing required `slot`/`hash`; `scripts/check-core-evidence-harnesses.py` runs that self-test.
 - BlockFetch strict soak follow-up: `scripts/parallel_blockfetch_soak.sh` now requires `EXPECT_WORKERS >= MAX_CONCURRENT_BLOCK_FETCH_PEERS`, `MIN_TIP_COMPARE_PASSES >= 2`, enough run window for the required comparisons, final worker count at expectation, and zero post-activation worker shortfall samples in `REQUIRE_TIP_COMPARISON=1` mode.
 - BlockFetch strict follow-up guards passed: `bash -n scripts/compare_tip_to_haskell.sh`, `bash scripts/compare_tip_to_haskell.sh --self-test`, `bash -n scripts/parallel_blockfetch_soak.sh`, `bash scripts/parallel_blockfetch_soak.sh --self-test`, `python -m py_compile scripts/check-core-evidence-harnesses.py`, `python scripts/check-core-evidence-harnesses.py`, `python scripts/check-doc-status-headers.py`, `python scripts/check-stale-placement.py`, `python .claude/scripts/filetree.py check`, `git diff --check`, and executable-mode check for the two shell helpers.
+- User correction captured: Linux/WSL must be used for Haskell reference binaries, socket/operator evidence, and parity-run shell scripts; native Windows is reserved for Windows Rust gates or simple repository inspection.
+- Gap BP correlation hardening: `CekMachine` now accepts an explicit trace ID, node Plutus evaluation sets it to `<tx_hash>:<script_hash>:<version>`, ScriptContext evidence emits the same ID, and CEK flush/builtin-cost trace lines include it.
+- Gap BP aggregate guard hardening: CEK flush and builtin-cost comparators require `trace_id`, and `scripts/compare-gap-bp-traces.py` fails when the ScriptContext, CEK flush, and builtin-cost evidence streams cannot be proven to refer to the same evaluation.
+- Gap BP correlation guards passed under WSL: `python3 -m py_compile scripts/compare-gap-bp-cek-flushes.py scripts/compare-gap-bp-builtin-costs.py scripts/compare-gap-bp-traces.py`, each focused comparator `--self-test`, and focused Rust tests for CEK flush trace, builtin-cost trace, and ScriptContext evidence line propagation.
+- Gap BP diagnostic isolation fix: CEK flush and builtin-cost dumps now require an explicit trace ID before writing, preventing unrelated local CEK tests or ad-hoc evaluations from appending anonymous `trace_id=unknown` evidence.
+- Final WSL Rust gates for the correlation slice passed: `cargo fmt --all -- --check`, `cargo check-all`, `cargo lint`, `cargo lint-no-default`, and `cargo test-all`.
+- Final WSL focused suites passed: `cargo test -p yggdrasil-plutus --lib` (448 tests) and `cargo test -p yggdrasil-node-plutus-eval --lib` (188 tests).
+- Final WSL parity/status/security gates passed: `scripts/check-reference-artifacts.py`, stale-placement self-test/live check, doc-status self-test/live check, fixture manifest, parity matrix, strict mirror, `scripts/check-core-evidence-harnesses.py`, `cargo deny check advisories bans licenses sources`, and absence checks for `aws-lc-sys`, `aws-lc-rs`, `native-tls`, and `openssl-sys`.

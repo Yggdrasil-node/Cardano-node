@@ -21,6 +21,7 @@ from typing import Any
 
 KEY_RE = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)=")
 REQUIRED_KEYS = (
+    "trace_id",
     "fun",
     "args",
     "cpu",
@@ -197,12 +198,13 @@ def expect_system_exit(func: Any, expected_fragment: str) -> None:
 
 def run_self_test() -> int:
     line = (
-        "fun=AppendByteString args=[12,8] cpu=100001 mem=64 "
+        "trace_id=aa:bb:V2 fun=AppendByteString args=[12,8] cpu=100001 mem=64 "
         "remaining_cpu=4293691 remaining_mem=67426"
     )
     fields = parse_key_values(line)
     assert fields is not None
     validate_required_keys("self", 1, fields)
+    assert fields["trace_id"] == "aa:bb:V2"
     assert fields["fun"] == "AppendByteString"
     assert parse_arg_sizes(fields["args"], "self") == [12, 8]
     assert parse_arg_sizes("[]", "self") == []

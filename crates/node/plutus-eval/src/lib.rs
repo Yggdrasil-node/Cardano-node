@@ -225,7 +225,8 @@ impl PlutusEvaluator for CekPlutusEvaluator {
         // 5. Evaluate the applied term. Keep the machine available on
         // failure so explicit Plutus `trace` breadcrumbs can be surfaced
         // during live parity investigations without changing default errors.
-        let mut machine = yggdrasil_plutus::CekMachine::new(budget, cost_model);
+        let mut machine = yggdrasil_plutus::CekMachine::new(budget, cost_model)
+            .with_trace_id(plutus_trace_id(eval, tx_ctx));
         let result = match machine.evaluate(applied) {
             Ok(result) => result,
             Err(err) => {
@@ -315,13 +316,25 @@ fn format_script_context_evidence(
     context_data: &PlutusData,
 ) -> String {
     let cbor = CborEncode::to_cbor_bytes(context_data);
+    let trace_id = plutus_trace_id(eval, tx_ctx);
     format!(
-        "YGG_DUMP_SCRIPT_CONTEXT: tx_hash={} script_hash={} version={:?} cbor_len={} cbor_hex={}",
+        "YGG_DUMP_SCRIPT_CONTEXT: trace_id={} tx_hash={} script_hash={} version={:?} \
+         cbor_len={} cbor_hex={}",
+        trace_id,
         hex::encode(tx_ctx.tx_hash),
         hex::encode(eval.script_hash),
         eval.version,
         cbor.len(),
         hex::encode(&cbor),
+    )
+}
+
+fn plutus_trace_id(eval: &PlutusScriptEval, tx_ctx: &TxContext) -> String {
+    format!(
+        "{}:{}:{:?}",
+        hex::encode(tx_ctx.tx_hash),
+        hex::encode(eval.script_hash),
+        eval.version,
     )
 }
 
