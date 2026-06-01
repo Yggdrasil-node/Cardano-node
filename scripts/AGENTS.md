@@ -323,10 +323,12 @@ optional in capture mode, but the parity closeout command must use
 `--require-haskell --require-equal --expected-trace-id <tx_hash>:<script_hash>:<version>`
 so missing Haskell evidence, a wrong captured evaluation identity, or any
 byte/field mismatch fails the aggregate summary in
-`target/gap-bp-trace-comparison/summary.json`. The aggregate gate also proves
-all three streams carry the same trace identity on each side and, in Haskell
-closeout mode, that the Rust and Haskell trace identities match; noisy
-multi-script captures must be split before they can pass.
+`target/gap-bp-trace-comparison/summary.json`. The helper enforces
+`--require-haskell` and `--require-equal` as a paired closeout mode, so a
+Haskell-present capture cannot be mistaken for parity sign-off. The aggregate
+gate also proves all three streams carry the same trace identity on each side
+and, in Haskell closeout mode, that the Rust and Haskell trace identities
+match; noisy multi-script captures must be split before they can pass.
 
 ### `compare-gap-bp-script-context.py` (Gap BP operator evidence)
 

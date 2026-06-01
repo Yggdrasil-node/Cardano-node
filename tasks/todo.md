@@ -52,6 +52,7 @@
     - [x] Add `trace_id=<tx_hash>:<script_hash>:<version>` to ScriptContext, CEK flush, and builtin-cost evidence so noisy captures cannot compare the wrong evaluation.
     - [x] Make the aggregate Gap BP trace gate fail when ScriptContext, CEK flush, and builtin-cost evidence do not share the same trace identity.
     - [x] Make Gap BP strict comparison require `--expected-trace-id` so wrong preview V2 transaction/script evidence cannot close the blocker.
+    - [x] Make Gap BP aggregate closeout mode require both `--require-haskell` and `--require-equal`.
     - [ ] Capture the preview V2 failing transaction/script and compare the Rust flush trace against upstream Haskell.
   - [ ] R178 Conway HFC LSQ envelope comparison and fix.
     - [x] Add a Conway `QueryIfCurrent` regression proving HFC `Right` match and `Left` mismatch response envelopes.
@@ -168,3 +169,5 @@
 - R178 closeout-mode hardening: `scripts/compare-conway-lsq.py` now rejects `--require-haskell` without `--require-byte-equal`/`--require-normalized-equal`, and rejects equality flags without `--require-haskell`, so closeout mode cannot be weakened accidentally.
 - User WSL correction captured in `tasks/lessons.md`: Linux-style parity/reference shell work must run as explicit `wsl bash -lc ...`, with native Windows exceptions called out before use.
 - R178 closeout-mode guards passed under WSL: `python3 -m py_compile scripts/compare-conway-lsq.py scripts/check-core-evidence-harnesses.py`, `python3 scripts/compare-conway-lsq.py --self-test`, `python3 scripts/check-core-evidence-harnesses.py`, `python3 scripts/check-stale-placement.py`, `python3 scripts/check-doc-status-headers.py`, `python3 scripts/check-strict-mirror.py`, `cargo fmt --all -- --check`, `cargo check-all`, `cargo lint`, `cargo lint-no-default`, and `cargo test-all`.
+- Gap BP aggregate closeout-mode hardening: `scripts/compare-gap-bp-traces.py` now rejects `--require-haskell` without `--require-equal`, and rejects `--require-equal` without `--require-haskell`, so preview V2 trace closeout cannot skip Haskell identity comparison.
+- Gap BP aggregate closeout-mode guards passed under WSL: `python3 -m py_compile scripts/compare-gap-bp-traces.py scripts/check-core-evidence-harnesses.py`, `python3 scripts/compare-gap-bp-traces.py --self-test`, `python3 scripts/check-core-evidence-harnesses.py`, `python3 scripts/check-stale-placement.py`, `python3 scripts/check-doc-status-headers.py`, `python3 scripts/check-strict-mirror.py`, `cargo fmt --all -- --check`, `cargo check-all`, `cargo lint`, `cargo lint-no-default`, and `cargo test-all`.

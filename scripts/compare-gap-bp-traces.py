@@ -176,6 +176,10 @@ def validate_required_args(
     ):
         if value is None:
             fail(f"{label} is required unless --self-test is set")
+    if args.require_haskell and not args.require_equal:
+        fail("--require-haskell requires --require-equal")
+    if args.require_equal and not args.require_haskell:
+        fail("--require-equal requires --require-haskell")
     if args.require_equal:
         missing = [
             label
@@ -474,6 +478,46 @@ def run_self_test() -> int:
             assert "--require-equal requires" in str(exc)
         else:
             raise AssertionError("expected require_equal missing-log failure")
+
+        weak_equal_args = argparse.Namespace(
+            rust_script_context=rust_script,
+            haskell_script_context=haskell_script,
+            rust_cek_flushes=rust_cek,
+            haskell_cek_flushes=haskell_cek,
+            rust_builtin_costs=rust_builtin,
+            haskell_builtin_costs=haskell_builtin,
+            artifact_dir=root / "weak-equal",
+            require_haskell=False,
+            require_equal=True,
+            expected_trace_id="aa:bb:V2",
+            self_test=False,
+        )
+        try:
+            validate_required_args(weak_equal_args)
+        except SystemExit as exc:
+            assert "--require-equal requires --require-haskell" in str(exc)
+        else:
+            raise AssertionError("expected require_equal to require require_haskell")
+
+        weak_haskell_args = argparse.Namespace(
+            rust_script_context=rust_script,
+            haskell_script_context=haskell_script,
+            rust_cek_flushes=rust_cek,
+            haskell_cek_flushes=haskell_cek,
+            rust_builtin_costs=rust_builtin,
+            haskell_builtin_costs=haskell_builtin,
+            artifact_dir=root / "weak-haskell",
+            require_haskell=True,
+            require_equal=False,
+            expected_trace_id=None,
+            self_test=False,
+        )
+        try:
+            validate_required_args(weak_haskell_args)
+        except SystemExit as exc:
+            assert "--require-haskell requires --require-equal" in str(exc)
+        else:
+            raise AssertionError("expected require_haskell to require require_equal")
 
         missing_expected_args = argparse.Namespace(
             rust_script_context=rust_script,
