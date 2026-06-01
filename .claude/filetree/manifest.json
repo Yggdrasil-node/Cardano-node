@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at_utc": "2026-06-01T09:03:19Z",
+  "generated_at_utc": "2026-06-01T09:42:44Z",
   "description_policy": "Each entry has one or two concise human-maintained description lines. Run accept-current after reviewing stale entries.",
   "files": [
     {
@@ -11698,10 +11698,10 @@
       "description_lines": [
         "Upstream Parity Matrix: > Quick view: [`PARITY_DASHBOARD.md`](PARITY_DASHBOARD.md)."
       ],
-      "content_sha256": "fed7f444146bae0fd204997ce1a7e04be674680e368ae215275b62780f9b1a42",
-      "git_blob": "efb9077f13306c552bf56acd80e0e6beb80bcba1",
-      "source_mtime_ns": 1780303759867199300,
-      "described_at_utc": "2026-06-01T09:02:39Z",
+      "content_sha256": "7cb8ed0ecc21aed97b3c58a394230124668a95acd12a87f758804911577ecf8c",
+      "git_blob": "eba7a981fc91f3c6487ca42b226bdc11bc8ded7b",
+      "source_mtime_ns": 1780304934755071600,
+      "described_at_utc": "2026-06-01T09:42:44Z",
       "generated_self_exempt": false
     },
     {
@@ -18699,10 +18699,10 @@
       "description_lines": [
         "Guidance for root scripts: parity validators, reference refresh helpers, and operator/runbook shell tools."
       ],
-      "content_sha256": "cd9e3111ac74f38d4ef776ace4426f813206e2810211a0cf9ad61e6634fcd53f",
-      "git_blob": "84750caa8fba47b946bbab4462d6164e28164f41",
-      "source_mtime_ns": 1780303692023436200,
-      "described_at_utc": "2026-06-01T09:03:15Z",
+      "content_sha256": "8bd23009b06def4d17b03e8a6c3b81339f7af72d84fe9eb21903a17d8f0876d0",
+      "git_blob": "d2e255d7a9e426d607425f226868cae0c28f1a63",
+      "source_mtime_ns": 1780304906201666500,
+      "described_at_utc": "2026-06-01T09:42:44Z",
       "generated_self_exempt": false
     },
     {
@@ -18879,10 +18879,10 @@
       "description_lines": [
         "Project file at scripts/compare-gap-bp-traces.py."
       ],
-      "content_sha256": "489274aae37e729df4e46ecc6ec12b8b8515190d80d774824c9020524dc51160",
-      "git_blob": "eabcc40c6a471032b8198a7efa75d96fc627795e",
-      "source_mtime_ns": 1780298489714735700,
-      "described_at_utc": "2026-06-01T07:48:18Z",
+      "content_sha256": "50f164d318cbafd44c1be9b789e1374ba242ca3e3244f5d578a9be5f8131b6a7",
+      "git_blob": "d24119816d456f79c065d9e2032cf72fa6b22539",
+      "source_mtime_ns": 1780304895340744500,
+      "described_at_utc": "2026-06-01T09:42:44Z",
       "generated_self_exempt": false
     },
     {
@@ -19441,10 +19441,10 @@
       "description_lines": [
         "Core-First Completion TODO: [x] Create task tracking files before code changes."
       ],
-      "content_sha256": "6c6eda8725cd74a6840c44fb32e8319eae29b8b0cc41bb750a737df0e3a63f19",
-      "git_blob": "9ab9448a27f44803564fd9b7e31890c7e84d2e46",
-      "source_mtime_ns": 1780304489524151500,
-      "described_at_utc": "2026-06-01T09:03:19Z",
+      "content_sha256": "c248f9069b252041391691730adac0a53bdd6c3f8d814829ff4095d2ae100a8b",
+      "git_blob": "6e43069b208f1bf6a229e202515fd3d4ec1acd76",
+      "source_mtime_ns": 1780306128134443600,
+      "described_at_utc": "2026-06-01T09:42:44Z",
       "generated_self_exempt": false
     },
     {

@@ -336,7 +336,9 @@ byte/field mismatch fails the aggregate summary in
 Haskell-present capture cannot be mistaken for parity sign-off. The aggregate
 gate also proves all three streams carry the same trace identity on each side
 and, in Haskell closeout mode, that the Rust and Haskell trace identities
-match; noisy multi-script captures must be split before they can pass.
+match; noisy multi-script captures must be split before they can pass. Use
+`--write-fixture <path>` only with strict closeout mode; it writes a normalized
+aggregate fixture after all three child comparisons pass.
 
 ### `compare-gap-bp-script-context.py` (Gap BP operator evidence)
 

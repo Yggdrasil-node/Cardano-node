@@ -8,7 +8,8 @@ This aggregate harness composes the three focused Gap BP comparators:
 - per-builtin budget charges
 
 Use capture mode with only Rust logs while preparing artifacts. Use
-`--require-haskell --require-equal` for the parity closeout run.
+`--require-haskell --require-equal --write-fixture <path>` for the parity
+closeout run.
 """
 
 from __future__ import annotations
@@ -200,11 +201,42 @@ def validate_required_args(
             fail("--require-equal requires " + ", ".join(missing))
         if not args.expected_trace_id:
             fail("--require-equal requires --expected-trace-id")
+    if (
+        args.write_fixture is not None
+        and (not args.require_haskell or not args.require_equal)
+    ):
+        fail("--write-fixture requires --require-haskell and --require-equal")
 
 
 def write_summary(path: Path, summary: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def build_fixture(summary: dict[str, Any]) -> dict[str, Any]:
+    if summary.get("status") != "pass":
+        raise SystemExit("cannot write Gap BP fixture unless aggregate status is pass")
+    if not summary.get("require_haskell") or not summary.get("require_equal"):
+        raise SystemExit(
+            "cannot write Gap BP fixture without strict Haskell equality mode"
+        )
+    expected_trace_id = summary.get("expected_trace_id")
+    if not expected_trace_id:
+        raise SystemExit("cannot write Gap BP fixture without expected_trace_id")
+
+    child_summaries = {
+        result["name"]: result.get("child_summary") for result in summary["results"]
+    }
+    return {
+        "schema_version": 1,
+        "blocker": "gap-bp-plutus-v2-traces",
+        "status": summary["status"],
+        "expected_trace_id": expected_trace_id,
+        "trace_identity": summary["trace_identity"],
+        "script_context": child_summaries.get("script-context"),
+        "cek_flushes": child_summaries.get("cek-flushes"),
+        "builtin_costs": child_summaries.get("builtin-costs"),
+    }
 
 
 def run_comparison(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
@@ -222,10 +254,14 @@ def run_comparison(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
         "require_haskell": args.require_haskell,
         "require_equal": args.require_equal,
         "expected_trace_id": args.expected_trace_id,
+        "write_fixture": str(args.write_fixture) if args.write_fixture else None,
         "trace_identity": identity,
         "results": results,
     }
     write_summary(args.artifact_dir / "summary.json", summary)
+    if args.write_fixture is not None and summary["status"] == "pass":
+        fixture = build_fixture(summary)
+        write_summary(args.write_fixture, fixture)
     return summary, bool(failed or identity["violations"])
 
 
@@ -360,6 +396,7 @@ def run_self_test() -> int:
             require_haskell=False,
             require_equal=False,
             expected_trace_id=None,
+            write_fixture=None,
         )
         summary, failed = run_comparison(capture_args)
         assert not failed, summary
@@ -378,12 +415,24 @@ def run_self_test() -> int:
             require_haskell=True,
             require_equal=True,
             expected_trace_id="aa:bb:V2",
+            write_fixture=root / "equal-fixture.json",
         )
         summary, failed = run_comparison(equal_args)
         assert not failed, summary
         assert summary["status"] == "pass"
         assert summary["results"][0]["child_summary"]["comparison"]["byte_equal"] is True
         assert not summary["trace_identity"]["violations"]
+        fixture = json.loads(equal_args.write_fixture.read_text(encoding="utf-8"))
+        assert fixture["schema_version"] == 1
+        assert fixture["blocker"] == "gap-bp-plutus-v2-traces"
+        assert fixture["expected_trace_id"] == "aa:bb:V2"
+        assert fixture["script_context"]["comparison"]["byte_equal"] is True
+        assert [result["status"] for result in fixture["cek_flushes"]["results"]] == [
+            "pass"
+        ]
+        assert [result["status"] for result in fixture["builtin_costs"]["results"]] == [
+            "pass"
+        ]
 
         haskell_builtin.write_text(
             builtin_cost.replace("remaining_cpu=5000", "remaining_cpu=4999"),
@@ -400,12 +449,14 @@ def run_self_test() -> int:
             require_haskell=True,
             require_equal=True,
             expected_trace_id="aa:bb:V2",
+            write_fixture=root / "mismatch-fixture.json",
         )
         summary, failed = run_comparison(mismatch_args)
         assert failed, summary
         assert summary["status"] == "fail"
         assert summary["results"][2]["name"] == "builtin-costs"
         assert summary["results"][2]["status"] == "fail"
+        assert not mismatch_args.write_fixture.exists()
 
         haskell_builtin.write_text(builtin_cost, encoding="utf-8")
         rust_cek.write_text(cek_flush.replace("aa:bb:V2", "aa:cc:V2"), encoding="utf-8")
@@ -420,6 +471,7 @@ def run_self_test() -> int:
             require_haskell=True,
             require_equal=True,
             expected_trace_id="aa:bb:V2",
+            write_fixture=None,
         )
         summary, failed = run_comparison(trace_mismatch_args)
         assert failed, summary
@@ -438,6 +490,7 @@ def run_self_test() -> int:
             require_haskell=True,
             require_equal=True,
             expected_trace_id="aa:wrong:V2",
+            write_fixture=None,
         )
         summary, failed = run_comparison(unexpected_trace_args)
         assert failed, summary
@@ -457,6 +510,7 @@ def run_self_test() -> int:
             require_haskell=True,
             require_equal=True,
             expected_trace_id="aa:bb:V2",
+            write_fixture=None,
         )
         try:
             build_cases(missing_args)
@@ -476,6 +530,7 @@ def run_self_test() -> int:
             require_haskell=False,
             require_equal=True,
             expected_trace_id="aa:bb:V2",
+            write_fixture=None,
             self_test=False,
         )
         try:
@@ -496,6 +551,7 @@ def run_self_test() -> int:
             require_haskell=False,
             require_equal=True,
             expected_trace_id="aa:bb:V2",
+            write_fixture=None,
             self_test=False,
         )
         try:
@@ -516,6 +572,7 @@ def run_self_test() -> int:
             require_haskell=True,
             require_equal=False,
             expected_trace_id=None,
+            write_fixture=None,
             self_test=False,
         )
         try:
@@ -536,6 +593,7 @@ def run_self_test() -> int:
             require_haskell=True,
             require_equal=True,
             expected_trace_id=None,
+            write_fixture=None,
             self_test=False,
         )
         try:
@@ -544,6 +602,29 @@ def run_self_test() -> int:
             assert "--require-equal requires --expected-trace-id" in str(exc)
         else:
             raise AssertionError("expected require_equal missing expected trace failure")
+
+        weak_fixture_args = argparse.Namespace(
+            rust_script_context=rust_script,
+            haskell_script_context=haskell_script,
+            rust_cek_flushes=rust_cek,
+            haskell_cek_flushes=haskell_cek,
+            rust_builtin_costs=rust_builtin,
+            haskell_builtin_costs=haskell_builtin,
+            artifact_dir=root / "weak-fixture",
+            require_haskell=False,
+            require_equal=False,
+            expected_trace_id=None,
+            write_fixture=root / "weak-fixture.json",
+            self_test=False,
+        )
+        try:
+            validate_required_args(weak_fixture_args)
+        except SystemExit as exc:
+            assert "--write-fixture requires --require-haskell and --require-equal" in str(
+                exc
+            )
+        else:
+            raise AssertionError("expected write_fixture to require strict mode")
 
     print("[ok] compare-gap-bp-traces self-test passed")
     return 0
@@ -583,6 +664,14 @@ def parse_args() -> argparse.Namespace:
             "Gap BP evaluation. Required with --require-equal."
         ),
     )
+    parser.add_argument(
+        "--write-fixture",
+        type=Path,
+        help=(
+            "Write a normalized aggregate fixture after strict Rust/Haskell "
+            "equality passes. Requires --require-haskell and --require-equal."
+        ),
+    )
     args = parser.parse_args()
     validate_required_args(args, parser)
     return args
@@ -596,6 +685,8 @@ def main() -> int:
     summary, failed = run_comparison(args)
     summary_path = args.artifact_dir / "summary.json"
     print(f"wrote {summary_path}")
+    if args.write_fixture is not None and summary["status"] == "pass":
+        print(f"wrote fixture {args.write_fixture}")
     for result in summary["results"]:
         print(f"{result['name']}: {result['status']}")
         if result["status"] != "pass":

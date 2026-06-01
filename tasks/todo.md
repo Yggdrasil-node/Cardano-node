@@ -56,6 +56,7 @@
     - [x] Make Gap BP strict comparison require `--expected-trace-id` so wrong preview V2 transaction/script evidence cannot close the blocker.
     - [x] Make Gap BP aggregate closeout mode require both `--require-haskell` and `--require-equal`.
     - [x] Make standalone Gap BP ScriptContext, CEK flush, and builtin-cost closeout modes require explicit `--require-haskell` plus equality.
+    - [x] Add a guarded Gap BP aggregate `--write-fixture` path so passing Rust/Haskell traces can be normalized into a replayable regression fixture.
     - [ ] Capture the preview V2 failing transaction/script and compare the Rust flush trace against upstream Haskell.
   - [ ] R178 Conway HFC LSQ envelope comparison and fix.
     - [x] Add a Conway `QueryIfCurrent` regression proving HFC `Right` match and `Left` mismatch response envelopes.
@@ -189,3 +190,6 @@
 - Gap BO fixture-writer hardening: `scripts/compare-gap-bo-tpraos-vrf.py` now supports `--write-fixture <path>` only in strict `--require-haskell --require-equal` closeout mode, writes a normalized target-slot JSON fixture only after Rust/Haskell evidence passes, and self-tests both artifact writing and refusal on failed evidence.
 - Gap BO fixture-writer guards passed under WSL: `python3 -m py_compile scripts/compare-gap-bo-tpraos-vrf.py scripts/check-core-evidence-harnesses.py`, `python3 scripts/compare-gap-bo-tpraos-vrf.py --self-test`, validation of the self-test fixture JSON, `python3 scripts/check-core-evidence-harnesses.py`, doc-status/stale-placement/strict-mirror scans, `cargo fmt --all -- --check`, `cargo check-all`, `cargo lint`, `cargo lint-no-default`, and `cargo test-all`.
 - Gap BO fixture-writer security recheck passed under WSL: `cargo deny check advisories bans licenses sources` exited clean with only the known duplicate/unused-license warnings.
+- Gap BP aggregate fixture-writer hardening: `scripts/compare-gap-bp-traces.py` now supports `--write-fixture <path>` only in strict `--require-haskell --require-equal` closeout mode, writes a normalized aggregate JSON fixture after ScriptContext, CEK flush, and builtin-cost comparisons all pass for the expected trace identity, and refuses fixture output for failed or weak captures.
+- Gap BP aggregate fixture-writer guards passed under WSL: `python3 -m py_compile scripts/compare-gap-bp-traces.py scripts/check-core-evidence-harnesses.py`, `python3 scripts/compare-gap-bp-traces.py --self-test`, `python3 scripts/check-core-evidence-harnesses.py`, doc-status/stale-placement/strict-mirror scans, `cargo fmt --all -- --check`, `cargo check-all`, `cargo lint`, `cargo lint-no-default`, and `cargo test-all`.
+- Gap BP aggregate fixture-writer security recheck passed under WSL: `cargo deny check advisories bans licenses sources` exited clean with only the known duplicate/unused-license warnings.
