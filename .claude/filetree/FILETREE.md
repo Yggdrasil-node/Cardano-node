@@ -4,7 +4,7 @@
 > Update descriptions in the manifest, then run `python .claude/scripts/filetree.py accept-current`.
 
 - Schema version: 1
-- Generated at: 2026-06-01T08:38:24Z
+- Generated at: 2026-06-01T09:03:19Z
 - Files described: 1758
 
 ## Workspace

@@ -294,8 +294,11 @@ Gap BO closeout runs must pass `--require-haskell --require-equal`; the helper
 enforces that pairing before reading logs. Closeout mode also requires
 `--haskell-log` and the configured Gap BO target slot to be present in the
 compared evidence (`--target-slot`, default `429460`), so a strict closeout
-cannot accidentally pass against a neighboring TPraos replay. Without
-`--require-haskell --require-equal` the helper is capture/diagnostic-only.
+cannot accidentally pass against a neighboring TPraos replay. Use
+`--write-fixture <path>` only with strict closeout mode; it writes a normalized
+target-slot JSON fixture only after Rust and Haskell evidence compare equal.
+Without `--require-haskell --require-equal` the helper is
+capture/diagnostic-only.
 
 ### `compare-gap-bp-cek-flushes.py` (Gap BP operator evidence)
 

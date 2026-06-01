@@ -218,6 +218,40 @@ def target_slot_status(results: list[dict[str, Any]], target_slot: int) -> dict[
     }
 
 
+def target_slot_result(results: list[dict[str, Any]], target_slot: int) -> dict[str, Any] | None:
+    for result in results:
+        if result["slot"] == target_slot:
+            return result
+    return None
+
+
+def build_fixture(
+    result: dict[str, Any],
+    keys: tuple[str, ...],
+    required_keys: tuple[str, ...],
+) -> dict[str, Any]:
+    rust = result["rust"]
+    haskell = result["haskell"]
+    if rust is None or haskell is None:
+        raise SystemExit("cannot write fixture without both Rust and Haskell evidence")
+    if result["status"] != "pass":
+        raise SystemExit(
+            f"cannot write fixture for slot {result['slot']}: status is {result['status']}"
+        )
+
+    return {
+        "schema_version": 1,
+        "blocker": "gap-bo-tpraos-vrf",
+        "target_slot": result["slot"],
+        "status": result["status"],
+        "compare_keys": list(keys),
+        "required_keys": list(required_keys),
+        "rust_fields": rust["fields"],
+        "haskell_fields": haskell["fields"],
+        "mismatches": result["mismatches"],
+    }
+
+
 def validate_required_args(
     args: argparse.Namespace,
     parser: argparse.ArgumentParser | None = None,
@@ -239,6 +273,12 @@ def validate_required_args(
         fail("--require-equal requires --require-haskell")
     if not args.self_test and args.require_haskell and args.haskell_log is None:
         fail("--haskell-log is required with --require-haskell")
+    if (
+        not args.self_test
+        and args.write_fixture is not None
+        and (not args.require_haskell or not args.require_equal)
+    ):
+        fail("--write-fixture requires --require-haskell and --require-equal")
 
 
 def parse_args() -> argparse.Namespace:
@@ -267,6 +307,14 @@ def parse_args() -> argparse.Namespace:
         "--artifact-dir",
         type=Path,
         default=Path("target/gap-bo-tpraos-vrf-comparison"),
+    )
+    parser.add_argument(
+        "--write-fixture",
+        type=Path,
+        help=(
+            "Write a normalized target-slot fixture after strict Rust/Haskell "
+            "equality passes. Requires --require-haskell and --require-equal."
+        ),
     )
     parser.add_argument(
         "--require-equal",
@@ -357,6 +405,7 @@ def run_self_test() -> int:
                 target_slot=DEFAULT_GAP_BO_TARGET_SLOT,
                 require_haskell=True,
                 require_equal=True,
+                write_fixture=None,
             )
         ),
         "--haskell-log is required with --require-haskell",
@@ -371,6 +420,7 @@ def run_self_test() -> int:
                 target_slot=DEFAULT_GAP_BO_TARGET_SLOT,
                 require_haskell=False,
                 require_equal=True,
+                write_fixture=None,
             )
         ),
         "--require-equal requires --require-haskell",
@@ -385,6 +435,7 @@ def run_self_test() -> int:
                 target_slot=DEFAULT_GAP_BO_TARGET_SLOT,
                 require_haskell=True,
                 require_equal=False,
+                write_fixture=None,
             )
         ),
         "--require-haskell requires --require-equal",
@@ -399,6 +450,7 @@ def run_self_test() -> int:
                 target_slot=DEFAULT_GAP_BO_TARGET_SLOT,
                 require_haskell=True,
                 require_equal=True,
+                write_fixture=None,
             )
         ),
         "--slot must be non-negative",
@@ -413,9 +465,25 @@ def run_self_test() -> int:
                 target_slot=-1,
                 require_haskell=True,
                 require_equal=True,
+                write_fixture=None,
             )
         ),
         "--target-slot must be non-negative",
+    )
+    expect_system_exit(
+        lambda: validate_required_args(
+            argparse.Namespace(
+                self_test=False,
+                rust_log=Path("rust.log"),
+                haskell_log=Path("haskell.log"),
+                slot=None,
+                target_slot=DEFAULT_GAP_BO_TARGET_SLOT,
+                require_haskell=False,
+                require_equal=False,
+                write_fixture=Path("fixture.json"),
+            )
+        ),
+        "--write-fixture requires --require-haskell and --require-equal",
     )
 
     changed = dict(parsed)
@@ -439,6 +507,41 @@ def run_self_test() -> int:
         "present": False,
         "status": "missing",
     }
+    fixture = build_fixture(
+        {
+            "slot": DEFAULT_GAP_BO_TARGET_SLOT,
+            "status": "pass",
+            "rust": rust.summary(),
+            "haskell": same.summary(),
+            "mismatches": [],
+        },
+        keys=DEFAULT_COMPARE_KEYS,
+        required_keys=required_evidence_keys(DEFAULT_COMPARE_KEYS),
+    )
+    assert fixture["schema_version"] == 1
+    assert fixture["blocker"] == "gap-bo-tpraos-vrf"
+    assert fixture["target_slot"] == DEFAULT_GAP_BO_TARGET_SLOT
+    assert fixture["rust_fields"]["leader_seed"] == "dd"
+    assert fixture["haskell_fields"]["leader_seed"] == "dd"
+    fixture_path = Path("target/gap-bo-tpraos-vrf-self-test/fixture.json")
+    write_summary(fixture_path, fixture)
+    loaded_fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+    assert loaded_fixture["target_slot"] == DEFAULT_GAP_BO_TARGET_SLOT
+    assert loaded_fixture["mismatches"] == []
+    expect_system_exit(
+        lambda: build_fixture(
+            {
+                "slot": DEFAULT_GAP_BO_TARGET_SLOT,
+                "status": "fail",
+                "rust": rust.summary(),
+                "haskell": same.summary(),
+                "mismatches": [{"key": "leader_seed", "rust": "dd", "haskell": "changed"}],
+            },
+            DEFAULT_COMPARE_KEYS,
+            required_evidence_keys(DEFAULT_COMPARE_KEYS),
+        ),
+        "cannot write fixture",
+    )
 
     print("[ok] compare-gap-bo-tpraos-vrf self-test passed")
     return 0
@@ -461,6 +564,7 @@ def main() -> int:
     target_slot = target_slot_status(results, args.target_slot)
     if args.require_equal and not target_slot["present"]:
         failed = True
+    fixture_path = args.write_fixture
     summary = {
         "compare_keys": keys,
         "required_keys": required_evidence_keys(keys),
@@ -470,6 +574,7 @@ def main() -> int:
         "require_equal": args.require_equal,
         "slot": args.slot,
         "target_slot": target_slot,
+        "write_fixture": str(fixture_path) if fixture_path else None,
         "results": results,
     }
     summary_path = args.artifact_dir / "summary.json"
@@ -484,6 +589,17 @@ def main() -> int:
             )
     if args.require_equal and not target_slot["present"]:
         print(f"target slot {args.target_slot}: missing")
+    if fixture_path is not None:
+        result = target_slot_result(results, args.target_slot)
+        if failed or result is None or result["status"] != "pass":
+            print(
+                f"not writing fixture for target slot {args.target_slot}: "
+                f"{target_slot['status']}"
+            )
+        else:
+            fixture = build_fixture(result, keys, required_evidence_keys(keys))
+            write_summary(fixture_path, fixture)
+            print(f"wrote fixture {fixture_path}")
     return 1 if failed and args.require_equal else 0
 
 

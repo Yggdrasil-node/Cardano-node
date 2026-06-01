@@ -36,6 +36,7 @@
     - [x] Make `scripts/compare-gap-bo-tpraos-vrf.py --require-equal` fail unless Haskell evidence is supplied.
     - [x] Make Gap BO strict comparison require the configured target slot (`429460` by default) so wrong-slot evidence cannot close the blocker.
     - [x] Make Gap BO closeout mode require both `--require-haskell` and `--require-equal`.
+    - [x] Add a guarded Gap BO `--write-fixture` path so passing Rust/Haskell evidence can be normalized into a replayable regression fixture.
     - [ ] Capture upstream Haskell replay output for the failing preprod slot and add the final fixture.
   - [ ] Gap BP Plutus V2 cost replay and regression fixture.
     - [x] Add `YGG_DUMP_CEK_FLUSHES` / `YGG_DUMP_CEK_FLUSHES_FILE` accumulated-step CEK flush logging with per-kind counters and budget deltas.
@@ -185,3 +186,6 @@
 - BlockFetch soak timeout-contract hardening: `scripts/parallel_blockfetch_soak.sh` now validates `TIP_QUERY_TIMEOUT_SECONDS`, passes it explicitly to `compare_tip_to_haskell.sh`, rejects strict sign-off configs where the timeout is zero or consumes the whole comparison cadence, and records the timeout in the operator summary.
 - BlockFetch timeout-contract guards passed under WSL: `bash -n scripts/parallel_blockfetch_soak.sh scripts/compare_tip_to_haskell.sh`, focused helper self-tests, `python3 scripts/check-core-evidence-harnesses.py`, doc-status/stale-placement/strict-mirror scans, `cargo fmt --all -- --check`, `cargo check-all`, `cargo lint`, `cargo lint-no-default`, and `cargo test-all`.
 - BlockFetch timeout-contract security recheck passed under WSL: `cargo deny check advisories bans licenses sources` exited clean with only the known duplicate/unused-license warnings.
+- Gap BO fixture-writer hardening: `scripts/compare-gap-bo-tpraos-vrf.py` now supports `--write-fixture <path>` only in strict `--require-haskell --require-equal` closeout mode, writes a normalized target-slot JSON fixture only after Rust/Haskell evidence passes, and self-tests both artifact writing and refusal on failed evidence.
+- Gap BO fixture-writer guards passed under WSL: `python3 -m py_compile scripts/compare-gap-bo-tpraos-vrf.py scripts/check-core-evidence-harnesses.py`, `python3 scripts/compare-gap-bo-tpraos-vrf.py --self-test`, validation of the self-test fixture JSON, `python3 scripts/check-core-evidence-harnesses.py`, doc-status/stale-placement/strict-mirror scans, `cargo fmt --all -- --check`, `cargo check-all`, `cargo lint`, `cargo lint-no-default`, and `cargo test-all`.
+- Gap BO fixture-writer security recheck passed under WSL: `cargo deny check advisories bans licenses sources` exited clean with only the known duplicate/unused-license warnings.
