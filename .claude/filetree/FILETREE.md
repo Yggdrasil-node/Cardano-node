@@ -4,8 +4,8 @@
 > Update descriptions in the manifest, then run `python .claude/scripts/filetree.py accept-current`.
 
 - Schema version: 1
-- Generated at: 2026-06-01T12:04:36Z
-- Files described: 1758
+- Generated at: 2026-06-01T16:41:03Z
+- Files described: 1759
 
 ## Workspace
 
@@ -3259,6 +3259,8 @@
   - Project file at scripts/audit-strict-mirror.py.
 - `scripts/backup_db.sh`
   - Shell helper script for backup db workflows.
+- `scripts/check-core-closeout-artifacts.py`
+  - Strict WSL-only validator for final live Gap BO/BP/R178 fixtures and BlockFetch closeout soak summaries.
 - `scripts/check-core-evidence-harnesses.py`
   - Project file at scripts/check-core-evidence-harnesses.py.
 - `scripts/check-doc-status-headers.py`

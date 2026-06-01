@@ -29,6 +29,9 @@
     - [x] Validate durable preflight artifacts, including the BlockFetch self-test `summary.json` strict-mode invariants.
     - [x] Validate fresh Gap BO, Gap BP, and R178 self-test fixtures in the core preflight.
     - [x] Reject native Windows execution for the parity/shell preflight so it cannot use Windows-hosted Bash.
+  - [x] Add a strict final live closeout artifact gate.
+    - [x] Validate final Gap BO, Gap BP, R178, and BlockFetch Section 6.5 artifact locations under `target/core-closeout/`.
+    - [x] Make the gate reject missing artifacts, self-test fixtures, weak equality modes, wrong slots/trace IDs, and weak BlockFetch soaks.
   - [ ] Gap BO TPraos VRF replay and regression fixture.
     - [x] Add `YGG_DUMP_TPRAOS_VRF` / `YGG_DUMP_TPRAOS_VRF_FILE` evidence logging for overlay classification, delegate/key hashes, nonce state, TPraos seeds, VRF outputs, and proof hashes.
     - [x] Add preprod Gap BO `mkSeed` golden coverage for slots 429460 and 432000.
@@ -215,3 +218,7 @@
 - Core preflight environment guards passed: WSL `python3 -m py_compile scripts/check-core-evidence-harnesses.py` and `python3 scripts/check-core-evidence-harnesses.py` pass, while native Windows `python scripts\check-core-evidence-harnesses.py` exits before running shell helpers with the WSL/Linux requirement.
 - Core preflight environment full gates passed under WSL: `python3 scripts/check-doc-status-headers.py`, `python3 scripts/check-stale-placement.py`, `python3 scripts/check-strict-mirror.py`, `cargo fmt --all -- --check`, `cargo check-all`, `cargo lint`, `cargo lint-no-default`, and `cargo test-all`.
 - Core preflight environment security recheck passed under WSL: `cargo deny check advisories bans licenses sources` exited clean with only known duplicate/unused-license warnings, and `cargo tree -i aws-lc-sys`, `aws-lc-rs`, `native-tls`, and `openssl-sys` each reported no matching package IDs.
+- Core closeout artifact gate: added `scripts/check-core-closeout-artifacts.py` to validate the final live Gap BO/BP/R178 fixtures and BlockFetch preprod/mainnet soak summaries under `target/core-closeout/`; the normal gate currently fails as expected because those live artifacts have not been collected yet.
+- Core closeout artifact gate guards passed under WSL: `python3 -m py_compile scripts/check-core-closeout-artifacts.py`, `python3 scripts/check-core-closeout-artifacts.py --self-test`, and a controlled normal-mode run proving missing live artifacts are reported as failures.
+- Core closeout artifact gate full checks passed under WSL: `python3 scripts/check-core-evidence-harnesses.py`, `python3 scripts/check-doc-status-headers.py`, `python3 scripts/check-stale-placement.py`, `python3 scripts/check-strict-mirror.py`, `cargo fmt --all -- --check`, `cargo check-all`, `cargo lint`, `cargo lint-no-default`, and `cargo test-all`.
+- Core closeout artifact gate security recheck passed under WSL: `cargo deny check advisories bans licenses sources` exited clean with only known duplicate/unused-license warnings, and `cargo tree -i aws-lc-sys`, `aws-lc-rs`, `native-tls`, and `openssl-sys` each reported no matching package IDs.

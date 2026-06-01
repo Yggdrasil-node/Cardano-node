@@ -245,6 +245,35 @@ R178, or BlockFetch self-tests do not leave fresh passing fixtures/summaries:
 `target/r178-conway-lsq-self-test/fixture.json`, and
 `target/blockfetch-soak-self-test/summary.json`.
 
+### `check-core-closeout-artifacts.py` (final live evidence gate)
+
+Validates the final live closeout artifacts after operators have run the
+Haskell/reference comparisons and soaks. Unlike
+`check-core-evidence-harnesses.py`, this command is expected to fail until the
+live evidence is present. Run it under WSL/Linux only:
+
+```
+python3 scripts/check-core-closeout-artifacts.py
+```
+
+Default artifact locations under `target/core-closeout/`:
+
+- `gap-bo/fixture.json` from strict
+  `compare-gap-bo-tpraos-vrf.py --require-haskell --require-equal --target-slot 429460 --write-fixture`.
+- `gap-bp/fixture.json` from strict
+  `compare-gap-bp-traces.py --require-haskell --require-equal --expected-trace-id ... --write-fixture`.
+- `r178/fixture.json` from strict
+  `compare-conway-lsq.py --require-haskell --require-byte-equal|--require-normalized-equal --write-fixture`.
+- `blockfetch/preprod-two-peer/summary.json`,
+  `blockfetch/preprod-knob4/summary.json`, and
+  `blockfetch/mainnet-24h/summary.json` from strict
+  `parallel_blockfetch_soak.sh` runs with `REQUIRE_TIP_COMPARISON=1`.
+
+The gate rejects missing artifacts, synthetic self-test fixtures, weak equality
+mode, wrong Gap BO target slot, wrong Gap BP trace identity, incomplete Conway
+query coverage, and BlockFetch summaries that do not prove worker activation,
+progress, Haskell tip comparison, and the required run duration/knob.
+
 ### `compare_tip_to_haskell.sh` (tip comparison evidence)
 
 Compares Yggdrasil and upstream Haskell tips by required `slot` and `hash`.
