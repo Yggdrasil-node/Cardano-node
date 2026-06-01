@@ -253,9 +253,10 @@ registration/migration, optionally runs `compare_tip_to_haskell.sh`, and writes
 `$LOG_DIR/summary.txt`. Closeout runs must use `REQUIRE_TIP_COMPARISON=1`;
 that strict mode requires `HASKELL_SOCK`,
 `EXPECT_WORKERS >= MAX_CONCURRENT_BLOCK_FETCH_PEERS`, `REQUIRE_WORKERS=1`,
-`REQUIRE_PROGRESS=1`, `MIN_TIP_COMPARE_PASSES >= 2`, final workers at or above
-the expectation, no post-activation worker shortfall samples, and the minimum
-successful Haskell tip comparisons. Diagnostic captures may disable
+`REQUIRE_PROGRESS=1`, `MIN_TIP_COMPARE_PASSES >= 2`, and
+`TIP_QUERY_TIMEOUT_SECONDS < COMPARE_INTERVAL_S`, plus final workers at or
+above the expectation, no post-activation worker shortfall samples, and the
+minimum successful Haskell tip comparisons. Diagnostic captures may disable
 worker/progress assertions only when `REQUIRE_TIP_COMPARISON=0`, and cannot be
 cited as Section 6.5 sign-off evidence.
 

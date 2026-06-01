@@ -41,6 +41,7 @@ REQUIRE_PROGRESS="${REQUIRE_PROGRESS:-1}"
 RUN_SECONDS="${RUN_SECONDS:-600}"
 SAMPLE_INTERVAL_S="${SAMPLE_INTERVAL_S:-30}"
 COMPARE_INTERVAL_S="${COMPARE_INTERVAL_S:-900}"
+TIP_QUERY_TIMEOUT_SECONDS="${TIP_QUERY_TIMEOUT_SECONDS:-60}"
 START_DEADLINE_S="${START_DEADLINE_S:-90}"
 MIN_TIP_COMPARE_PASSES="${MIN_TIP_COMPARE_PASSES:-}"
 CARDANO_CLI="${CARDANO_CLI:-cardano-cli}"
@@ -103,6 +104,7 @@ Optional env:
   HASKELL_SOCK                      Optional cardano-node socket. Enables tip comparison.
   CARDANO_CLI                       Default: cardano-cli
   COMPARE_INTERVAL_S                Default: 900
+  TIP_QUERY_TIMEOUT_SECONDS          Default: 60; per-node timeout inherited by compare_tip_to_haskell.sh
   MIN_TIP_COMPARE_PASSES            Default: floor(RUN_SECONDS / COMPARE_INTERVAL_S), minimum 2 in sign-off mode
   REQUIRE_TIP_COMPARISON            Default: 0. Set 1 for sign-off runs that require Haskell comparison evidence.
   EXPECT_WORKERS                    Default: MAX_CONCURRENT_BLOCK_FETCH_PEERS
@@ -176,6 +178,13 @@ validate_signoff_contract() {
     echo "ERROR: REQUIRE_TIP_COMPARISON=1 but COMPARE_INTERVAL_S=$COMPARE_INTERVAL_S exceeds RUN_SECONDS=$RUN_SECONDS" >&2
     failed=2
   fi
+  if (( TIP_QUERY_TIMEOUT_SECONDS == 0 )); then
+    echo "ERROR: REQUIRE_TIP_COMPARISON=1 requires TIP_QUERY_TIMEOUT_SECONDS > 0" >&2
+    failed=2
+  elif (( TIP_QUERY_TIMEOUT_SECONDS >= COMPARE_INTERVAL_S )); then
+    echo "ERROR: REQUIRE_TIP_COMPARISON=1 requires TIP_QUERY_TIMEOUT_SECONDS < COMPARE_INTERVAL_S so a stale query cannot consume an entire comparison cadence" >&2
+    failed=2
+  fi
   if (( MIN_TIP_COMPARE_PASSES < 2 )); then
     echo "ERROR: REQUIRE_TIP_COMPARISON=1 requires MIN_TIP_COMPARE_PASSES >= 2" >&2
     failed=2
@@ -199,6 +208,7 @@ if [[ "${SELF_TEST:-0}" != "1" ]]; then
   require_uint "RUN_SECONDS" "$RUN_SECONDS"
   require_uint "SAMPLE_INTERVAL_S" "$SAMPLE_INTERVAL_S"
   require_uint "COMPARE_INTERVAL_S" "$COMPARE_INTERVAL_S"
+  require_uint "TIP_QUERY_TIMEOUT_SECONDS" "$TIP_QUERY_TIMEOUT_SECONDS"
   require_uint "START_DEADLINE_S" "$START_DEADLINE_S"
   require_bool01 "REQUIRE_TIP_COMPARISON" "$REQUIRE_TIP_COMPARISON"
 
@@ -214,6 +224,11 @@ if [[ "${SELF_TEST:-0}" != "1" ]]; then
 
   if (( COMPARE_INTERVAL_S == 0 )); then
     echo "ERROR: COMPARE_INTERVAL_S must be > 0" >&2
+    exit 2
+  fi
+
+  if (( TIP_QUERY_TIMEOUT_SECONDS == 0 )); then
+    echo "ERROR: TIP_QUERY_TIMEOUT_SECONDS must be > 0" >&2
     exit 2
   fi
 
@@ -414,6 +429,7 @@ EOF
     REQUIRE_PROGRESS=1
     RUN_SECONDS=600
     COMPARE_INTERVAL_S=60
+    TIP_QUERY_TIMEOUT_SECONDS=30
     MIN_TIP_COMPARE_PASSES=2
     validate_signoff_contract >/dev/null 2>&1
   ); then
@@ -429,6 +445,7 @@ EOF
     REQUIRE_PROGRESS=1
     RUN_SECONDS=600
     COMPARE_INTERVAL_S=60
+    TIP_QUERY_TIMEOUT_SECONDS=30
     MIN_TIP_COMPARE_PASSES=2
     validate_signoff_contract >/dev/null 2>&1
   ); then
@@ -444,6 +461,7 @@ EOF
     REQUIRE_PROGRESS=1
     RUN_SECONDS=600
     COMPARE_INTERVAL_S=60
+    TIP_QUERY_TIMEOUT_SECONDS=30
     MIN_TIP_COMPARE_PASSES=2
     validate_signoff_contract >/dev/null 2>&1
   ); then
@@ -459,6 +477,7 @@ EOF
     REQUIRE_PROGRESS=0
     RUN_SECONDS=600
     COMPARE_INTERVAL_S=60
+    TIP_QUERY_TIMEOUT_SECONDS=30
     MIN_TIP_COMPARE_PASSES=2
     validate_signoff_contract >/dev/null 2>&1
   ); then
@@ -474,6 +493,7 @@ EOF
     REQUIRE_PROGRESS=1
     RUN_SECONDS=600
     COMPARE_INTERVAL_S=60
+    TIP_QUERY_TIMEOUT_SECONDS=30
     MIN_TIP_COMPARE_PASSES=1
     validate_signoff_contract >/dev/null 2>&1
   ); then
@@ -489,10 +509,27 @@ EOF
     REQUIRE_PROGRESS=1
     RUN_SECONDS=600
     COMPARE_INTERVAL_S=400
+    TIP_QUERY_TIMEOUT_SECONDS=30
     MIN_TIP_COMPARE_PASSES=2
     validate_signoff_contract >/dev/null 2>&1
   ); then
     echo "ERROR: sign-off contract accepted too few comparison slots in the run window" >&2
+    return 3
+  fi
+  if (
+    REQUIRE_TIP_COMPARISON=1
+    MAX_CONCURRENT_BLOCK_FETCH_PEERS=2
+    HASKELL_SOCK=/tmp/cardano.sock
+    EXPECT_WORKERS=2
+    REQUIRE_WORKERS=1
+    REQUIRE_PROGRESS=1
+    RUN_SECONDS=600
+    COMPARE_INTERVAL_S=60
+    TIP_QUERY_TIMEOUT_SECONDS=60
+    MIN_TIP_COMPARE_PASSES=2
+    validate_signoff_contract >/dev/null 2>&1
+  ); then
+    echo "ERROR: sign-off contract accepted timeout equal to the comparison cadence" >&2
     return 3
   fi
   if ! (
@@ -504,6 +541,7 @@ EOF
     REQUIRE_PROGRESS=1
     RUN_SECONDS=600
     COMPARE_INTERVAL_S=60
+    TIP_QUERY_TIMEOUT_SECONDS=30
     MIN_TIP_COMPARE_PASSES=2
     validate_signoff_contract >/dev/null 2>&1
   ); then
@@ -529,11 +567,12 @@ run_tip_compare() {
     YGG_SOCK="$SOCKET_PATH" \
     HASKELL_SOCK="$HASKELL_SOCK" \
     NETWORK_MAGIC="$NETWORK_MAGIC" \
+    TIP_QUERY_TIMEOUT_SECONDS="$TIP_QUERY_TIMEOUT_SECONDS" \
     "$(dirname "${BASH_SOURCE[0]}")/compare_tip_to_haskell.sh" >"$logfile" 2>&1
 }
 
 echo "[info] parallel_blockfetch_soak: NETWORK=$NETWORK magic=$NETWORK_MAGIC knob=$MAX_CONCURRENT_BLOCK_FETCH_PEERS expected_workers=$EXPECT_WORKERS"
-echo "[info] RUN_SECONDS=$RUN_SECONDS SAMPLE_INTERVAL_S=$SAMPLE_INTERVAL_S COMPARE_INTERVAL_S=$COMPARE_INTERVAL_S MIN_TIP_COMPARE_PASSES=$MIN_TIP_COMPARE_PASSES"
+echo "[info] RUN_SECONDS=$RUN_SECONDS SAMPLE_INTERVAL_S=$SAMPLE_INTERVAL_S COMPARE_INTERVAL_S=$COMPARE_INTERVAL_S TIP_QUERY_TIMEOUT_SECONDS=$TIP_QUERY_TIMEOUT_SECONDS MIN_TIP_COMPARE_PASSES=$MIN_TIP_COMPARE_PASSES"
 echo "[info] DB_DIR=$DB_DIR SOCKET_PATH=$SOCKET_PATH METRICS_URL=$METRICS_URL"
 echo "[info] LOG_DIR=$LOG_DIR METRICS_DIR=$METRICS_DIR"
 if [[ -n "$HASKELL_SOCK" ]]; then
@@ -701,6 +740,7 @@ worker_shortfall_samples: $worker_shortfall_samples
 fetch_avg_per_batch: $fetch_avg
 apply_avg_per_batch: $apply_avg
 min_tip_compare_passes: $MIN_TIP_COMPARE_PASSES
+tip_query_timeout_seconds: $TIP_QUERY_TIMEOUT_SECONDS
 tip_compare_passes: $compare_passes
 node_log: $node_log
 metrics_dir: $METRICS_DIR

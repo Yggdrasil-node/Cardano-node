@@ -76,6 +76,7 @@
     - [x] Harden `scripts/compare_tip_to_haskell.sh` so missing/invalid JSON tip fields cannot compare as empty-string matches.
     - [x] Harden `scripts/parallel_blockfetch_soak.sh` strict mode to require expected workers through final sample, no post-activation worker shortfalls, and a minimum tip-comparison count.
     - [x] Bound `scripts/compare_tip_to_haskell.sh` Yggdrasil/Haskell tip queries so stale sockets cannot hang Section 6.5 sign-off.
+    - [x] Validate and record `TIP_QUERY_TIMEOUT_SECONDS` in `scripts/parallel_blockfetch_soak.sh` so sign-off cannot inherit invalid timeout config.
     - [ ] Run preprod Section 6.5 two-peer and knob=4 Haskell tip-comparison soaks.
     - [ ] Run mainnet Section 6.5 knob=2 24h Haskell tip-comparison soak.
 
@@ -181,3 +182,6 @@
 - BlockFetch tip-comparison timeout hardening: `scripts/compare_tip_to_haskell.sh` now bounds both Yggdrasil and Haskell tip queries with `TIP_QUERY_TIMEOUT_SECONDS` (default 60s), fails stale sockets as exit 2, and self-tests invalid timeout, successful stdout preservation, and timeout reporting.
 - BlockFetch timeout guards passed under WSL: `bash -n scripts/compare_tip_to_haskell.sh scripts/parallel_blockfetch_soak.sh`, focused helper self-tests, `python3 scripts/check-core-evidence-harnesses.py`, doc-status/stale-placement/strict-mirror scans, `cargo fmt --all -- --check`, `cargo check-all`, `cargo lint`, `cargo lint-no-default`, and `cargo test-all`.
 - BlockFetch timeout security recheck passed under WSL: `cargo deny check advisories bans licenses sources` exited clean with the known duplicate/unused-license warnings, and `cargo tree -i aws-lc-sys`, `aws-lc-rs`, `native-tls`, and `openssl-sys` each reported no matching package IDs.
+- BlockFetch soak timeout-contract hardening: `scripts/parallel_blockfetch_soak.sh` now validates `TIP_QUERY_TIMEOUT_SECONDS`, passes it explicitly to `compare_tip_to_haskell.sh`, rejects strict sign-off configs where the timeout is zero or consumes the whole comparison cadence, and records the timeout in the operator summary.
+- BlockFetch timeout-contract guards passed under WSL: `bash -n scripts/parallel_blockfetch_soak.sh scripts/compare_tip_to_haskell.sh`, focused helper self-tests, `python3 scripts/check-core-evidence-harnesses.py`, doc-status/stale-placement/strict-mirror scans, `cargo fmt --all -- --check`, `cargo check-all`, `cargo lint`, `cargo lint-no-default`, and `cargo test-all`.
+- BlockFetch timeout-contract security recheck passed under WSL: `cargo deny check advisories bans licenses sources` exited clean with only the known duplicate/unused-license warnings.

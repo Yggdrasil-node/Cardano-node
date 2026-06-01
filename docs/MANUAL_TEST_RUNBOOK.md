@@ -415,8 +415,9 @@ worker-channel failures, and writes a concise summary under
 fails before startup when no Haskell socket is configured or when the comparison
 interval cannot fit inside the run window. Each comparison inherits
 `TIP_QUERY_TIMEOUT_SECONDS` and defaults to a 60-second per-node timeout so a
-stale socket cannot hang sign-off. In that strict mode the harness also refuses
-`EXPECT_WORKERS < MAX_CONCURRENT_BLOCK_FETCH_PEERS`,
+stale socket cannot hang sign-off; strict mode rejects timeout values greater
+than or equal to the comparison cadence. In that strict mode the harness also
+refuses `EXPECT_WORKERS < MAX_CONCURRENT_BLOCK_FETCH_PEERS`,
 `REQUIRE_WORKERS=0`, `REQUIRE_PROGRESS=0`, `MIN_TIP_COMPARE_PASSES < 2`, final
 worker collapse, or post-activation worker shortfall samples, so a sign-off run
 cannot bypass the multi-worker activation, sustained-worker, progress, or
@@ -617,8 +618,9 @@ Record in §9:
 - Throughput delta knob=2 vs knob=1 (target: ≥ 1.0×, expected: 1.5–2×)
 - Harness strictness: `REQUIRE_TIP_COMPARISON=1`,
   `EXPECT_WORKERS >= MAX_CONCURRENT_BLOCK_FETCH_PEERS`, `REQUIRE_WORKERS=1`,
-  `REQUIRE_PROGRESS=1`, `MIN_TIP_COMPARE_PASSES >= 2`, no post-activation
-  worker shortfalls, and final workers still at or above expectation
+  `REQUIRE_PROGRESS=1`, `MIN_TIP_COMPARE_PASSES >= 2`,
+  `TIP_QUERY_TIMEOUT_SECONDS < COMPARE_INTERVAL_S`, no post-activation worker
+  shortfalls, and final workers still at or above expectation
 
 If all sign-offs pass, record the evidence in a new operational-run note and
 update the living parity docs to close the §6.5 operator gate. The shipped
