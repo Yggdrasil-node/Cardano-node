@@ -637,6 +637,23 @@ default helper and all three preset constructors stay in lockstep. Operators
 who need single-peer replay/audit behaviour should set
 `max_concurrent_block_fetch_peers = 1` explicitly.
 
+After Gap BO, Gap BP, R178, and all three BlockFetch soaks have produced strict
+fixtures/summaries, stage the final closeout bundle with:
+
+```sh
+python3 scripts/stage-core-closeout-artifacts.py \
+  --gap-bo-fixture /path/to/gap-bo/fixture.json \
+  --gap-bp-fixture /path/to/gap-bp/fixture.json \
+  --r178-fixture /path/to/r178/fixture.json \
+  --blockfetch-preprod-two-peer /path/to/preprod-two-peer/summary.json \
+  --blockfetch-preprod-knob4 /path/to/preprod-knob4/summary.json \
+  --blockfetch-mainnet-24h /path/to/mainnet-24h/summary.json
+```
+
+The staging helper copies into `target/core-closeout/`, writes
+`staging-summary.json`, and returns the same exit code as
+`scripts/check-core-closeout-artifacts.py`.
+
 ---
 
 ## 7. Metrics snapshot collection

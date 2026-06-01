@@ -125,6 +125,10 @@ def build_cases() -> list[Case]:
             "r178-conway-lsq",
             [python, "scripts/compare-conway-lsq.py", "--self-test"],
         ),
+        Case(
+            "core-closeout-staging",
+            [python, "scripts/stage-core-closeout-artifacts.py", "--self-test"],
+        ),
     ]
 
     bash = shutil.which("bash")

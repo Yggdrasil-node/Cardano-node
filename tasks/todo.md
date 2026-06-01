@@ -33,6 +33,7 @@
     - [x] Validate final Gap BO, Gap BP, R178, and BlockFetch Section 6.5 artifact locations under `target/core-closeout/`.
     - [x] Make the gate reject missing artifacts, self-test fixtures, weak equality modes, wrong slots/trace IDs, and weak BlockFetch soaks.
     - [x] Stamp and require `generated_at_utc` plus strict closeout-mode metadata on final Gap BO, Gap BP, and R178 fixtures.
+    - [x] Add a WSL-only staging helper that copies strict live artifacts into the canonical closeout layout and runs the final gate.
   - [ ] Gap BO TPraos VRF replay and regression fixture.
     - [x] Add `YGG_DUMP_TPRAOS_VRF` / `YGG_DUMP_TPRAOS_VRF_FILE` evidence logging for overlay classification, delegate/key hashes, nonce state, TPraos seeds, VRF outputs, and proof hashes.
     - [x] Add preprod Gap BO `mkSeed` golden coverage for slots 429460 and 432000.
@@ -228,3 +229,5 @@
 - Core closeout fixture metadata guards passed under WSL: `python3 -m py_compile` for the touched scripts, focused Gap BO/Gap BP/R178 self-tests, `python3 scripts/check-core-evidence-harnesses.py`, and `python3 scripts/check-core-closeout-artifacts.py --self-test`.
 - BlockFetch tip-log evidence hardening: `scripts/parallel_blockfetch_soak.sh` now records `tip_compare_logs`, `tip_compare_log_count`, and `tip_snapshots_dir` in `summary.json`, and both core evidence gates require those fields so Section 6.5 sign-off remains auditable after the soak.
 - BlockFetch tip-log evidence guards passed under WSL: `bash -n scripts/parallel_blockfetch_soak.sh`, `python3 -m py_compile` for the touched validators, `bash scripts/parallel_blockfetch_soak.sh --self-test`, `python3 scripts/check-core-evidence-harnesses.py`, and `python3 scripts/check-core-closeout-artifacts.py --self-test`.
+- Core closeout staging helper: added `scripts/stage-core-closeout-artifacts.py` so operators can stage the six strict live artifacts into `target/core-closeout/` without manual placement drift; the helper refuses accidental overwrite and returns the final validator result.
+- Core closeout staging helper guards passed under WSL: `python3 -m py_compile scripts/stage-core-closeout-artifacts.py`, `python3 scripts/stage-core-closeout-artifacts.py --self-test`, and `python3 scripts/check-core-evidence-harnesses.py` including the new staging helper self-test.

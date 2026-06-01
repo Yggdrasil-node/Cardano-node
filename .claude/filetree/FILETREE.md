@@ -4,8 +4,8 @@
 > Update descriptions in the manifest, then run `python .claude/scripts/filetree.py accept-current`.
 
 - Schema version: 1
-- Generated at: 2026-06-01T17:14:17Z
-- Files described: 1759
+- Generated at: 2026-06-01T17:32:43Z
+- Files described: 1760
 
 ## Workspace
 
@@ -3328,6 +3328,9 @@
 - `scripts/setup-reference.sh`
   - Recreates the metadata-free .reference-haskell-cardano-node/ source snapshot and optional Linux install.
   - Default CARDANO_NODE_VERSION is 11.0.1; --sources-only skips the Linux binary bundle.
+- `scripts/stage-core-closeout-artifacts.py`
+  - WSL-only helper that stages strict live core closeout artifacts into target/core-closeout/.
+  - Copies Gap BO/BP/R178 fixtures and BlockFetch summaries, then runs the final closeout validator.
 - `scripts/yggdrasil-node.service`
   - Project file at scripts/yggdrasil-node.service.
 

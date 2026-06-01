@@ -228,6 +228,7 @@ Runs the local self-tests for the current core evidence helpers:
 - `compare-gap-bp-builtin-costs.py --self-test`
 - `compare-gap-bp-traces.py --self-test`
 - `compare-conway-lsq.py --self-test`
+- `stage-core-closeout-artifacts.py --self-test`
 - `compare_tip_to_haskell.sh --self-test`
 - `parallel_blockfetch_soak.sh --self-test`
 
@@ -274,6 +275,25 @@ mode, wrong Gap BO target slot, wrong Gap BP trace identity, incomplete Conway
 query coverage, fixtures without `generated_at_utc` plus strict closeout-mode
 metadata, and BlockFetch summaries that do not prove worker activation,
 progress, Haskell tip comparison, and the required run duration/knob.
+
+### `stage-core-closeout-artifacts.py` (final live artifact staging)
+
+Stages already-produced strict closeout fixtures/summaries into the canonical
+`target/core-closeout/` layout and immediately invokes
+`check-core-closeout-artifacts.py`. It is WSL/Linux-only and does not produce
+evidence by itself; it prevents manual copy mistakes once the operator has the
+six required live artifacts. Required inputs are:
+
+- `--gap-bo-fixture`
+- `--gap-bp-fixture`
+- `--r178-fixture`
+- `--blockfetch-preprod-two-peer`
+- `--blockfetch-preprod-knob4`
+- `--blockfetch-mainnet-24h`
+
+The helper refuses to overwrite already-staged artifacts unless `--force` is
+supplied, writes `target/core-closeout/staging-summary.json`, and returns the
+final validator exit code.
 
 ### `compare_tip_to_haskell.sh` (tip comparison evidence)
 
