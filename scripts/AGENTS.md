@@ -293,7 +293,12 @@ six required live artifacts. Required inputs are:
 - `--blockfetch-preprod-knob4`
 - `--blockfetch-mainnet-24h`
 
-The helper refuses to overwrite already-staged artifacts unless `--force` is
+For BlockFetch summaries, the helper copies the referenced log directory,
+metrics directory, tip-snapshot directory, node log, summary text, and
+Haskell tip-comparison logs under each canonical
+`target/core-closeout/blockfetch/<run>/artifacts/` directory, then rewrites the
+staged summary paths to those durable copies before running the final gate. The
+helper refuses to overwrite already-staged artifacts unless `--force` is
 supplied, writes `target/core-closeout/staging-summary.json`, and returns the
 final validator exit code.
 

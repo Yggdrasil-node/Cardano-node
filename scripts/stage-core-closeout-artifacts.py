@@ -34,6 +34,13 @@ DESTINATIONS = {
     "blockfetch_preprod_knob4": Path("blockfetch/preprod-knob4/summary.json"),
     "blockfetch_mainnet_24h": Path("blockfetch/mainnet-24h/summary.json"),
 }
+BLOCKFETCH_LABELS = frozenset(
+    {
+        "blockfetch_preprod_two_peer",
+        "blockfetch_preprod_knob4",
+        "blockfetch_mainnet_24h",
+    }
+)
 
 
 def require_wsl_or_linux() -> None:
@@ -79,7 +86,124 @@ def validate_sources(sources: dict[str, Path]) -> None:
             raise SystemExit(f"{flag} does not point at a file: {path}")
 
 
-def stage_one(label: str, source: Path, root: Path, force: bool) -> dict[str, str]:
+def load_json_object(path: Path) -> dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"failed to parse {path}: {exc}") from exc
+    if not isinstance(value, dict):
+        raise SystemExit(f"{path} did not contain a JSON object")
+    return value
+
+
+def require_object(container: dict[str, Any], key: str, label: str) -> dict[str, Any]:
+    value = container.get(key)
+    if not isinstance(value, dict):
+        raise SystemExit(f"{label}.{key} must be an object")
+    return value
+
+
+def require_list(container: dict[str, Any], key: str, label: str) -> list[Any]:
+    value = container.get(key)
+    if not isinstance(value, list):
+        raise SystemExit(f"{label}.{key} must be a list")
+    return value
+
+
+def require_existing_path(value: Any, label: str, *, kind: str) -> Path:
+    if not isinstance(value, str) or not value:
+        raise SystemExit(f"{label} must be a non-empty path")
+    path = Path(value).expanduser()
+    if kind == "file" and not path.is_file():
+        raise SystemExit(f"{label} must exist as a file: {path}")
+    if kind == "dir" and not path.is_dir():
+        raise SystemExit(f"{label} must exist as a directory: {path}")
+    return path
+
+
+def ensure_inside_root(path: Path, root: Path) -> None:
+    root_resolved = root.resolve()
+    path_resolved = path.resolve()
+    if path_resolved == root_resolved or root_resolved not in path_resolved.parents:
+        raise SystemExit(f"refusing to replace path outside artifact root: {path}")
+
+
+def reset_directory(path: Path, root: Path, force: bool) -> None:
+    if path.exists():
+        if not force:
+            raise SystemExit(
+                f"destination already exists: {path}; pass --force to replace it"
+            )
+        ensure_inside_root(path, root)
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+    path.mkdir(parents=True, exist_ok=True)
+
+
+def maybe_mapped_path(source: Path, source_root: Path, staged_root: Path) -> Path | None:
+    try:
+        return staged_root / source.resolve().relative_to(source_root.resolve())
+    except ValueError:
+        return None
+
+
+def unique_file_path(directory: Path, source: Path, used: set[Path]) -> Path:
+    name = source.name or "artifact"
+    candidate = directory / name
+    if candidate not in used and not candidate.exists():
+        used.add(candidate)
+        return candidate
+    stem = source.stem or "artifact"
+    suffix = source.suffix
+    index = 1
+    while True:
+        candidate = directory / f"{stem}-{index}{suffix}"
+        if candidate not in used and not candidate.exists():
+            used.add(candidate)
+            return candidate
+        index += 1
+
+
+def stage_referenced_file(
+    source: Path,
+    source_log_dir: Path,
+    staged_log_dir: Path,
+    fallback_dir: Path,
+    used: set[Path],
+) -> Path:
+    mapped = maybe_mapped_path(source, source_log_dir, staged_log_dir)
+    if mapped is not None:
+        if not mapped.is_file():
+            raise SystemExit(f"staged file missing after log copy: {mapped}")
+        return mapped
+
+    fallback_dir.mkdir(parents=True, exist_ok=True)
+    destination = unique_file_path(fallback_dir, source, used)
+    shutil.copy2(source, destination)
+    return destination
+
+
+def stage_referenced_dir(
+    source: Path,
+    source_log_dir: Path,
+    staged_log_dir: Path,
+    fallback_dir: Path,
+) -> Path:
+    mapped = maybe_mapped_path(source, source_log_dir, staged_log_dir)
+    if mapped is not None:
+        if not mapped.is_dir():
+            raise SystemExit(f"staged directory missing after log copy: {mapped}")
+        return mapped
+
+    if fallback_dir.exists():
+        shutil.rmtree(fallback_dir)
+    shutil.copytree(source, fallback_dir)
+    return fallback_dir
+
+
+def stage_one(label: str, source: Path, root: Path, force: bool) -> dict[str, Any]:
     destination = root / DESTINATIONS[label]
     if destination.exists() and not force:
         raise SystemExit(
@@ -91,6 +215,132 @@ def stage_one(label: str, source: Path, root: Path, force: bool) -> dict[str, st
         "name": label,
         "source": str(source),
         "destination": str(destination),
+    }
+
+
+def stage_blockfetch(
+    label: str,
+    source: Path,
+    root: Path,
+    force: bool,
+) -> dict[str, Any]:
+    destination = root / DESTINATIONS[label]
+    if destination.exists() and not force:
+        raise SystemExit(
+            f"destination already exists: {destination}; pass --force to replace it"
+        )
+
+    summary = load_json_object(source)
+    artifacts = require_object(summary, "artifacts", label)
+    tip_comparison = require_object(summary, "tip_comparison", label)
+    tip_compare_logs = require_list(
+        tip_comparison,
+        "tip_compare_logs",
+        f"{label}.tip_comparison",
+    )
+
+    source_log_dir = require_existing_path(
+        artifacts.get("log_dir"),
+        f"{label}.artifacts.log_dir",
+        kind="dir",
+    )
+    source_metrics_dir = require_existing_path(
+        artifacts.get("metrics_dir"),
+        f"{label}.artifacts.metrics_dir",
+        kind="dir",
+    )
+    source_tip_snapshots_dir = require_existing_path(
+        artifacts.get("tip_snapshots_dir"),
+        f"{label}.artifacts.tip_snapshots_dir",
+        kind="dir",
+    )
+    source_node_log = require_existing_path(
+        artifacts.get("node_log"),
+        f"{label}.artifacts.node_log",
+        kind="file",
+    )
+    source_summary_txt = require_existing_path(
+        artifacts.get("summary_txt"),
+        f"{label}.artifacts.summary_txt",
+        kind="file",
+    )
+    source_tip_logs = [
+        require_existing_path(
+            log_path,
+            f"{label}.tip_comparison.tip_compare_logs[{index}]",
+            kind="file",
+        )
+        for index, log_path in enumerate(tip_compare_logs)
+    ]
+
+    artifact_root = destination.parent / "artifacts"
+    reset_directory(artifact_root, root, force)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    staged_log_dir = artifact_root / "logs"
+    staged_metrics_dir = artifact_root / "metrics"
+    shutil.copytree(source_log_dir, staged_log_dir)
+    shutil.copytree(source_metrics_dir, staged_metrics_dir)
+
+    fallback_files = artifact_root / "files"
+    used_fallback_files: set[Path] = set()
+    staged_node_log = stage_referenced_file(
+        source_node_log,
+        source_log_dir,
+        staged_log_dir,
+        fallback_files,
+        used_fallback_files,
+    )
+    staged_summary_txt = stage_referenced_file(
+        source_summary_txt,
+        source_log_dir,
+        staged_log_dir,
+        fallback_files,
+        used_fallback_files,
+    )
+    staged_tip_logs = [
+        stage_referenced_file(
+            source_log,
+            source_log_dir,
+            staged_log_dir,
+            fallback_files,
+            used_fallback_files,
+        )
+        for source_log in source_tip_logs
+    ]
+    staged_tip_snapshots_dir = stage_referenced_dir(
+        source_tip_snapshots_dir,
+        source_log_dir,
+        staged_log_dir,
+        artifact_root / "tip-snapshots",
+    )
+
+    original_artifacts = dict(artifacts)
+    original_tip_logs = list(tip_compare_logs)
+    artifacts.update(
+        {
+            "run_dir": str(artifact_root),
+            "log_dir": str(staged_log_dir),
+            "metrics_dir": str(staged_metrics_dir),
+            "node_log": str(staged_node_log),
+            "summary_txt": str(staged_summary_txt),
+            "tip_snapshots_dir": str(staged_tip_snapshots_dir),
+        }
+    )
+    tip_comparison["tip_compare_logs"] = [str(path) for path in staged_tip_logs]
+    summary["closeout_staging"] = {
+        "staged_at_utc": dt.datetime.now(dt.UTC).isoformat(),
+        "source_summary_json": str(source),
+        "staged_artifact_root": str(artifact_root),
+        "source_artifacts": original_artifacts,
+        "source_tip_compare_logs": original_tip_logs,
+    }
+    write_json(destination, summary)
+    return {
+        "name": label,
+        "source": str(source),
+        "destination": str(destination),
+        "artifact_root": str(artifact_root),
+        "staged_tip_compare_logs": len(staged_tip_logs),
     }
 
 
@@ -121,10 +371,12 @@ def stage_artifacts(
     force: bool,
 ) -> tuple[dict[str, Any], int]:
     validate_sources(sources)
-    staged = [
-        stage_one(label, sources[label], root, force)
-        for label in DESTINATIONS
-    ]
+    staged = []
+    for label in DESTINATIONS:
+        if label in BLOCKFETCH_LABELS:
+            staged.append(stage_blockfetch(label, sources[label], root, force))
+        else:
+            staged.append(stage_one(label, sources[label], root, force))
     final = run_final_check(root)
     summary = {
         "generated_at_utc": dt.datetime.now(dt.UTC).isoformat(),
@@ -186,10 +438,44 @@ def run_self_test() -> int:
         assert summary["status"] == "pass"
         assert (dst / "gap-bo" / "fixture.json").is_file()
         assert (dst / "staging-summary.json").is_file()
+        preprod_summary_path = dst / "blockfetch" / "preprod-two-peer" / "summary.json"
+        preprod_summary = load_json_object(preprod_summary_path)
+        staged_run_dir = Path(preprod_summary["artifacts"]["run_dir"])
+        assert staged_run_dir == dst / "blockfetch" / "preprod-two-peer" / "artifacts"
+        assert Path(preprod_summary["artifacts"]["log_dir"]).is_dir()
+        assert Path(preprod_summary["artifacts"]["metrics_dir"]).is_dir()
+        assert Path(preprod_summary["artifacts"]["node_log"]).is_file()
+        assert Path(preprod_summary["artifacts"]["summary_txt"]).is_file()
+        assert Path(preprod_summary["artifacts"]["tip_snapshots_dir"]).is_dir()
+        assert all(
+            Path(path).is_file()
+            for path in preprod_summary["tip_comparison"]["tip_compare_logs"]
+        )
+
+        shutil.rmtree(src / "_blockfetch-artifacts")
+        checks = validator.validate(dst)
+        assert all(check["status"] == "pass" for check in checks), checks
 
         expect_system_exit(
             lambda: stage_artifacts(sources, dst, force=False),
             "destination already exists",
+        )
+
+        missing_artifact_src = root / "missing-artifact-src"
+        validator.write_sample_artifacts(missing_artifact_src)
+        missing_sources = sample_sources(missing_artifact_src)
+        missing_summary_path = missing_sources["blockfetch_preprod_two_peer"]
+        missing_summary = load_json_object(missing_summary_path)
+        first_tip_log = Path(missing_summary["tip_comparison"]["tip_compare_logs"][0])
+        first_tip_log.unlink()
+        write_json(missing_summary_path, missing_summary)
+        expect_system_exit(
+            lambda: stage_artifacts(
+                missing_sources,
+                root / "missing-artifact-dst",
+                force=False,
+            ),
+            "tip_compare_logs[0] must exist as a file",
         )
 
         invalid_src = root / "invalid-src"

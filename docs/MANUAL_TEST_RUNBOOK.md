@@ -650,8 +650,10 @@ python3 scripts/stage-core-closeout-artifacts.py \
   --blockfetch-mainnet-24h /path/to/mainnet-24h/summary.json
 ```
 
-The staging helper copies into `target/core-closeout/`, writes
-`staging-summary.json`, and returns the same exit code as
+The staging helper copies into `target/core-closeout/`, preserves the
+BlockFetch log/metrics/tip-comparison artifacts under each staged BlockFetch
+run directory, rewrites the staged BlockFetch summary paths to those durable
+copies, writes `staging-summary.json`, and returns the same exit code as
 `scripts/check-core-closeout-artifacts.py`.
 
 ---
