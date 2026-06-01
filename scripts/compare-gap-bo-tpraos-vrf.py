@@ -233,8 +233,12 @@ def validate_required_args(
         fail("--slot must be non-negative")
     if args.target_slot < 0:
         fail("--target-slot must be non-negative")
-    if not args.self_test and args.require_equal and args.haskell_log is None:
-        fail("--haskell-log is required with --require-equal")
+    if not args.self_test and args.require_haskell and not args.require_equal:
+        fail("--require-haskell requires --require-equal")
+    if not args.self_test and args.require_equal and not args.require_haskell:
+        fail("--require-equal requires --require-haskell")
+    if not args.self_test and args.require_haskell and args.haskell_log is None:
+        fail("--haskell-log is required with --require-haskell")
 
 
 def parse_args() -> argparse.Namespace:
@@ -267,7 +271,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--require-equal",
         action="store_true",
-        help="Require --haskell-log and exit non-zero when compared fields differ",
+        help="Exit non-zero when required Haskell comparison fields differ",
+    )
+    parser.add_argument(
+        "--require-haskell",
+        action="store_true",
+        help="Require --haskell-log for Gap BO closeout mode",
     )
     args = parser.parse_args()
     validate_required_args(args, parser)
@@ -346,10 +355,39 @@ def run_self_test() -> int:
                 haskell_log=None,
                 slot=None,
                 target_slot=DEFAULT_GAP_BO_TARGET_SLOT,
+                require_haskell=True,
                 require_equal=True,
             )
         ),
-        "--haskell-log is required",
+        "--haskell-log is required with --require-haskell",
+    )
+    expect_system_exit(
+        lambda: validate_required_args(
+            argparse.Namespace(
+                self_test=False,
+                rust_log=Path("rust.log"),
+                haskell_log=Path("haskell.log"),
+                slot=None,
+                target_slot=DEFAULT_GAP_BO_TARGET_SLOT,
+                require_haskell=False,
+                require_equal=True,
+            )
+        ),
+        "--require-equal requires --require-haskell",
+    )
+    expect_system_exit(
+        lambda: validate_required_args(
+            argparse.Namespace(
+                self_test=False,
+                rust_log=Path("rust.log"),
+                haskell_log=Path("haskell.log"),
+                slot=None,
+                target_slot=DEFAULT_GAP_BO_TARGET_SLOT,
+                require_haskell=True,
+                require_equal=False,
+            )
+        ),
+        "--require-haskell requires --require-equal",
     )
     expect_system_exit(
         lambda: validate_required_args(
@@ -359,6 +397,7 @@ def run_self_test() -> int:
                 haskell_log=Path("haskell.log"),
                 slot=-1,
                 target_slot=DEFAULT_GAP_BO_TARGET_SLOT,
+                require_haskell=True,
                 require_equal=True,
             )
         ),
@@ -372,6 +411,7 @@ def run_self_test() -> int:
                 haskell_log=Path("haskell.log"),
                 slot=None,
                 target_slot=-1,
+                require_haskell=True,
                 require_equal=True,
             )
         ),
@@ -426,6 +466,8 @@ def main() -> int:
         "required_keys": required_evidence_keys(keys),
         "rust_log": str(args.rust_log),
         "haskell_log": str(args.haskell_log) if args.haskell_log else None,
+        "require_haskell": args.require_haskell,
+        "require_equal": args.require_equal,
         "slot": args.slot,
         "target_slot": target_slot,
         "results": results,

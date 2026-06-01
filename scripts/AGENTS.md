@@ -288,10 +288,12 @@ hashes, VRF key hashes, nonce debug values, canonical nonce hex values,
 `nonce_state_phase`, TPraos seeds, VRF outputs, and proof hashes. The
 comparator treats those fields as a schema: missing required metadata or any
 default comparison key fails before writing a misleading captured/pass result.
-`--require-equal` requires `--haskell-log` and also requires the configured
-Gap BO target slot to be present in the compared evidence (`--target-slot`,
-default `429460`), so a strict closeout cannot accidentally pass against a
-neighboring TPraos replay. Without Haskell evidence the helper is capture-only.
+Gap BO closeout runs must pass `--require-haskell --require-equal`; the helper
+enforces that pairing before reading logs. Closeout mode also requires
+`--haskell-log` and the configured Gap BO target slot to be present in the
+compared evidence (`--target-slot`, default `429460`), so a strict closeout
+cannot accidentally pass against a neighboring TPraos replay. Without
+`--require-haskell --require-equal` the helper is capture/diagnostic-only.
 
 ### `compare-gap-bp-cek-flushes.py` (Gap BP operator evidence)
 
