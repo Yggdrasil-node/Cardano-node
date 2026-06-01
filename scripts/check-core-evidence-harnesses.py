@@ -228,6 +228,18 @@ def require_non_empty_list(
     return value
 
 
+def require_list(
+    container: dict[str, Any],
+    key: str,
+    failures: list[str],
+) -> list[Any]:
+    value = container.get(key)
+    if not isinstance(value, list):
+        failures.append(f"{key} must be a list")
+        return []
+    return value
+
+
 def require_generated_at(container: dict[str, Any], failures: list[str]) -> None:
     value = container.get("generated_at_utc")
     if not isinstance(value, str) or not value:
@@ -497,6 +509,13 @@ def validate_blockfetch_self_test_summary(path: Path) -> dict[str, Any]:
             failures.append("tip_compare_passes must reach min_tip_compare_passes")
         if numeric(tip.get("min_tip_compare_passes")) < 2:
             failures.append("min_tip_compare_passes must be at least 2")
+        logs = require_list(tip, "tip_compare_logs", failures)
+        if numeric(tip.get("tip_compare_log_count")) < numeric(
+            tip.get("tip_compare_passes")
+        ):
+            failures.append("tip_compare_log_count must reach tip_compare_passes")
+        if len(logs) < numeric(tip.get("tip_compare_passes")):
+            failures.append("tip_compare_logs must include every passing comparison")
 
         if numeric(run.get("tip_query_timeout_seconds")) >= numeric(
             run.get("compare_interval_seconds")
@@ -508,6 +527,8 @@ def validate_blockfetch_self_test_summary(path: Path) -> dict[str, Any]:
         for key in ("run_dir", "log_dir", "metrics_dir", "node_log", "summary_txt"):
             if not artifacts.get(key):
                 failures.append(f"artifacts.{key} must be present")
+        if not artifacts.get("tip_snapshots_dir"):
+            failures.append("artifacts.tip_snapshots_dir must be present")
 
     return artifact_result("blockfetch-soak-summary", path, failures)
 

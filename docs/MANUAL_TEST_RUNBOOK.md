@@ -423,9 +423,12 @@ refuses `EXPECT_WORKERS < MAX_CONCURRENT_BLOCK_FETCH_PEERS`,
 worker collapse, or post-activation worker shortfall samples, so a sign-off run
 cannot bypass the multi-worker activation, sustained-worker, progress, or
 Haskell evidence checks. Preserve `summary.json` with the metrics snapshots and
-tip comparison logs for review. Use `RUN_SECONDS=86400` for the 24-hour soak
-steps and set `TOPOLOGY=/path/to/topology.json` when rehearsing with a custom
-multi-relay topology.
+tip comparison logs for review; the JSON records the exact
+`tip_comparison.tip_compare_logs` list, its count, and the
+`artifacts.tip_snapshots_dir` used for mismatch captures. Use
+`RUN_SECONDS=86400` for the 24-hour soak steps and set
+`TOPOLOGY=/path/to/topology.json` when rehearsing with a custom multi-relay
+topology.
 
 ### 6.5a Two-peer parity check (preprod)
 

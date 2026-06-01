@@ -462,6 +462,9 @@ def bool01(name: str) -> bool:
     return value(name, "0") == "1"
 
 
+log_dir = Path(value("SUMMARY_LOG_DIR"))
+tip_compare_logs = sorted(str(path) for path in log_dir.glob("tip-compare-*.log"))
+
 payload = {
     "schema_version": 1,
     "blocker": "blockfetch-section-6.5",
@@ -516,6 +519,8 @@ payload = {
         "require_tip_comparison": bool01("SUMMARY_REQUIRE_TIP_COMPARISON"),
         "min_tip_compare_passes": number("SUMMARY_MIN_TIP_COMPARE_PASSES"),
         "tip_compare_passes": number("SUMMARY_TIP_COMPARE_PASSES"),
+        "tip_compare_log_count": len(tip_compare_logs),
+        "tip_compare_logs": tip_compare_logs,
     },
     "artifacts": {
         "run_dir": value("SUMMARY_RUN_DIR"),
@@ -525,6 +530,7 @@ payload = {
         "node_log": value("SUMMARY_NODE_LOG"),
         "metrics_dir": value("SUMMARY_METRICS_DIR"),
         "summary_txt": value("SUMMARY_TEXT"),
+        "tip_snapshots_dir": str(log_dir / "tip-snapshots"),
     },
 }
 
@@ -735,6 +741,8 @@ EOF
   local apply_avg="2.000s"
   local compare_passes=2
   mkdir -p "$LOG_DIR" "$METRICS_DIR"
+  printf 'tip comparison 1\n' >"$LOG_DIR/tip-compare-20260501T000000Z.log"
+  printf 'tip comparison 2\n' >"$LOG_DIR/tip-compare-20260501T000100Z.log"
   write_summary_json "$summary_json_file"
   python3 - "$summary_json_file" <<'PY'
 import json
@@ -752,8 +760,11 @@ assert summary["worker_assertions"]["worker_shortfall_samples"] == 0
 assert summary["progress_assertions"]["current_slot"]["end"] == 429900
 assert summary["tip_comparison"]["require_tip_comparison"] is True
 assert summary["tip_comparison"]["tip_compare_passes"] == 2
+assert summary["tip_comparison"]["tip_compare_log_count"] == 2
+assert len(summary["tip_comparison"]["tip_compare_logs"]) == 2
 assert summary["run"]["tip_query_timeout_seconds"] == 30
 assert summary["artifacts"]["summary_txt"].endswith("summary.txt")
+assert summary["artifacts"]["tip_snapshots_dir"].endswith("tip-snapshots")
 PY
 
   echo "[ok] parallel_blockfetch_soak self-test passed"

@@ -88,6 +88,7 @@
     - [x] Bound `scripts/compare_tip_to_haskell.sh` Yggdrasil/Haskell tip queries so stale sockets cannot hang Section 6.5 sign-off.
     - [x] Validate and record `TIP_QUERY_TIMEOUT_SECONDS` in `scripts/parallel_blockfetch_soak.sh` so sign-off cannot inherit invalid timeout config.
     - [x] Add a machine-readable BlockFetch §6.5 `summary.json` so passing soaks preserve strict-mode assertions and artifact paths.
+    - [x] Record and require BlockFetch Haskell tip-comparison log paths in `summary.json`.
     - [ ] Run preprod Section 6.5 two-peer and knob=4 Haskell tip-comparison soaks.
     - [ ] Run mainnet Section 6.5 knob=2 24h Haskell tip-comparison soak.
 
@@ -225,3 +226,5 @@
 - Core closeout artifact gate security recheck passed under WSL: `cargo deny check advisories bans licenses sources` exited clean with only known duplicate/unused-license warnings, and `cargo tree -i aws-lc-sys`, `aws-lc-rs`, `native-tls`, and `openssl-sys` each reported no matching package IDs.
 - Core closeout fixture metadata hardening: Gap BO, Gap BP, and R178 fixture writers now stamp `generated_at_utc` plus strict closeout-mode flags, and both `scripts/check-core-evidence-harnesses.py` and `scripts/check-core-closeout-artifacts.py` require that metadata before accepting fixtures.
 - Core closeout fixture metadata guards passed under WSL: `python3 -m py_compile` for the touched scripts, focused Gap BO/Gap BP/R178 self-tests, `python3 scripts/check-core-evidence-harnesses.py`, and `python3 scripts/check-core-closeout-artifacts.py --self-test`.
+- BlockFetch tip-log evidence hardening: `scripts/parallel_blockfetch_soak.sh` now records `tip_compare_logs`, `tip_compare_log_count`, and `tip_snapshots_dir` in `summary.json`, and both core evidence gates require those fields so Section 6.5 sign-off remains auditable after the soak.
+- BlockFetch tip-log evidence guards passed under WSL: `bash -n scripts/parallel_blockfetch_soak.sh`, `python3 -m py_compile` for the touched validators, `bash scripts/parallel_blockfetch_soak.sh --self-test`, `python3 scripts/check-core-evidence-harnesses.py`, and `python3 scripts/check-core-closeout-artifacts.py --self-test`.

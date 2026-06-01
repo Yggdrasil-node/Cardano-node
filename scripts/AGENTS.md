@@ -297,6 +297,10 @@ Closeout runs must use `REQUIRE_TIP_COMPARISON=1`; that strict mode requires
 above the expectation, no post-activation worker shortfall samples, and the
 minimum successful Haskell tip comparisons. `summary.json` must be preserved
 with the metrics snapshots and tip comparison logs for sign-off review.
+`summary.json` records `tip_comparison.tip_compare_logs`,
+`tip_comparison.tip_compare_log_count`, and
+`artifacts.tip_snapshots_dir`; the core evidence gates require those fields
+whenever Haskell tip comparison is required.
 Diagnostic captures may disable worker/progress assertions only when
 `REQUIRE_TIP_COMPARISON=0`, and cannot be cited as Section 6.5 sign-off
 evidence.

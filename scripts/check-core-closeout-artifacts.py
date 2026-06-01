@@ -115,6 +115,20 @@ def require_non_empty_list(
     return value
 
 
+def require_list(
+    container: dict[str, Any],
+    key: str,
+    failures: list[str],
+    prefix: str = "",
+) -> list[Any]:
+    value = container.get(key)
+    label = f"{prefix}.{key}" if prefix else key
+    if not isinstance(value, list):
+        failures.append(f"{label} must be a list")
+        return []
+    return value
+
+
 def require_generated_at(
     container: dict[str, Any],
     failures: list[str],
@@ -460,6 +474,18 @@ def validate_blockfetch(
             tip.get("min_tip_compare_passes")
         ):
             failures.append("tip_compare_passes must reach min_tip_compare_passes")
+        logs = require_list(tip, "tip_compare_logs", failures, "tip_comparison")
+        if numeric(tip.get("tip_compare_log_count")) < numeric(
+            tip.get("tip_compare_passes")
+        ):
+            failures.append("tip_compare_log_count must reach tip_compare_passes")
+        if len(logs) < numeric(tip.get("tip_compare_passes")):
+            failures.append("tip_compare_logs must include every passing comparison")
+        for index, log_path in enumerate(logs):
+            if not isinstance(log_path, str) or not log_path:
+                failures.append(f"tip_compare_logs[{index}] must be a non-empty path")
+            elif "self-test" in log_path:
+                failures.append(f"tip_compare_logs[{index}] must not be self-test data")
 
         if numeric(run.get("run_seconds")) < min_run_seconds:
             failures.append(f"run_seconds must be at least {min_run_seconds}")
@@ -475,6 +501,13 @@ def validate_blockfetch(
                 failures.append(f"artifacts.{key} must be present")
             elif "self-test" in str(value):
                 failures.append(f"artifacts.{key} must not point at self-test data")
+        snapshots = artifacts.get("tip_snapshots_dir")
+        if not snapshots:
+            failures.append("artifacts.tip_snapshots_dir must be present")
+        elif "self-test" in str(snapshots):
+            failures.append(
+                "artifacts.tip_snapshots_dir must not point at self-test data"
+            )
 
     return artifact_result(name, path, failures)
 
@@ -716,6 +749,11 @@ def sample_blockfetch(
             "require_tip_comparison": True,
             "min_tip_compare_passes": 2,
             "tip_compare_passes": 2,
+            "tip_compare_log_count": 2,
+            "tip_compare_logs": [
+                f"/tmp/core-closeout/{network}-{knob}/logs/tip-compare-1.log",
+                f"/tmp/core-closeout/{network}-{knob}/logs/tip-compare-2.log",
+            ],
         },
         "run": {
             "run_seconds": run_seconds,
@@ -728,6 +766,7 @@ def sample_blockfetch(
             "metrics_dir": f"/tmp/core-closeout/{network}-{knob}/metrics",
             "node_log": f"/tmp/core-closeout/{network}-{knob}/node.log",
             "summary_txt": f"/tmp/core-closeout/{network}-{knob}/summary.txt",
+            "tip_snapshots_dir": f"/tmp/core-closeout/{network}-{knob}/logs/tip-snapshots",
         },
     }
 
