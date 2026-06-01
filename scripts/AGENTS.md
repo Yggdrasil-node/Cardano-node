@@ -235,7 +235,10 @@ This guard is intentionally local-only: it proves the harnesses still parse,
 compare, and report evidence before an operator starts live Haskell/socket
 comparisons, but it does not prove live parity by itself. It writes
 `target/core-evidence-harnesses/summary.json` with per-helper stdout/stderr,
-exit status, and duration for troubleshooting.
+exit status, duration, and artifact checks for troubleshooting. The preflight
+must fail if `parallel_blockfetch_soak.sh --self-test` does not leave a passing
+`target/blockfetch-soak-self-test/summary.json` with strict worker/progress/tip
+comparison invariants.
 
 ### `compare_tip_to_haskell.sh` (tip comparison evidence)
 
