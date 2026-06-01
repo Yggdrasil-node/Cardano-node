@@ -118,6 +118,8 @@ def build_cases(args: argparse.Namespace) -> list[Case]:
     ]
     if haskell_script_context is not None:
         script_context_cmd.extend(["--haskell-log", str(haskell_script_context)])
+    if args.require_haskell:
+        script_context_cmd.append("--require-haskell")
     if args.require_equal:
         script_context_cmd.append("--require-byte-equal")
 
@@ -131,6 +133,8 @@ def build_cases(args: argparse.Namespace) -> list[Case]:
     ]
     if haskell_cek_flushes is not None:
         cek_flushes_cmd.extend(["--haskell-log", str(haskell_cek_flushes)])
+    if args.require_haskell:
+        cek_flushes_cmd.append("--require-haskell")
     if args.require_equal:
         cek_flushes_cmd.append("--require-equal")
 
@@ -144,6 +148,8 @@ def build_cases(args: argparse.Namespace) -> list[Case]:
     ]
     if haskell_builtin_costs is not None:
         builtin_costs_cmd.extend(["--haskell-log", str(haskell_builtin_costs)])
+    if args.require_haskell:
+        builtin_costs_cmd.append("--require-haskell")
     if args.require_equal:
         builtin_costs_cmd.append("--require-equal")
 

@@ -158,10 +158,17 @@ def validate_required_args(
     args: argparse.Namespace,
     parser: argparse.ArgumentParser | None = None,
 ) -> None:
-    if not args.self_test and args.require_byte_equal and args.haskell_log is None:
+    def fail(message: str) -> None:
         if parser is not None:
-            parser.error("--haskell-log is required with --require-byte-equal")
-        raise SystemExit("--haskell-log is required with --require-byte-equal")
+            parser.error(message)
+        raise SystemExit(message)
+
+    if not args.self_test and args.require_haskell and not args.require_byte_equal:
+        fail("--require-haskell requires --require-byte-equal")
+    if not args.self_test and args.require_byte_equal and not args.require_haskell:
+        fail("--require-byte-equal requires --require-haskell")
+    if not args.self_test and args.require_haskell and args.haskell_log is None:
+        fail("--haskell-log is required with --require-haskell")
 
 
 def parse_args() -> argparse.Namespace:
@@ -192,7 +199,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--require-byte-equal",
         action="store_true",
-        help="Require --haskell-log and exit non-zero when CBOR bytes differ",
+        help="Exit non-zero when required Haskell CBOR bytes differ",
+    )
+    parser.add_argument(
+        "--require-haskell",
+        action="store_true",
+        help="Require --haskell-log for Gap BP ScriptContext closeout mode",
     )
     args = parser.parse_args()
     validate_required_args(args, parser)
@@ -245,10 +257,33 @@ def run_self_test() -> int:
             argparse.Namespace(
                 self_test=False,
                 require_byte_equal=True,
+                require_haskell=True,
                 haskell_log=None,
             )
         ),
-        "--haskell-log is required",
+        "--haskell-log is required with --require-haskell",
+    )
+    expect_system_exit(
+        lambda: validate_required_args(
+            argparse.Namespace(
+                self_test=False,
+                require_byte_equal=True,
+                require_haskell=False,
+                haskell_log=Path("haskell.log"),
+            )
+        ),
+        "--require-byte-equal requires --require-haskell",
+    )
+    expect_system_exit(
+        lambda: validate_required_args(
+            argparse.Namespace(
+                self_test=False,
+                require_byte_equal=False,
+                require_haskell=True,
+                haskell_log=Path("haskell.log"),
+            )
+        ),
+        "--require-haskell requires --require-byte-equal",
     )
 
     with tempfile.TemporaryDirectory(prefix="gap-bp-script-context-self-") as tmp:
@@ -292,6 +327,8 @@ def main() -> int:
     summary = compare(rust, haskell)
 
     summary_path = args.artifact_dir / "summary.json"
+    summary["require_haskell"] = args.require_haskell
+    summary["require_byte_equal"] = args.require_byte_equal
     summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
     print(f"wrote {summary_path}")
     print(f"rust: len={len(rust.cbor)} sha256={rust.sha256}")

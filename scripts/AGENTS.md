@@ -303,8 +303,9 @@ requires a `trace_id=<tx_hash>:<script_hash>:<version>` correlation key,
 compares flushes by ordinal index, and checks accumulated step count, per-kind
 counts, charged CPU/memory, before/after budget, and status. It is the
 lower-volume companion to per-step CEK traces for narrowing the preview V2 cost
-drift before a live upstream trace is available. `--require-equal` requires
-`--haskell-log`; without Haskell evidence the helper is capture-only.
+drift before a live upstream trace is available. Closeout runs must pass
+`--require-haskell --require-equal`; without that paired mode the helper is
+capture/diagnostic-only.
 
 ### `compare-gap-bp-builtin-costs.py` (Gap BP operator evidence)
 
@@ -314,8 +315,8 @@ helper requires the same `trace_id=<tx_hash>:<script_hash>:<version>`
 correlation key, compares builtins by ordinal index, and checks builtin name,
 argument memory sizes, charged CPU/memory, and remaining budget. It is the builtin-cost
 companion to the CEK flush helper for isolating the preview V2 cost drift.
-`--require-equal` requires `--haskell-log`; without Haskell evidence the helper
-is capture-only.
+Closeout runs must pass `--require-haskell --require-equal`; without that
+paired mode the helper is capture/diagnostic-only.
 
 ### `compare-gap-bp-traces.py` (Gap BP aggregate evidence)
 
@@ -337,10 +338,11 @@ match; noisy multi-script captures must be split before they can pass.
 Compares `YGG_DUMP_SCRIPT_CONTEXT[_FILE]` ScriptContext CBOR captures against a
 future Haskell replay dump for the same preview V2 transaction. It writes raw
 CBOR and hex artifacts plus the first divergent byte window. `--require-byte-equal`
-requires `--haskell-log`; without Haskell evidence the helper is capture-only.
-Rust captures now include `trace_id=<tx_hash>:<script_hash>:<version>` beside
-the existing `tx_hash`, `script_hash`, and `version` metadata so aggregate Gap
-BP evidence can be correlated without guessing.
+must be paired with `--require-haskell`; without that paired mode the helper is
+capture/diagnostic-only. Rust captures now include
+`trace_id=<tx_hash>:<script_hash>:<version>` beside the existing `tx_hash`,
+`script_hash`, and `version` metadata so aggregate Gap BP evidence can be
+correlated without guessing.
 
 ## Refresh helper
 

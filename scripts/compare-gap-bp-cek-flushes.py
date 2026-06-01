@@ -251,10 +251,35 @@ def run_self_test() -> int:
                 self_test=False,
                 rust_log=Path("rust.log"),
                 haskell_log=None,
+                require_haskell=True,
                 require_equal=True,
             )
         ),
-        "--haskell-log is required",
+        "--haskell-log is required with --require-haskell",
+    )
+    expect_system_exit(
+        lambda: validate_required_args(
+            argparse.Namespace(
+                self_test=False,
+                rust_log=Path("rust.log"),
+                haskell_log=Path("haskell.log"),
+                require_haskell=False,
+                require_equal=True,
+            )
+        ),
+        "--require-equal requires --require-haskell",
+    )
+    expect_system_exit(
+        lambda: validate_required_args(
+            argparse.Namespace(
+                self_test=False,
+                rust_log=Path("rust.log"),
+                haskell_log=Path("haskell.log"),
+                require_haskell=True,
+                require_equal=False,
+            )
+        ),
+        "--require-haskell requires --require-equal",
     )
     _, failed = compare_flushes([rust], [], DEFAULT_COMPARE_KEYS)
     assert failed
@@ -279,8 +304,12 @@ def validate_required_args(
 
     if not args.self_test and args.rust_log is None:
         fail("--rust-log is required unless --self-test is set")
-    if not args.self_test and args.require_equal and args.haskell_log is None:
-        fail("--haskell-log is required with --require-equal")
+    if not args.self_test and args.require_haskell and not args.require_equal:
+        fail("--require-haskell requires --require-equal")
+    if not args.self_test and args.require_equal and not args.require_haskell:
+        fail("--require-equal requires --require-haskell")
+    if not args.self_test and args.require_haskell and args.haskell_log is None:
+        fail("--haskell-log is required with --require-haskell")
 
 
 def parse_args() -> argparse.Namespace:
@@ -303,7 +332,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--require-equal",
         action="store_true",
-        help="Require --haskell-log and exit non-zero when flush fields differ",
+        help="Exit non-zero when required Haskell flush fields differ",
+    )
+    parser.add_argument(
+        "--require-haskell",
+        action="store_true",
+        help="Require --haskell-log for Gap BP CEK flush closeout mode",
     )
     args = parser.parse_args()
     validate_required_args(args, parser)
@@ -323,6 +357,8 @@ def main() -> int:
         "compare_keys": keys,
         "rust_log": str(args.rust_log),
         "haskell_log": str(args.haskell_log) if args.haskell_log else None,
+        "require_haskell": args.require_haskell,
+        "require_equal": args.require_equal,
         "results": results,
     }
     summary_path = args.artifact_dir / "summary.json"
