@@ -265,8 +265,12 @@ Drives the upstream `cardano-cli conway query` surface against a Yggdrasil
 socket and, optionally, a Haskell reference socket. The harness records the
 upstream `cardano-cli --version`, writes both UTF-8 convenience logs and raw
 binary stdout/stderr artifacts for every query, and includes raw-byte diff
-windows in `summary.json` when Haskell output is supplied. R178 closeout runs
-must pass `--require-haskell` plus either `--require-byte-equal` or
+windows in `summary.json` when Haskell output is supplied. Live runs preflight
+that supplied socket paths exist and are Unix domain sockets, and each
+`cardano-cli` query is bounded by `--timeout-seconds` (default 60; also
+configurable through `CARDANO_CLI_TIMEOUT_SECONDS`) so stale sockets fail
+loudly instead of hanging an operator closeout. R178 closeout runs must pass
+`--require-haskell` plus either `--require-byte-equal` or
 `--require-normalized-equal`; otherwise the helper is only proving that the
 Yggdrasil socket is decodable by upstream `cardano-cli`. The self-test pins the
 HFC `QueryIfCurrent` envelope facts used by R178: match is a one-element `Right`

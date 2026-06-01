@@ -59,6 +59,7 @@
     - [x] Harden `scripts/compare-conway-lsq.py` to write raw binary artifacts, include raw-byte diff windows, and record the upstream `cardano-cli --version` used for evidence.
     - [x] Require `--haskell-socket` when `scripts/compare-conway-lsq.py --require-haskell` is used for R178 closeout evidence.
     - [x] Make `--require-byte-equal` / `--require-normalized-equal` fail unless `--haskell-socket` is supplied.
+    - [x] Add live socket preflight and bounded `cardano-cli` query timeouts so stale R178 closeout sockets fail loudly.
     - [ ] Run byte-for-byte `cardano-cli` Conway LSQ comparison against the installed upstream 11.0.1 reference binary.
   - [ ] Section 6.5 BlockFetch worker activation and Haskell tip-comparison soak.
     - [x] Migrate direct bootstrap BlockFetch handles into the shared worker pool when `max_concurrent_block_fetch_peers > 1`.
@@ -155,3 +156,5 @@
 - Final WSL Rust gates for the correlation slice passed: `cargo fmt --all -- --check`, `cargo check-all`, `cargo lint`, `cargo lint-no-default`, and `cargo test-all`.
 - Final WSL focused suites passed: `cargo test -p yggdrasil-plutus --lib` (448 tests) and `cargo test -p yggdrasil-node-plutus-eval --lib` (188 tests).
 - Final WSL parity/status/security gates passed: `scripts/check-reference-artifacts.py`, stale-placement self-test/live check, doc-status self-test/live check, fixture manifest, parity matrix, strict mirror, `scripts/check-core-evidence-harnesses.py`, `cargo deny check advisories bans licenses sources`, and absence checks for `aws-lc-sys`, `aws-lc-rs`, `native-tls`, and `openssl-sys`.
+- R178 live-closeout hardening: `scripts/compare-conway-lsq.py` now rejects missing/non-socket Yggdrasil or Haskell socket paths before invoking `cardano-cli`, bounds each query with `--timeout-seconds`, records timeout metadata in `summary.json`, and self-tests stale socket and timeout rejection.
+- R178 live-closeout hardening guards passed under WSL: `python3 -m py_compile scripts/compare-conway-lsq.py scripts/check-core-evidence-harnesses.py`, `python3 scripts/compare-conway-lsq.py --self-test`, `python3 scripts/check-core-evidence-harnesses.py`, `python3 scripts/check-stale-placement.py`, `cargo fmt --all -- --check`, `cargo check-all`, `cargo lint`, `cargo lint-no-default`, and `cargo test-all`.
