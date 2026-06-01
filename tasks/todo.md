@@ -32,6 +32,7 @@
   - [x] Add a strict final live closeout artifact gate.
     - [x] Validate final Gap BO, Gap BP, R178, and BlockFetch Section 6.5 artifact locations under `target/core-closeout/`.
     - [x] Make the gate reject missing artifacts, self-test fixtures, weak equality modes, wrong slots/trace IDs, and weak BlockFetch soaks.
+    - [x] Stamp and require `generated_at_utc` plus strict closeout-mode metadata on final Gap BO, Gap BP, and R178 fixtures.
   - [ ] Gap BO TPraos VRF replay and regression fixture.
     - [x] Add `YGG_DUMP_TPRAOS_VRF` / `YGG_DUMP_TPRAOS_VRF_FILE` evidence logging for overlay classification, delegate/key hashes, nonce state, TPraos seeds, VRF outputs, and proof hashes.
     - [x] Add preprod Gap BO `mkSeed` golden coverage for slots 429460 and 432000.
@@ -222,3 +223,5 @@
 - Core closeout artifact gate guards passed under WSL: `python3 -m py_compile scripts/check-core-closeout-artifacts.py`, `python3 scripts/check-core-closeout-artifacts.py --self-test`, and a controlled normal-mode run proving missing live artifacts are reported as failures.
 - Core closeout artifact gate full checks passed under WSL: `python3 scripts/check-core-evidence-harnesses.py`, `python3 scripts/check-doc-status-headers.py`, `python3 scripts/check-stale-placement.py`, `python3 scripts/check-strict-mirror.py`, `cargo fmt --all -- --check`, `cargo check-all`, `cargo lint`, `cargo lint-no-default`, and `cargo test-all`.
 - Core closeout artifact gate security recheck passed under WSL: `cargo deny check advisories bans licenses sources` exited clean with only known duplicate/unused-license warnings, and `cargo tree -i aws-lc-sys`, `aws-lc-rs`, `native-tls`, and `openssl-sys` each reported no matching package IDs.
+- Core closeout fixture metadata hardening: Gap BO, Gap BP, and R178 fixture writers now stamp `generated_at_utc` plus strict closeout-mode flags, and both `scripts/check-core-evidence-harnesses.py` and `scripts/check-core-closeout-artifacts.py` require that metadata before accepting fixtures.
+- Core closeout fixture metadata guards passed under WSL: `python3 -m py_compile` for the touched scripts, focused Gap BO/Gap BP/R178 self-tests, `python3 scripts/check-core-evidence-harnesses.py`, and `python3 scripts/check-core-closeout-artifacts.py --self-test`.

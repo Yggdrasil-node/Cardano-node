@@ -228,6 +228,31 @@ def require_non_empty_list(
     return value
 
 
+def require_generated_at(container: dict[str, Any], failures: list[str]) -> None:
+    value = container.get("generated_at_utc")
+    if not isinstance(value, str) or not value:
+        failures.append("generated_at_utc must be present")
+        return
+    try:
+        dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        failures.append("generated_at_utc must be ISO-8601 parseable")
+
+
+def require_strict_closeout_mode(
+    container: dict[str, Any],
+    failures: list[str],
+    *,
+    require_equal_key: str = "require_equal",
+) -> dict[str, Any]:
+    mode = require_object(container, "closeout_mode", failures)
+    if mode.get("require_haskell") is not True:
+        failures.append("closeout_mode.require_haskell must be true")
+    if mode.get(require_equal_key) is not True:
+        failures.append(f"closeout_mode.{require_equal_key} must be true")
+    return mode
+
+
 def validate_gap_bo_fixture(path: Path) -> dict[str, Any]:
     failures: list[str] = []
     fixture = load_json_object(path, failures)
@@ -236,6 +261,8 @@ def validate_gap_bo_fixture(path: Path) -> dict[str, Any]:
             failures.append("schema_version must be 1")
         if fixture.get("blocker") != "gap-bo-tpraos-vrf":
             failures.append("blocker must be gap-bo-tpraos-vrf")
+        require_generated_at(fixture, failures)
+        require_strict_closeout_mode(fixture, failures)
         if fixture.get("status") != "pass":
             failures.append("status must be pass")
         if fixture.get("target_slot") != 429460:
@@ -272,6 +299,8 @@ def validate_gap_bp_fixture(path: Path) -> dict[str, Any]:
             failures.append("schema_version must be 1")
         if fixture.get("blocker") != "gap-bp-plutus-v2-traces":
             failures.append("blocker must be gap-bp-plutus-v2-traces")
+        require_generated_at(fixture, failures)
+        require_strict_closeout_mode(fixture, failures)
         if fixture.get("status") != "pass":
             failures.append("status must be pass")
         expected_trace_id = fixture.get("expected_trace_id")
@@ -322,6 +351,23 @@ def validate_r178_fixture(path: Path) -> dict[str, Any]:
             failures.append("schema_version must be 1")
         if fixture.get("blocker") != "r178-conway-lsq":
             failures.append("blocker must be r178-conway-lsq")
+        require_generated_at(fixture, failures)
+        mode = require_object(fixture, "closeout_mode", failures)
+        if mode.get("require_haskell") is not True:
+            failures.append("closeout_mode.require_haskell must be true")
+        if not (
+            mode.get("require_byte_equal") is True
+            or mode.get("require_normalized_equal") is True
+        ):
+            failures.append("closeout_mode must require byte or normalized equality")
+        if mode.get("require_byte_equal") is not fixture.get("require_byte_equal"):
+            failures.append("closeout_mode.require_byte_equal must match fixture")
+        if mode.get("require_normalized_equal") is not fixture.get(
+            "require_normalized_equal"
+        ):
+            failures.append(
+                "closeout_mode.require_normalized_equal must match fixture"
+            )
         if fixture.get("status") != "pass":
             failures.append("status must be pass")
         if not (
@@ -388,6 +434,7 @@ def validate_blockfetch_self_test_summary(path: Path) -> dict[str, Any]:
             failures.append("schema_version must be 1")
         if summary.get("blocker") != "blockfetch-section-6.5":
             failures.append("blocker must be blockfetch-section-6.5")
+        require_generated_at(summary, failures)
         if summary.get("status") != "pass":
             failures.append("status must be pass")
 

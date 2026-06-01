@@ -11,6 +11,7 @@ state, VRF seeds, VRF outputs, and proof hashes by slot.
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import json
 import re
 import sys
@@ -242,6 +243,11 @@ def build_fixture(
     return {
         "schema_version": 1,
         "blocker": "gap-bo-tpraos-vrf",
+        "generated_at_utc": dt.datetime.now(dt.UTC).isoformat(),
+        "closeout_mode": {
+            "require_haskell": True,
+            "require_equal": True,
+        },
         "target_slot": result["slot"],
         "status": result["status"],
         "compare_keys": list(keys),
@@ -520,6 +526,11 @@ def run_self_test() -> int:
     )
     assert fixture["schema_version"] == 1
     assert fixture["blocker"] == "gap-bo-tpraos-vrf"
+    assert fixture["generated_at_utc"]
+    assert fixture["closeout_mode"] == {
+        "require_haskell": True,
+        "require_equal": True,
+    }
     assert fixture["target_slot"] == DEFAULT_GAP_BO_TARGET_SLOT
     assert fixture["rust_fields"]["leader_seed"] == "dd"
     assert fixture["haskell_fields"]["leader_seed"] == "dd"
@@ -566,6 +577,7 @@ def main() -> int:
         failed = True
     fixture_path = args.write_fixture
     summary = {
+        "generated_at_utc": dt.datetime.now(dt.UTC).isoformat(),
         "compare_keys": keys,
         "required_keys": required_evidence_keys(keys),
         "rust_log": str(args.rust_log),

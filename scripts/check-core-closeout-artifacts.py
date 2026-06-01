@@ -115,6 +115,36 @@ def require_non_empty_list(
     return value
 
 
+def require_generated_at(
+    container: dict[str, Any],
+    failures: list[str],
+    prefix: str = "",
+) -> None:
+    value = container.get("generated_at_utc")
+    label = f"{prefix}.generated_at_utc" if prefix else "generated_at_utc"
+    if not isinstance(value, str) or not value:
+        failures.append(f"{label} must be present")
+        return
+    try:
+        dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        failures.append(f"{label} must be ISO-8601 parseable")
+
+
+def require_strict_closeout_mode(
+    container: dict[str, Any],
+    failures: list[str],
+    *,
+    require_equal_key: str = "require_equal",
+) -> dict[str, Any]:
+    mode = require_object(container, "closeout_mode", failures)
+    if mode.get("require_haskell") is not True:
+        failures.append("closeout_mode.require_haskell must be true")
+    if mode.get(require_equal_key) is not True:
+        failures.append(f"closeout_mode.{require_equal_key} must be true")
+    return mode
+
+
 def numeric(value: Any, default: float = 0) -> float:
     if value is None:
         return default
@@ -161,6 +191,8 @@ def validate_gap_bo(path: Path) -> dict[str, Any]:
             failures.append("schema_version must be 1")
         if fixture.get("blocker") != "gap-bo-tpraos-vrf":
             failures.append("blocker must be gap-bo-tpraos-vrf")
+        require_generated_at(fixture, failures)
+        require_strict_closeout_mode(fixture, failures)
         if fixture.get("status") != "pass":
             failures.append("status must be pass")
         if fixture.get("target_slot") != GAP_BO_SLOT:
@@ -208,6 +240,8 @@ def validate_gap_bp(path: Path) -> dict[str, Any]:
             failures.append("schema_version must be 1")
         if fixture.get("blocker") != "gap-bp-plutus-v2-traces":
             failures.append("blocker must be gap-bp-plutus-v2-traces")
+        require_generated_at(fixture, failures)
+        require_strict_closeout_mode(fixture, failures)
         if fixture.get("status") != "pass":
             failures.append("status must be pass")
         expected_trace_id = fixture.get("expected_trace_id")
@@ -285,12 +319,22 @@ def validate_r178(path: Path) -> dict[str, Any]:
             failures.append("schema_version must be 1")
         if fixture.get("blocker") != "r178-conway-lsq":
             failures.append("blocker must be r178-conway-lsq")
+        require_generated_at(fixture, failures)
+        mode = require_object(fixture, "closeout_mode", failures)
         if fixture.get("status") != "pass":
             failures.append("status must be pass")
         byte_required = fixture.get("require_byte_equal") is True
         normalized_required = fixture.get("require_normalized_equal") is True
         if not byte_required and not normalized_required:
             failures.append("byte or normalized equality must be required")
+        if mode.get("require_haskell") is not True:
+            failures.append("closeout_mode.require_haskell must be true")
+        if mode.get("require_byte_equal") is not byte_required:
+            failures.append("closeout_mode.require_byte_equal must match fixture")
+        if mode.get("require_normalized_equal") is not normalized_required:
+            failures.append(
+                "closeout_mode.require_normalized_equal must match fixture"
+            )
         if not fixture.get("network_args"):
             failures.append("network_args must be present")
 
@@ -365,6 +409,7 @@ def validate_blockfetch(
             failures.append("schema_version must be 1")
         if summary.get("blocker") != "blockfetch-section-6.5":
             failures.append("blocker must be blockfetch-section-6.5")
+        require_generated_at(summary, failures)
         if summary.get("status") != "pass":
             failures.append("status must be pass")
         if summary.get("network") != expected_network:
@@ -499,6 +544,10 @@ def write_json(path: Path, value: dict[str, Any]) -> None:
     path.write_text(json.dumps(value, indent=2, sort_keys=True), encoding="utf-8")
 
 
+def generated_at() -> str:
+    return dt.datetime.now(dt.UTC).isoformat()
+
+
 def live_hex(seed: str) -> str:
     return (seed * 64)[:64]
 
@@ -529,6 +578,11 @@ def sample_gap_bo() -> dict[str, Any]:
     return {
         "schema_version": 1,
         "blocker": "gap-bo-tpraos-vrf",
+        "generated_at_utc": generated_at(),
+        "closeout_mode": {
+            "require_haskell": True,
+            "require_equal": True,
+        },
         "target_slot": GAP_BO_SLOT,
         "status": "pass",
         "compare_keys": list(GAP_BO_MIN_COMPARE_KEYS),
@@ -553,6 +607,11 @@ def sample_gap_bp() -> dict[str, Any]:
     return {
         "schema_version": 1,
         "blocker": "gap-bp-plutus-v2-traces",
+        "generated_at_utc": generated_at(),
+        "closeout_mode": {
+            "require_haskell": True,
+            "require_equal": True,
+        },
         "status": "pass",
         "expected_trace_id": trace_id,
         "trace_identity": {
@@ -605,6 +664,12 @@ def sample_r178() -> dict[str, Any]:
     return {
         "schema_version": 1,
         "blocker": "r178-conway-lsq",
+        "generated_at_utc": generated_at(),
+        "closeout_mode": {
+            "require_haskell": True,
+            "require_byte_equal": False,
+            "require_normalized_equal": True,
+        },
         "status": "pass",
         "network_args": ["--testnet-magic", "1"],
         "require_byte_equal": False,
@@ -629,6 +694,7 @@ def sample_blockfetch(
     return {
         "schema_version": 1,
         "blocker": "blockfetch-section-6.5",
+        "generated_at_utc": generated_at(),
         "status": "pass",
         "network": network,
         "network_magic": magic,

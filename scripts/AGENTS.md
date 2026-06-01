@@ -271,7 +271,8 @@ Default artifact locations under `target/core-closeout/`:
 
 The gate rejects missing artifacts, synthetic self-test fixtures, weak equality
 mode, wrong Gap BO target slot, wrong Gap BP trace identity, incomplete Conway
-query coverage, and BlockFetch summaries that do not prove worker activation,
+query coverage, fixtures without `generated_at_utc` plus strict closeout-mode
+metadata, and BlockFetch summaries that do not prove worker activation,
 progress, Haskell tip comparison, and the required run duration/knob.
 
 ### `compare_tip_to_haskell.sh` (tip comparison evidence)

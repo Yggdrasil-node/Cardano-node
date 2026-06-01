@@ -231,6 +231,11 @@ def build_fixture(summary: dict[str, Any]) -> dict[str, Any]:
     return {
         "schema_version": 1,
         "blocker": "gap-bp-plutus-v2-traces",
+        "generated_at_utc": summary["generated_at_utc"],
+        "closeout_mode": {
+            "require_haskell": summary["require_haskell"],
+            "require_equal": summary["require_equal"],
+        },
         "status": summary["status"],
         "expected_trace_id": expected_trace_id,
         "trace_identity": summary["trace_identity"],
@@ -426,6 +431,11 @@ def run_self_test() -> int:
         fixture = json.loads(equal_args.write_fixture.read_text(encoding="utf-8"))
         assert fixture["schema_version"] == 1
         assert fixture["blocker"] == "gap-bp-plutus-v2-traces"
+        assert fixture["generated_at_utc"]
+        assert fixture["closeout_mode"] == {
+            "require_haskell": True,
+            "require_equal": True,
+        }
         assert fixture["expected_trace_id"] == "aa:bb:V2"
         assert fixture["script_context"]["comparison"]["byte_equal"] is True
         assert [result["status"] for result in fixture["cek_flushes"]["results"]] == [

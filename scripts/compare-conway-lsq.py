@@ -14,6 +14,7 @@ Haskell equality closeout mode to persist a normalized regression fixture.
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import hashlib
 import json
 import os
@@ -476,6 +477,12 @@ def build_fixture(summary: dict[str, Any]) -> dict[str, Any]:
     return {
         "schema_version": 1,
         "blocker": "r178-conway-lsq",
+        "generated_at_utc": summary["generated_at_utc"],
+        "closeout_mode": {
+            "require_haskell": summary["require_haskell"],
+            "require_byte_equal": summary["require_byte_equal"],
+            "require_normalized_equal": summary["require_normalized_equal"],
+        },
         "status": summary["status"],
         "network_args": summary["network_args"],
         "require_byte_equal": summary["require_byte_equal"],
@@ -682,6 +689,7 @@ def run_self_test() -> int:
         "haskell": json_ready_result(haskell_same_json),
     }
     fixture_summary = {
+        "generated_at_utc": dt.datetime.now(dt.UTC).isoformat(),
         "status": "pass",
         "cardano_cli_version": {
             "command": ["cardano-cli", "--version"],
@@ -700,6 +708,12 @@ def run_self_test() -> int:
     fixture = build_fixture(fixture_summary)
     assert fixture["schema_version"] == 1
     assert fixture["blocker"] == "r178-conway-lsq"
+    assert fixture["generated_at_utc"]
+    assert fixture["closeout_mode"] == {
+        "require_haskell": True,
+        "require_byte_equal": False,
+        "require_normalized_equal": True,
+    }
     assert sorted(fixture["queries"]) == sorted(DEFAULT_QUERIES)
     assert fixture["queries"]["gov-state"]["normalized_json"] == (
         '{"hash":"abc","slot":2}'
@@ -740,6 +754,7 @@ def main() -> int:
     cli_version = cardano_cli_version(cardano_cli)
 
     summary: dict[str, Any] = {
+        "generated_at_utc": dt.datetime.now(dt.UTC).isoformat(),
         "cardano_cli": cardano_cli,
         "cardano_cli_version": cli_version,
         "network_args": net_args,
