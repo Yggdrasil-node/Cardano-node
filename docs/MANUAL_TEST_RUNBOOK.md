@@ -342,7 +342,10 @@ scripts/compare_tip_to_haskell.sh
 Exit codes:
 - `0` — tips match. Record the timestamp and continue.
 - `1` — divergence detected. Snapshot dir saved at `$SNAPSHOT_DIR/<ts>/` with both raw JSONs.
-- `2` — one or both nodes unreachable.
+- `2` — one or both nodes unreachable, timed out, returned invalid JSON, or omitted `slot`/`hash`.
+
+Set `TIP_QUERY_TIMEOUT_SECONDS` to override the default 60-second per-node
+query timeout.
 
 ### 5b. Watching loop (every 15 minutes)
 
@@ -410,8 +413,10 @@ asserts worker registration/migration, runs `compare_tip_to_haskell.sh` at
 worker-channel failures, and writes a concise summary under
 `$LOG_DIR/summary.txt`. Keep `REQUIRE_TIP_COMPARISON=1` for sign-off runs; it
 fails before startup when no Haskell socket is configured or when the comparison
-interval cannot fit inside the run window. In that strict mode the harness also
-refuses `EXPECT_WORKERS < MAX_CONCURRENT_BLOCK_FETCH_PEERS`,
+interval cannot fit inside the run window. Each comparison inherits
+`TIP_QUERY_TIMEOUT_SECONDS` and defaults to a 60-second per-node timeout so a
+stale socket cannot hang sign-off. In that strict mode the harness also refuses
+`EXPECT_WORKERS < MAX_CONCURRENT_BLOCK_FETCH_PEERS`,
 `REQUIRE_WORKERS=0`, `REQUIRE_PROGRESS=0`, `MIN_TIP_COMPARE_PASSES < 2`, final
 worker collapse, or post-activation worker shortfall samples, so a sign-off run
 cannot bypass the multi-worker activation, sustained-worker, progress, or
@@ -538,10 +543,11 @@ Run the existing tip-comparison harness from §5 against a Haskell node that's a
 YGG_SOCK=/tmp/ygg-preprod.sock \
 HASKELL_SOCK=/tmp/cardano.sock \
 NETWORK_MAGIC=1 \
+TIP_QUERY_TIMEOUT_SECONDS=60 \
 scripts/compare_tip_to_haskell.sh
 
 # Watch loop, every 15 minutes:
-watch -n 900 'YGG_SOCK=/tmp/ygg-preprod.sock HASKELL_SOCK=/tmp/cardano.sock NETWORK_MAGIC=1 scripts/compare_tip_to_haskell.sh'
+watch -n 900 'YGG_SOCK=/tmp/ygg-preprod.sock HASKELL_SOCK=/tmp/cardano.sock NETWORK_MAGIC=1 TIP_QUERY_TIMEOUT_SECONDS=60 scripts/compare_tip_to_haskell.sh'
 ```
 
 **Pass criterion:** the Yggdrasil tip `{slot, hash}` must match the Haskell tip

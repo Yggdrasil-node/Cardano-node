@@ -21,7 +21,7 @@ set -euo pipefail
 # Exit codes:
 #   0  tips match (slot AND hash equal)
 #   1  tips diverge (slot or hash differ; full diff printed)
-#   2  one or both nodes unreachable, unparseable, or missing required tip fields
+#   2  one or both nodes unreachable, timed out, unparseable, or missing required tip fields
 #   3  bad invocation (missing required env / tools)
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -31,6 +31,7 @@ YGG_SOCK="${YGG_SOCK:-}"
 HASKELL_SOCK="${HASKELL_SOCK:-}"
 NETWORK_MAGIC="${NETWORK_MAGIC:-764824073}"  # mainnet default
 SNAPSHOT_DIR="${SNAPSHOT_DIR:-/tmp/ygg-tip-snapshots}"
+TIP_QUERY_TIMEOUT_SECONDS="${TIP_QUERY_TIMEOUT_SECONDS:-60}"
 
 usage() {
   cat <<'EOF'
@@ -51,11 +52,13 @@ Optional env:
   CARDANO_CLI      Default: cardano-cli (must be on $PATH or absolute)
   NETWORK_MAGIC    Default: 764824073 (mainnet); 1 for preprod, 2 for preview
   SNAPSHOT_DIR     Where to drop tip snapshots on mismatch (default /tmp/ygg-tip-snapshots)
+  TIP_QUERY_TIMEOUT_SECONDS
+                    Default: 60; per-node tip query timeout in seconds
 
 Exit codes:
   0  tips match
   1  tips diverge (hash and/or slot differ; snapshot saved)
-  2  either node unreachable, invalid JSON, or missing slot/hash
+  2  either node unreachable, timed out, invalid JSON, or missing slot/hash
   3  bad invocation
 
 Behaviour on divergence: the raw JSON outputs from both nodes are saved
@@ -64,6 +67,52 @@ abort, snapshot for forensic diff, or continue. Recommended: rerun the
 comparison ~30 s later - transient divergence at slot boundaries can
 self-heal as one node catches up to the other.
 EOF
+}
+
+is_positive_uint() {
+  [[ "$1" =~ ^[1-9][0-9]*$ ]]
+}
+
+validate_timeout_config() {
+  if ! is_positive_uint "$TIP_QUERY_TIMEOUT_SECONDS"; then
+    echo "ERROR: TIP_QUERY_TIMEOUT_SECONDS must be a positive integer, got '$TIP_QUERY_TIMEOUT_SECONDS'" >&2
+    return 3
+  fi
+
+  if ! command -v timeout >/dev/null 2>&1; then
+    echo "ERROR: timeout is required for bounded tip queries" >&2
+    return 3
+  fi
+}
+
+run_tip_query_with_timeout() {
+  local label="$1"
+  shift
+
+  validate_timeout_config || return $?
+
+  local tmp
+  tmp="$(mktemp)"
+
+  local status
+  if timeout --preserve-status "${TIP_QUERY_TIMEOUT_SECONDS}s" "$@" >"$tmp" 2>/dev/null; then
+    status=0
+  else
+    status=$?
+  fi
+
+  if (( status != 0 )); then
+    rm -f "$tmp"
+    if (( status == 124 || status == 137 || status == 143 )); then
+      echo "ERROR: $label tip query timed out after ${TIP_QUERY_TIMEOUT_SECONDS}s" >&2
+    else
+      echo "ERROR: $label tip query failed with exit code $status" >&2
+    fi
+    return 2
+  fi
+
+  cat "$tmp"
+  rm -f "$tmp"
 }
 
 extract_field() {
@@ -126,6 +175,9 @@ run_self_test() {
   local ygg_json='{"tip":{"slot":42,"hash":"abc123"}}'
   local haskell_json='{"slot":42,"hash":"abc123","block":7,"epoch":3}'
   local missing_hash='{"tip":{"slot":42}}'
+  local status
+  local timeout_err
+  local ok_output
 
   if [[ "$(extract_field yggdrasil slot 1 "$ygg_json")" != "42" ]]; then
     echo "ERROR: failed to extract nested yggdrasil slot" >&2
@@ -151,6 +203,40 @@ run_self_test() {
     echo "ERROR: invalid JSON was accepted" >&2
     return 3
   fi
+
+  if TIP_QUERY_TIMEOUT_SECONDS=0 validate_timeout_config >/dev/null 2>&1; then
+    status=0
+  else
+    status=$?
+  fi
+  if (( status != 3 )); then
+    echo "ERROR: invalid TIP_QUERY_TIMEOUT_SECONDS was accepted" >&2
+    return 3
+  fi
+
+  ok_output="$(TIP_QUERY_TIMEOUT_SECONDS=1 run_tip_query_with_timeout self-test bash -c 'printf "%s" ok')"
+  if [[ "$ok_output" != "ok" ]]; then
+    echo "ERROR: bounded command did not preserve stdout" >&2
+    return 3
+  fi
+
+  timeout_err="$(mktemp)"
+  if TIP_QUERY_TIMEOUT_SECONDS=1 run_tip_query_with_timeout self-test bash -c 'sleep 2' >/dev/null 2>"$timeout_err"; then
+    status=0
+  else
+    status=$?
+  fi
+  if (( status != 2 )); then
+    rm -f "$timeout_err"
+    echo "ERROR: timed-out command returned $status instead of 2" >&2
+    return 3
+  fi
+  if ! grep -q 'timed out after 1s' "$timeout_err"; then
+    rm -f "$timeout_err"
+    echo "ERROR: timed-out command did not report the timeout" >&2
+    return 3
+  fi
+  rm -f "$timeout_err"
 
   echo "[ok] compare_tip_to_haskell self-test passed"
 }
@@ -186,6 +272,10 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 3
 fi
 
+if ! validate_timeout_config; then
+  exit 3
+fi
+
 if [[ ! -S "$YGG_SOCK" ]]; then
   echo "ERROR: YGG_SOCK is not a unix socket: $YGG_SOCK" >&2
   exit 2
@@ -197,15 +287,17 @@ if [[ ! -S "$HASKELL_SOCK" ]]; then
 fi
 
 # Query Yggdrasil tip via the cardano-cli-compatible subcommand.
-if ! ygg_tip_json="$("$YGG_BIN" cardano-cli query-tip \
+if ygg_tip_json="$(run_tip_query_with_timeout "yggdrasil-node" "$YGG_BIN" cardano-cli query-tip \
   --socket-path "$YGG_SOCK" \
-  --network-magic "$NETWORK_MAGIC" 2>/dev/null)"; then
-  echo "ERROR: failed to read tip from yggdrasil-node at $YGG_SOCK" >&2
-  exit 2
+  --network-magic "$NETWORK_MAGIC")"; then
+  ygg_status=0
+else
+  ygg_status=$?
+  exit "$ygg_status"
 fi
 
 if [[ -z "$ygg_tip_json" ]]; then
-  echo "ERROR: failed to read tip from yggdrasil-node at $YGG_SOCK" >&2
+  echo "ERROR: yggdrasil-node tip query returned empty output" >&2
   exit 2
 fi
 
@@ -216,14 +308,16 @@ else
   haskell_net_arg=(--testnet-magic "$NETWORK_MAGIC")
 fi
 
-if ! haskell_tip_json="$(CARDANO_NODE_SOCKET_PATH="$HASKELL_SOCK" \
-  "$CARDANO_CLI" query tip "${haskell_net_arg[@]}" 2>/dev/null)"; then
-  echo "ERROR: failed to read tip from cardano-node (Haskell) at $HASKELL_SOCK" >&2
-  exit 2
+if haskell_tip_json="$(CARDANO_NODE_SOCKET_PATH="$HASKELL_SOCK" \
+  run_tip_query_with_timeout "cardano-node (Haskell)" "$CARDANO_CLI" query tip "${haskell_net_arg[@]}")"; then
+  haskell_status=0
+else
+  haskell_status=$?
+  exit "$haskell_status"
 fi
 
 if [[ -z "$haskell_tip_json" ]]; then
-  echo "ERROR: failed to read tip from cardano-node (Haskell) at $HASKELL_SOCK" >&2
+  echo "ERROR: cardano-node (Haskell) tip query returned empty output" >&2
   exit 2
 fi
 

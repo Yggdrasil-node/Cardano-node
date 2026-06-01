@@ -240,9 +240,10 @@ exit status, and duration for troubleshooting.
 ### `compare_tip_to_haskell.sh` (tip comparison evidence)
 
 Compares Yggdrasil and upstream Haskell tips by required `slot` and `hash`.
-The helper fails closed when either command exits nonzero, either output is not
-valid JSON, or either required field is missing. Haskell `block`/`epoch` values
-are logged when present, but they are not sign-off keys until Yggdrasil's
+The helper bounds each node query with `TIP_QUERY_TIMEOUT_SECONDS` (default
+`60`) and fails closed when either command exits nonzero, times out, returns
+invalid JSON, or omits a required field. Haskell `block`/`epoch` values are
+logged when present, but they are not sign-off keys until Yggdrasil's
 `query-tip` compatibility surface emits them too.
 
 ### `parallel_blockfetch_soak.sh` (BlockFetch Section 6.5 operator evidence)
