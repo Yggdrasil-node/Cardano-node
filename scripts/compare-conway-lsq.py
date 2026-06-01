@@ -31,6 +31,7 @@ DEFAULT_CARDANO_CLI = (
     ROOT / ".reference-haskell-cardano-node" / "install" / "bin" / "cardano-cli"
 )
 DEFAULT_TIMEOUT_SECONDS = 60.0
+SELF_TEST_FIXTURE = ROOT / "target" / "r178-conway-lsq-self-test" / "fixture.json"
 NETWORK_MAGIC = {
     "mainnet": None,
     "preprod": 1,
@@ -666,6 +667,20 @@ def run_self_test() -> int:
     else:
         raise AssertionError("expected write_fixture to require strict closeout mode")
 
+    fixture_query = {
+        "status": "pass",
+        "failures": [],
+        "raw_stdout_comparison": compare_raw_bytes(
+            ygg["_stdout_bytes"],
+            haskell_same_json["_stdout_bytes"],
+        ),
+        "raw_stderr_comparison": compare_raw_bytes(
+            ygg["_stderr_bytes"],
+            haskell_same_json["_stderr_bytes"],
+        ),
+        "yggdrasil": json_ready_result(ygg),
+        "haskell": json_ready_result(haskell_same_json),
+    }
     fixture_summary = {
         "status": "pass",
         "cardano_cli_version": {
@@ -680,26 +695,12 @@ def run_self_test() -> int:
         "require_haskell": True,
         "require_byte_equal": False,
         "require_normalized_equal": True,
-        "queries": {
-            "gov-state": {
-                "status": "pass",
-                "failures": [],
-                "raw_stdout_comparison": compare_raw_bytes(
-                    ygg["_stdout_bytes"],
-                    haskell_same_json["_stdout_bytes"],
-                ),
-                "raw_stderr_comparison": compare_raw_bytes(
-                    ygg["_stderr_bytes"],
-                    haskell_same_json["_stderr_bytes"],
-                ),
-                "yggdrasil": json_ready_result(ygg),
-                "haskell": json_ready_result(haskell_same_json),
-            }
-        },
+        "queries": {query: fixture_query for query in DEFAULT_QUERIES},
     }
     fixture = build_fixture(fixture_summary)
     assert fixture["schema_version"] == 1
     assert fixture["blocker"] == "r178-conway-lsq"
+    assert sorted(fixture["queries"]) == sorted(DEFAULT_QUERIES)
     assert fixture["queries"]["gov-state"]["normalized_json"] == (
         '{"hash":"abc","slot":2}'
     )
@@ -712,6 +713,7 @@ def run_self_test() -> int:
         assert reloaded["queries"]["gov-state"]["haskell"]["stdout_sha256"] == (
             haskell_same_json["stdout_sha256"]
         )
+    write_json(SELF_TEST_FIXTURE, fixture)
 
     fixture_summary["status"] = "fail"
     try:

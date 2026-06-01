@@ -23,8 +23,23 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_ARTIFACT_DIR = ROOT / "target" / "core-evidence-harnesses"
+GAP_BO_SELF_TEST_FIXTURE = (
+    ROOT / "target" / "gap-bo-tpraos-vrf-self-test" / "fixture.json"
+)
+GAP_BP_SELF_TEST_FIXTURE = (
+    ROOT / "target" / "gap-bp-traces-self-test" / "fixture.json"
+)
+R178_SELF_TEST_FIXTURE = (
+    ROOT / "target" / "r178-conway-lsq-self-test" / "fixture.json"
+)
 BLOCKFETCH_SELF_TEST_SUMMARY = (
     ROOT / "target" / "blockfetch-soak-self-test" / "summary.json"
+)
+EXPECTED_ARTIFACTS = (
+    GAP_BO_SELF_TEST_FIXTURE,
+    GAP_BP_SELF_TEST_FIXTURE,
+    R178_SELF_TEST_FIXTURE,
+    BLOCKFETCH_SELF_TEST_SUMMARY,
 )
 
 
@@ -151,21 +166,214 @@ def numeric(value: Any, default: float = 0) -> float:
         return default
 
 
-def validate_blockfetch_self_test_summary(path: Path) -> dict[str, Any]:
-    failures: list[str] = []
-    summary: dict[str, Any] = {}
+def remove_expected_artifacts() -> None:
+    for path in EXPECTED_ARTIFACTS:
+        if path.is_file() or path.is_symlink():
+            path.unlink()
+
+
+def load_json_object(path: Path, failures: list[str]) -> dict[str, Any]:
     if not path.exists():
         failures.append(f"missing artifact: {path}")
-    else:
-        try:
-            loaded = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            failures.append(f"failed to parse {path}: {exc}")
-        else:
-            if not isinstance(loaded, dict):
-                failures.append(f"{path} did not contain a JSON object")
-            else:
-                summary = loaded
+        return {}
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        failures.append(f"failed to parse {path}: {exc}")
+        return {}
+    if not isinstance(loaded, dict):
+        failures.append(f"{path} did not contain a JSON object")
+        return {}
+    return loaded
+
+
+def artifact_result(name: str, path: Path, failures: list[str]) -> dict[str, Any]:
+    return {
+        "name": name,
+        "path": str(path),
+        "status": "fail" if failures else "pass",
+        "failures": failures,
+    }
+
+
+def require_object(
+    container: dict[str, Any],
+    key: str,
+    failures: list[str],
+) -> dict[str, Any]:
+    value = container.get(key)
+    if not isinstance(value, dict):
+        failures.append(f"{key} must be an object")
+        return {}
+    return value
+
+
+def require_non_empty_list(
+    container: dict[str, Any],
+    key: str,
+    failures: list[str],
+) -> list[Any]:
+    value = container.get(key)
+    if not isinstance(value, list) or not value:
+        failures.append(f"{key} must be a non-empty list")
+        return []
+    return value
+
+
+def validate_gap_bo_fixture(path: Path) -> dict[str, Any]:
+    failures: list[str] = []
+    fixture = load_json_object(path, failures)
+    if fixture:
+        if fixture.get("schema_version") != 1:
+            failures.append("schema_version must be 1")
+        if fixture.get("blocker") != "gap-bo-tpraos-vrf":
+            failures.append("blocker must be gap-bo-tpraos-vrf")
+        if fixture.get("status") != "pass":
+            failures.append("status must be pass")
+        if fixture.get("target_slot") != 429460:
+            failures.append("target_slot must be 429460")
+        if fixture.get("mismatches") != []:
+            failures.append("mismatches must be empty")
+
+        required_keys = require_non_empty_list(fixture, "required_keys", failures)
+        compare_keys = require_non_empty_list(fixture, "compare_keys", failures)
+        rust_fields = require_object(fixture, "rust_fields", failures)
+        haskell_fields = require_object(fixture, "haskell_fields", failures)
+
+        for key in required_keys:
+            if key not in rust_fields:
+                failures.append(f"rust_fields.{key} must be present")
+            if key not in haskell_fields:
+                failures.append(f"haskell_fields.{key} must be present")
+        if str(fixture.get("target_slot")) != rust_fields.get("slot"):
+            failures.append("rust_fields.slot must match target_slot")
+        if str(fixture.get("target_slot")) != haskell_fields.get("slot"):
+            failures.append("haskell_fields.slot must match target_slot")
+        for key in compare_keys:
+            if rust_fields.get(key) != haskell_fields.get(key):
+                failures.append(f"compared field {key} differs in self-test fixture")
+
+    return artifact_result("gap-bo-fixture", path, failures)
+
+
+def validate_gap_bp_fixture(path: Path) -> dict[str, Any]:
+    failures: list[str] = []
+    fixture = load_json_object(path, failures)
+    if fixture:
+        if fixture.get("schema_version") != 1:
+            failures.append("schema_version must be 1")
+        if fixture.get("blocker") != "gap-bp-plutus-v2-traces":
+            failures.append("blocker must be gap-bp-plutus-v2-traces")
+        if fixture.get("status") != "pass":
+            failures.append("status must be pass")
+        expected_trace_id = fixture.get("expected_trace_id")
+        if not expected_trace_id:
+            failures.append("expected_trace_id must be present")
+
+        trace_identity = require_object(fixture, "trace_identity", failures)
+        if trace_identity.get("violations") != []:
+            failures.append("trace_identity.violations must be empty")
+        require_object(trace_identity, "observed", failures)
+
+        script_context = require_object(fixture, "script_context", failures)
+        script_comparison = require_object(script_context, "comparison", failures)
+        if script_comparison.get("byte_equal") is not True:
+            failures.append("script_context.comparison.byte_equal must be true")
+
+        for child_key in ("cek_flushes", "builtin_costs"):
+            child = require_object(fixture, child_key, failures)
+            results = require_non_empty_list(child, "results", failures)
+            for index, result in enumerate(results):
+                if not isinstance(result, dict):
+                    failures.append(f"{child_key}.results[{index}] must be an object")
+                    continue
+                if result.get("status") != "pass":
+                    failures.append(f"{child_key}.results[{index}].status must be pass")
+                for side in ("rust", "haskell"):
+                    entry = result.get(side)
+                    if not isinstance(entry, dict):
+                        failures.append(
+                            f"{child_key}.results[{index}].{side} must be an object"
+                        )
+                        continue
+                    trace_id = (entry.get("fields") or {}).get("trace_id")
+                    if expected_trace_id and trace_id != expected_trace_id:
+                        failures.append(
+                            f"{child_key}.results[{index}].{side}.trace_id "
+                            "must match expected_trace_id"
+                        )
+
+    return artifact_result("gap-bp-fixture", path, failures)
+
+
+def validate_r178_fixture(path: Path) -> dict[str, Any]:
+    failures: list[str] = []
+    fixture = load_json_object(path, failures)
+    if fixture:
+        if fixture.get("schema_version") != 1:
+            failures.append("schema_version must be 1")
+        if fixture.get("blocker") != "r178-conway-lsq":
+            failures.append("blocker must be r178-conway-lsq")
+        if fixture.get("status") != "pass":
+            failures.append("status must be pass")
+        if not (
+            fixture.get("require_byte_equal")
+            or fixture.get("require_normalized_equal")
+        ):
+            failures.append("fixture must require byte or normalized equality")
+        if fixture.get("require_normalized_equal") is not True:
+            failures.append("self-test fixture must require normalized equality")
+        cardano_cli_version = require_object(
+            fixture,
+            "cardano_cli_version",
+            failures,
+        )
+        if "command" in cardano_cli_version:
+            failures.append("cardano_cli_version must not include command")
+        if not cardano_cli_version.get("stdout_sha256"):
+            failures.append("cardano_cli_version.stdout_sha256 must be present")
+
+        queries = require_object(fixture, "queries", failures)
+        expected_queries = {"gov-state", "constitution", "committee-state"}
+        if set(queries) != expected_queries:
+            failures.append(
+                "queries must contain gov-state, constitution, and committee-state"
+            )
+        for query, result in queries.items():
+            if not isinstance(result, dict):
+                failures.append(f"queries.{query} must be an object")
+                continue
+            if result.get("status") != "pass":
+                failures.append(f"queries.{query}.status must be pass")
+            normalized_json = result.get("normalized_json")
+            if not normalized_json:
+                failures.append(f"queries.{query}.normalized_json must be present")
+            raw_stdout = require_object(
+                result,
+                "raw_stdout_comparison",
+                failures,
+            )
+            if "byte_equal" not in raw_stdout:
+                failures.append(
+                    f"queries.{query}.raw_stdout_comparison.byte_equal must be present"
+                )
+            for side in ("yggdrasil", "haskell"):
+                side_result = require_object(result, side, failures)
+                if "command" in side_result:
+                    failures.append(f"queries.{query}.{side} must not include command")
+                if side_result.get("timed_out"):
+                    failures.append(f"queries.{query}.{side}.timed_out must be false")
+                if side_result.get("normalized_json") != normalized_json:
+                    failures.append(
+                        f"queries.{query}.{side}.normalized_json must match query"
+                    )
+
+    return artifact_result("r178-fixture", path, failures)
+
+
+def validate_blockfetch_self_test_summary(path: Path) -> dict[str, Any]:
+    failures: list[str] = []
+    summary = load_json_object(path, failures)
 
     if summary:
         if summary.get("schema_version") != 1:
@@ -246,16 +454,16 @@ def validate_blockfetch_self_test_summary(path: Path) -> dict[str, Any]:
             if not artifacts.get(key):
                 failures.append(f"artifacts.{key} must be present")
 
-    return {
-        "name": "blockfetch-soak-summary",
-        "path": str(path),
-        "status": "fail" if failures else "pass",
-        "failures": failures,
-    }
+    return artifact_result("blockfetch-soak-summary", path, failures)
 
 
 def validate_artifacts() -> list[dict[str, Any]]:
-    return [validate_blockfetch_self_test_summary(BLOCKFETCH_SELF_TEST_SUMMARY)]
+    return [
+        validate_gap_bo_fixture(GAP_BO_SELF_TEST_FIXTURE),
+        validate_gap_bp_fixture(GAP_BP_SELF_TEST_FIXTURE),
+        validate_r178_fixture(R178_SELF_TEST_FIXTURE),
+        validate_blockfetch_self_test_summary(BLOCKFETCH_SELF_TEST_SUMMARY),
+    ]
 
 
 def parse_args() -> argparse.Namespace:
@@ -273,6 +481,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    remove_expected_artifacts()
     results = [run_case(case) for case in build_cases()]
     artifact_checks = validate_artifacts()
     failed = [result for result in results if result["status"] != "pass"]

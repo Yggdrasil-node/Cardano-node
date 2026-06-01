@@ -236,9 +236,13 @@ compare, and report evidence before an operator starts live Haskell/socket
 comparisons, but it does not prove live parity by itself. It writes
 `target/core-evidence-harnesses/summary.json` with per-helper stdout/stderr,
 exit status, duration, and artifact checks for troubleshooting. The preflight
-must fail if `parallel_blockfetch_soak.sh --self-test` does not leave a passing
-`target/blockfetch-soak-self-test/summary.json` with strict worker/progress/tip
-comparison invariants.
+deletes its known generated artifact files before running, then must fail if
+the Gap BO, Gap BP, R178, or BlockFetch self-tests do not leave fresh passing
+fixtures/summaries:
+`target/gap-bo-tpraos-vrf-self-test/fixture.json`,
+`target/gap-bp-traces-self-test/fixture.json`,
+`target/r178-conway-lsq-self-test/fixture.json`, and
+`target/blockfetch-soak-self-test/summary.json`.
 
 ### `compare_tip_to_haskell.sh` (tip comparison evidence)
 

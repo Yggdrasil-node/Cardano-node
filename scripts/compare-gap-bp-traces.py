@@ -28,6 +28,7 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_ARTIFACT_DIR = ROOT / "target" / "gap-bp-trace-comparison"
+SELF_TEST_FIXTURE = ROOT / "target" / "gap-bp-traces-self-test" / "fixture.json"
 
 
 @dataclass(frozen=True)
@@ -433,6 +434,7 @@ def run_self_test() -> int:
         assert [result["status"] for result in fixture["builtin_costs"]["results"]] == [
             "pass"
         ]
+        write_summary(SELF_TEST_FIXTURE, fixture)
 
         haskell_builtin.write_text(
             builtin_cost.replace("remaining_cpu=5000", "remaining_cpu=4999"),

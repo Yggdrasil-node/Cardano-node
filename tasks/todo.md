@@ -27,6 +27,7 @@
   - [x] Keep core evidence helpers self-tested as one local preflight.
     - [x] Add `scripts/check-core-evidence-harnesses.py` to run the Gap BO, Gap BP, R178, and BlockFetch helper self-tests together.
     - [x] Validate durable preflight artifacts, including the BlockFetch self-test `summary.json` strict-mode invariants.
+    - [x] Validate fresh Gap BO, Gap BP, and R178 self-test fixtures in the core preflight.
   - [ ] Gap BO TPraos VRF replay and regression fixture.
     - [x] Add `YGG_DUMP_TPRAOS_VRF` / `YGG_DUMP_TPRAOS_VRF_FILE` evidence logging for overlay classification, delegate/key hashes, nonce state, TPraos seeds, VRF outputs, and proof hashes.
     - [x] Add preprod Gap BO `mkSeed` golden coverage for slots 429460 and 432000.
@@ -205,3 +206,7 @@
 - Core evidence artifact-validation hardening: `scripts/check-core-evidence-harnesses.py` now fails if the BlockFetch soak self-test does not leave a strict, passing `target/blockfetch-soak-self-test/summary.json` artifact, and records the artifact check in `target/core-evidence-harnesses/summary.json`.
 - Core evidence artifact-validation guards passed under WSL: `python3 -m py_compile scripts/check-core-evidence-harnesses.py`, `bash scripts/parallel_blockfetch_soak.sh --self-test`, `python3 scripts/check-core-evidence-harnesses.py`, direct JSON assertion for `target/core-evidence-harnesses/summary.json::artifact_checks`, doc-status/stale-placement/strict-mirror scans, `cargo fmt --all -- --check`, `cargo check-all`, `cargo lint`, `cargo lint-no-default`, and `cargo test-all`.
 - Core evidence artifact-validation security recheck passed under WSL: `cargo deny check advisories bans licenses sources` exited clean with only the known duplicate/unused-license warnings, and `cargo tree -i aws-lc-sys`, `aws-lc-rs`, `native-tls`, and `openssl-sys` each reported no matching package IDs.
+- Core fixture artifact-validation hardening: `scripts/check-core-evidence-harnesses.py` now deletes known self-test artifacts before running and fails unless fresh Gap BO, Gap BP, R178, and BlockFetch artifacts pass strict schema/content checks.
+- Core fixture artifact-validation guards passed under WSL: `python3 -m py_compile scripts/check-core-evidence-harnesses.py scripts/compare-gap-bp-traces.py scripts/compare-conway-lsq.py`, `python3 scripts/check-core-evidence-harnesses.py`, and direct JSON assertions for all four artifact checks in `target/core-evidence-harnesses/summary.json`.
+- Core fixture artifact-validation full gates passed under WSL: `python3 scripts/check-doc-status-headers.py`, `python3 scripts/check-stale-placement.py`, `python3 scripts/check-strict-mirror.py`, `cargo fmt --all -- --check`, `cargo check-all`, `cargo lint`, `cargo lint-no-default`, and `cargo test-all`.
+- Core fixture artifact-validation security recheck passed under WSL: `cargo deny check advisories bans licenses sources` exited clean with only known duplicate/unused-license warnings, and `cargo tree -i aws-lc-sys`, `aws-lc-rs`, `native-tls`, and `openssl-sys` each reported no matching package IDs.
