@@ -275,11 +275,13 @@ loudly instead of hanging an operator closeout. R178 closeout runs must pass
 `--require-haskell` plus either `--require-byte-equal` or
 `--require-normalized-equal`; the helper enforces that pairing in both
 directions so weak Haskell-presence runs cannot be mistaken for parity
-closeout. Without those flags the helper is only proving that the Yggdrasil
-socket is decodable by upstream `cardano-cli`. The self-test pins the HFC
-`QueryIfCurrent` envelope facts used by R178: match is a one-element `Right`
-list and mismatch is a two-element `Left` list of requested-era then ledger-era
-`NS` names.
+closeout. Use `--write-fixture <path>` only with strict closeout mode; it
+writes a normalized fixture with CLI version, query hashes, normalized JSON,
+and raw comparison facts, but no socket-specific command paths. Without those
+flags the helper is only proving that the Yggdrasil socket is decodable by
+upstream `cardano-cli`. The self-test pins the HFC `QueryIfCurrent` envelope
+facts used by R178: match is a one-element `Right` list and mismatch is a
+two-element `Left` list of requested-era then ledger-era `NS` names.
 
 ### `compare-gap-bo-tpraos-vrf.py` (Gap BO operator evidence)
 

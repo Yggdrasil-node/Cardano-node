@@ -7,7 +7,8 @@ official IntersectMBO cardano-cli against one or two node sockets.  A successful
 upstream CLI decode proves the node returned the HFC QueryIfCurrent envelope
 shape that cardano-cli expects.  When both Yggdrasil and Haskell sockets are
 provided, the harness also records raw and normalized output hashes and can
-require byte-for-byte equality.
+require byte-for-byte equality. Use `--write-fixture <path>` only with strict
+Haskell equality closeout mode to persist a normalized regression fixture.
 """
 
 from __future__ import annotations
@@ -258,6 +259,11 @@ def write_bytes(path: Path, data: bytes) -> None:
     path.write_bytes(data)
 
 
+def write_json(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+
+
 def write_query_artifacts(
     artifact_dir: Path,
     query: str,
@@ -298,6 +304,15 @@ def validate_required_args(
         fail(
             "--haskell-socket is required with --require-byte-equal "
             "or --require-normalized-equal"
+        )
+    if (
+        not args.self_test
+        and args.write_fixture is not None
+        and (not args.require_haskell or not equality_required)
+    ):
+        fail(
+            "--write-fixture requires --require-haskell plus "
+            "--require-byte-equal or --require-normalized-equal"
         )
     if args.self_test:
         return
@@ -363,6 +378,14 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Require --haskell-socket before running a closeout comparison",
     )
+    parser.add_argument(
+        "--write-fixture",
+        type=Path,
+        help=(
+            "Write a normalized R178 fixture after strict Yggdrasil/Haskell "
+            "comparison passes. Requires --require-haskell and an equality flag."
+        ),
+    )
     args = parser.parse_args()
     validate_required_args(args, parser)
     return args
@@ -394,6 +417,70 @@ def sample_result(
         if normalized is not None
         else None,
         "normalize_error": normalize_error,
+    }
+
+
+def fixture_result(result: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "exit_code": result["exit_code"],
+        "timed_out": result["timed_out"],
+        "timeout_seconds": result["timeout_seconds"],
+        "stdout_sha256": result["stdout_sha256"],
+        "stderr_sha256": result["stderr_sha256"],
+        "stdout_len": result["stdout_len"],
+        "stderr_len": result["stderr_len"],
+        "normalized_json": result["normalized_json"],
+        "normalized_json_sha256": result["normalized_json_sha256"],
+        "normalize_error": result["normalize_error"],
+    }
+
+
+def fixture_cli_version(summary: dict[str, Any]) -> dict[str, Any]:
+    version = summary["cardano_cli_version"]
+    return {
+        "exit_code": version["exit_code"],
+        "stdout": version["stdout"],
+        "stderr": version["stderr"],
+        "stdout_sha256": version["stdout_sha256"],
+        "stderr_sha256": version["stderr_sha256"],
+    }
+
+
+def build_fixture(summary: dict[str, Any]) -> dict[str, Any]:
+    if summary.get("status") != "pass":
+        raise SystemExit("cannot write R178 fixture unless aggregate status is pass")
+    equality_required = summary.get("require_byte_equal") or summary.get(
+        "require_normalized_equal"
+    )
+    if not summary.get("require_haskell") or not equality_required:
+        raise SystemExit(
+            "cannot write R178 fixture without strict Haskell equality mode"
+        )
+
+    queries: dict[str, Any] = {}
+    for query, result in summary["queries"].items():
+        haskell = result.get("haskell")
+        yggdrasil = result.get("yggdrasil")
+        if result.get("status") != "pass" or yggdrasil is None or haskell is None:
+            raise SystemExit(f"cannot write R178 fixture for non-passing query {query}")
+        queries[query] = {
+            "status": result["status"],
+            "raw_stdout_comparison": result["raw_stdout_comparison"],
+            "raw_stderr_comparison": result["raw_stderr_comparison"],
+            "normalized_json": yggdrasil["normalized_json"],
+            "yggdrasil": fixture_result(yggdrasil),
+            "haskell": fixture_result(haskell),
+        }
+
+    return {
+        "schema_version": 1,
+        "blocker": "r178-conway-lsq",
+        "status": summary["status"],
+        "network_args": summary["network_args"],
+        "require_byte_equal": summary["require_byte_equal"],
+        "require_normalized_equal": summary["require_normalized_equal"],
+        "cardano_cli_version": fixture_cli_version(summary),
+        "queries": queries,
     }
 
 
@@ -473,6 +560,7 @@ def run_self_test() -> int:
                 require_byte_equal=True,
                 require_normalized_equal=False,
                 timeout_seconds=DEFAULT_TIMEOUT_SECONDS,
+                write_fixture=None,
             )
         )
     except SystemExit as exc:
@@ -490,6 +578,7 @@ def run_self_test() -> int:
                 require_byte_equal=True,
                 require_normalized_equal=False,
                 timeout_seconds=DEFAULT_TIMEOUT_SECONDS,
+                write_fixture=None,
             )
         )
     except SystemExit as exc:
@@ -507,6 +596,7 @@ def run_self_test() -> int:
                 require_byte_equal=False,
                 require_normalized_equal=False,
                 timeout_seconds=DEFAULT_TIMEOUT_SECONDS,
+                write_fixture=None,
             )
         )
     except SystemExit as exc:
@@ -524,6 +614,7 @@ def run_self_test() -> int:
                 require_byte_equal=False,
                 require_normalized_equal=False,
                 timeout_seconds=0,
+                write_fixture=None,
             )
         )
     except SystemExit as exc:
@@ -549,12 +640,86 @@ def run_self_test() -> int:
                         require_byte_equal=False,
                         require_normalized_equal=False,
                         timeout_seconds=DEFAULT_TIMEOUT_SECONDS,
+                        write_fixture=None,
                     )
                 )
             except SystemExit as exc:
                 assert message in str(exc)
             else:
                 raise AssertionError(f"expected {candidate} to be rejected")
+
+    try:
+        validate_required_args(
+            argparse.Namespace(
+                self_test=False,
+                ygg_socket=Path("node.sock"),
+                haskell_socket=Path("haskell.sock"),
+                require_haskell=False,
+                require_byte_equal=False,
+                require_normalized_equal=False,
+                timeout_seconds=DEFAULT_TIMEOUT_SECONDS,
+                write_fixture=Path("r178-fixture.json"),
+            )
+        )
+    except SystemExit as exc:
+        assert "--write-fixture requires" in str(exc)
+    else:
+        raise AssertionError("expected write_fixture to require strict closeout mode")
+
+    fixture_summary = {
+        "status": "pass",
+        "cardano_cli_version": {
+            "command": ["cardano-cli", "--version"],
+            "exit_code": 0,
+            "stdout": "cardano-cli 11.0.0.0\n",
+            "stderr": "",
+            "stdout_sha256": sha256_bytes(b"cardano-cli 11.0.0.0\n"),
+            "stderr_sha256": sha256_bytes(b""),
+        },
+        "network_args": ["--testnet-magic", "2"],
+        "require_haskell": True,
+        "require_byte_equal": False,
+        "require_normalized_equal": True,
+        "queries": {
+            "gov-state": {
+                "status": "pass",
+                "failures": [],
+                "raw_stdout_comparison": compare_raw_bytes(
+                    ygg["_stdout_bytes"],
+                    haskell_same_json["_stdout_bytes"],
+                ),
+                "raw_stderr_comparison": compare_raw_bytes(
+                    ygg["_stderr_bytes"],
+                    haskell_same_json["_stderr_bytes"],
+                ),
+                "yggdrasil": json_ready_result(ygg),
+                "haskell": json_ready_result(haskell_same_json),
+            }
+        },
+    }
+    fixture = build_fixture(fixture_summary)
+    assert fixture["schema_version"] == 1
+    assert fixture["blocker"] == "r178-conway-lsq"
+    assert fixture["queries"]["gov-state"]["normalized_json"] == (
+        '{"hash":"abc","slot":2}'
+    )
+    assert "command" not in fixture["queries"]["gov-state"]["yggdrasil"]
+    assert not fixture["queries"]["gov-state"]["raw_stdout_comparison"]["byte_equal"]
+    with tempfile.TemporaryDirectory() as tmp:
+        fixture_path = Path(tmp) / "r178-fixture.json"
+        write_json(fixture_path, fixture)
+        reloaded = json.loads(fixture_path.read_text(encoding="utf-8"))
+        assert reloaded["queries"]["gov-state"]["haskell"]["stdout_sha256"] == (
+            haskell_same_json["stdout_sha256"]
+        )
+
+    fixture_summary["status"] = "fail"
+    try:
+        build_fixture(fixture_summary)
+    except SystemExit as exc:
+        assert "aggregate status is pass" in str(exc)
+    else:
+        raise AssertionError("expected non-passing fixture summary to be rejected")
 
     print("[ok] compare-conway-lsq self-test passed")
     return 0
@@ -581,6 +746,7 @@ def main() -> int:
         "require_haskell": args.require_haskell,
         "require_byte_equal": args.require_byte_equal,
         "require_normalized_equal": args.require_normalized_equal,
+        "write_fixture": str(args.write_fixture) if args.write_fixture else None,
         "timeout_seconds": args.timeout_seconds,
         "queries": {},
     }
@@ -634,9 +800,14 @@ def main() -> int:
         if haskell is not None:
             write_query_artifacts(artifact_dir, query, "haskell", haskell)
 
+    summary["status"] = "fail" if failed else "pass"
     summary_path = artifact_dir / "summary.json"
-    summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
+    write_json(summary_path, summary)
+    if args.write_fixture is not None and summary["status"] == "pass":
+        write_json(args.write_fixture, build_fixture(summary))
     print(f"wrote {summary_path}")
+    if args.write_fixture is not None and summary["status"] == "pass":
+        print(f"wrote fixture {args.write_fixture}")
     for query, result in summary["queries"].items():
         print(f"{query}: {result['status']}")
         for failure in result["failures"]:

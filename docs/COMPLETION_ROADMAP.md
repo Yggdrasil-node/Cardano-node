@@ -1379,8 +1379,8 @@ per-builtin costs vs upstream `Cek/Internal.hs::stepAndMaybeSpend`.
 cardano-cli's HFC decoder expects a different Conway-era LSQ response envelope
 than yggdrasil's current `[1, body]` shape. **Closes with:** captured upstream
 Conway-era wire fixtures via
-`scripts/compare-conway-lsq.py --require-haskell --require-byte-equal` plus
-any required `encode_query_if_current_match` adjustment.
+`scripts/compare-conway-lsq.py --require-haskell --require-byte-equal --write-fixture <fixture.json>`
+plus any required `encode_query_if_current_match` adjustment.
 
 ### C4 — Performance: 2× Haskell sync throughput
 Yggdrasil ~2,321 slot/s vs Haskell ~5,296 slot/s (0.44×). Needs governor

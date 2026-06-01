@@ -68,6 +68,7 @@
     - [x] Make `--require-byte-equal` / `--require-normalized-equal` fail unless `--haskell-socket` is supplied.
     - [x] Add live socket preflight and bounded `cardano-cli` query timeouts so stale R178 closeout sockets fail loudly.
     - [x] Make R178 closeout mode require both `--require-haskell` and an explicit byte or normalized equality flag.
+    - [x] Add a guarded R178 `--write-fixture` path so passing Yggdrasil/Haskell LSQ comparisons can be normalized into a replayable regression fixture.
     - [ ] Run byte-for-byte `cardano-cli` Conway LSQ comparison against the installed upstream 11.0.1 reference binary.
   - [ ] Section 6.5 BlockFetch worker activation and Haskell tip-comparison soak.
     - [x] Migrate direct bootstrap BlockFetch handles into the shared worker pool when `max_concurrent_block_fetch_peers > 1`.
@@ -193,3 +194,6 @@
 - Gap BP aggregate fixture-writer hardening: `scripts/compare-gap-bp-traces.py` now supports `--write-fixture <path>` only in strict `--require-haskell --require-equal` closeout mode, writes a normalized aggregate JSON fixture after ScriptContext, CEK flush, and builtin-cost comparisons all pass for the expected trace identity, and refuses fixture output for failed or weak captures.
 - Gap BP aggregate fixture-writer guards passed under WSL: `python3 -m py_compile scripts/compare-gap-bp-traces.py scripts/check-core-evidence-harnesses.py`, `python3 scripts/compare-gap-bp-traces.py --self-test`, `python3 scripts/check-core-evidence-harnesses.py`, doc-status/stale-placement/strict-mirror scans, `cargo fmt --all -- --check`, `cargo check-all`, `cargo lint`, `cargo lint-no-default`, and `cargo test-all`.
 - Gap BP aggregate fixture-writer security recheck passed under WSL: `cargo deny check advisories bans licenses sources` exited clean with only the known duplicate/unused-license warnings.
+- R178 LSQ fixture-writer hardening: `scripts/compare-conway-lsq.py` now supports `--write-fixture <path>` only for strict `--require-haskell` plus byte/normalized equality closeout mode, writes a normalized fixture with CLI version/query hashes/normalized JSON/raw comparison facts, and keeps socket-specific command paths out of the fixture.
+- R178 LSQ fixture-writer guards passed under WSL: `python3 -m py_compile scripts/compare-conway-lsq.py scripts/check-core-evidence-harnesses.py`, `python3 scripts/compare-conway-lsq.py --self-test`, `python3 scripts/check-core-evidence-harnesses.py`, doc-status/stale-placement/strict-mirror scans, `cargo fmt --all -- --check`, `cargo check-all`, `cargo lint`, `cargo lint-no-default`, and `cargo test-all`.
+- R178 LSQ fixture-writer security recheck passed under WSL: `cargo deny check advisories bans licenses sources` exited clean with only the known duplicate/unused-license warnings, and `cargo tree -i aws-lc-sys`, `aws-lc-rs`, `native-tls`, and `openssl-sys` each reported no matching package IDs.

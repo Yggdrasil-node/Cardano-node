@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at_utc": "2026-06-01T09:42:44Z",
+  "generated_at_utc": "2026-06-01T10:12:36Z",
   "description_policy": "Each entry has one or two concise human-maintained description lines. Run accept-current after reviewing stale entries.",
   "files": [
     {
@@ -11576,10 +11576,10 @@
       "description_lines": [
         "Completion Roadmap: > **Document classification:** operational."
       ],
-      "content_sha256": "2d3f63c208d94136fe16120bf93655ab4c0db7923c131556d96763fa9c663428",
-      "git_blob": "97a196f52fac6ea8a87a4fe38a206ec61276d0fe",
-      "source_mtime_ns": 1780262447189779500,
-      "described_at_utc": "2026-05-31T21:27:06Z",
+      "content_sha256": "30c4ee50cd6006df2610b2426891af3809a5bedbd1bbad205afe1a0cd4ef92bb",
+      "git_blob": "317bb6d616270045341751f18a907e2be5d0275d",
+      "source_mtime_ns": 1780307611902353500,
+      "described_at_utc": "2026-06-01T10:12:36Z",
       "generated_self_exempt": false
     },
     {
@@ -11698,10 +11698,10 @@
       "description_lines": [
         "Upstream Parity Matrix: > Quick view: [`PARITY_DASHBOARD.md`](PARITY_DASHBOARD.md)."
       ],
-      "content_sha256": "7cb8ed0ecc21aed97b3c58a394230124668a95acd12a87f758804911577ecf8c",
-      "git_blob": "eba7a981fc91f3c6487ca42b226bdc11bc8ded7b",
-      "source_mtime_ns": 1780304934755071600,
-      "described_at_utc": "2026-06-01T09:42:44Z",
+      "content_sha256": "2f5237ec922929966f4f947e5d3d6cc98f1544b040eb8850bf7e1748e5f2d409",
+      "git_blob": "74dfe4167d6ef90cf9f7937ad930a092d676b3a2",
+      "source_mtime_ns": 1780307602680303000,
+      "described_at_utc": "2026-06-01T10:12:36Z",
       "generated_self_exempt": false
     },
     {
@@ -18699,10 +18699,10 @@
       "description_lines": [
         "Guidance for root scripts: parity validators, reference refresh helpers, and operator/runbook shell tools."
       ],
-      "content_sha256": "8bd23009b06def4d17b03e8a6c3b81339f7af72d84fe9eb21903a17d8f0876d0",
-      "git_blob": "d2e255d7a9e426d607425f226868cae0c28f1a63",
-      "source_mtime_ns": 1780304906201666500,
-      "described_at_utc": "2026-06-01T09:42:44Z",
+      "content_sha256": "cef077770738c6541bc2078eb73ddb0651e5175fb092f37c5027ce2a49c06bd3",
+      "git_blob": "6af9bd55d311fd7f3df93c6ba029cd8b6fadff33",
+      "source_mtime_ns": 1780307581974601900,
+      "described_at_utc": "2026-06-01T10:12:36Z",
       "generated_self_exempt": false
     },
     {
@@ -18824,10 +18824,10 @@
       "description_lines": [
         "Project file at scripts/compare-conway-lsq.py."
       ],
-      "content_sha256": "dcc88d55b9863ec3adeda6d1685088cc3f5f67134ac6bf3bde019705d5cf79d1",
-      "git_blob": "d6508b120c8e3687aae852cace80798cfef34d66",
-      "source_mtime_ns": 1780294677530441800,
-      "described_at_utc": "2026-06-01T06:37:57Z",
+      "content_sha256": "dbdf4f777224cebf725fa08560a4c58bfc40e276183d1dca58def2e64c68e10a",
+      "git_blob": "7dc230be6f32c9b49874b3ece527d61098a0418f",
+      "source_mtime_ns": 1780308565670874900,
+      "described_at_utc": "2026-06-01T10:12:36Z",
       "generated_self_exempt": false
     },
     {
@@ -19441,10 +19441,10 @@
       "description_lines": [
         "Core-First Completion TODO: [x] Create task tracking files before code changes."
       ],
-      "content_sha256": "c248f9069b252041391691730adac0a53bdd6c3f8d814829ff4095d2ae100a8b",
-      "git_blob": "6e43069b208f1bf6a229e202515fd3d4ec1acd76",
-      "source_mtime_ns": 1780306128134443600,
-      "described_at_utc": "2026-06-01T09:42:44Z",
+      "content_sha256": "dfbc049183b0bc4e1d8bd01af569faee8060ec26c2b4b36fdd6a7eccee218df7",
+      "git_blob": "37b507792ee374a0319f8bbf917d98d8e9137cee",
+      "source_mtime_ns": 1780308207082341400,
+      "described_at_utc": "2026-06-01T10:12:36Z",
       "generated_self_exempt": false
     },
     {
