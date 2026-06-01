@@ -80,6 +80,7 @@
     - [x] Harden `scripts/parallel_blockfetch_soak.sh` strict mode to require expected workers through final sample, no post-activation worker shortfalls, and a minimum tip-comparison count.
     - [x] Bound `scripts/compare_tip_to_haskell.sh` Yggdrasil/Haskell tip queries so stale sockets cannot hang Section 6.5 sign-off.
     - [x] Validate and record `TIP_QUERY_TIMEOUT_SECONDS` in `scripts/parallel_blockfetch_soak.sh` so sign-off cannot inherit invalid timeout config.
+    - [x] Add a machine-readable BlockFetch §6.5 `summary.json` so passing soaks preserve strict-mode assertions and artifact paths.
     - [ ] Run preprod Section 6.5 two-peer and knob=4 Haskell tip-comparison soaks.
     - [ ] Run mainnet Section 6.5 knob=2 24h Haskell tip-comparison soak.
 
@@ -197,3 +198,6 @@
 - R178 LSQ fixture-writer hardening: `scripts/compare-conway-lsq.py` now supports `--write-fixture <path>` only for strict `--require-haskell` plus byte/normalized equality closeout mode, writes a normalized fixture with CLI version/query hashes/normalized JSON/raw comparison facts, and keeps socket-specific command paths out of the fixture.
 - R178 LSQ fixture-writer guards passed under WSL: `python3 -m py_compile scripts/compare-conway-lsq.py scripts/check-core-evidence-harnesses.py`, `python3 scripts/compare-conway-lsq.py --self-test`, `python3 scripts/check-core-evidence-harnesses.py`, doc-status/stale-placement/strict-mirror scans, `cargo fmt --all -- --check`, `cargo check-all`, `cargo lint`, `cargo lint-no-default`, and `cargo test-all`.
 - R178 LSQ fixture-writer security recheck passed under WSL: `cargo deny check advisories bans licenses sources` exited clean with only the known duplicate/unused-license warnings, and `cargo tree -i aws-lc-sys`, `aws-lc-rs`, `native-tls`, and `openssl-sys` each reported no matching package IDs.
+- BlockFetch §6.5 JSON summary hardening: `scripts/parallel_blockfetch_soak.sh` now writes machine-readable `$LOG_DIR/summary.json` beside `summary.txt`, carrying strict sign-off assertions, worker/progress metrics, tip comparison counts, timeout contract, and artifact paths.
+- BlockFetch §6.5 JSON summary guards passed under WSL: `bash -n scripts/parallel_blockfetch_soak.sh scripts/compare_tip_to_haskell.sh`, `bash scripts/parallel_blockfetch_soak.sh --self-test`, `python3 scripts/check-core-evidence-harnesses.py`, doc-status/stale-placement/strict-mirror scans, `cargo fmt --all -- --check`, `cargo check-all`, `cargo lint`, `cargo lint-no-default`, and `cargo test-all`.
+- BlockFetch §6.5 JSON summary security recheck passed under WSL: `cargo deny check advisories bans licenses sources` exited clean with only the known duplicate/unused-license warnings, and `cargo tree -i aws-lc-sys`, `aws-lc-rs`, `native-tls`, and `openssl-sys` each reported no matching package IDs.

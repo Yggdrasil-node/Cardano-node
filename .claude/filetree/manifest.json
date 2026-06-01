@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at_utc": "2026-06-01T10:12:36Z",
+  "generated_at_utc": "2026-06-01T10:37:23Z",
   "description_policy": "Each entry has one or two concise human-maintained description lines. Run accept-current after reviewing stale entries.",
   "files": [
     {
@@ -11620,10 +11620,10 @@
       "description_lines": [
         "Manual Test Runbook \u2014 Yggdrasil Real-Life Operations: **Purpose**: ordered checklist for the operator running `yggdrasil-node` against real Cardano networks (preprod first, then ma"
       ],
-      "content_sha256": "45e686c529869c718839e228e309c80c6d8e2fc218c2b6e6bb03d44f7e062a20",
-      "git_blob": "b286c31316275575c4f858b61a736fc38faa8d44",
-      "source_mtime_ns": 1780302183133713100,
-      "described_at_utc": "2026-06-01T08:33:44Z",
+      "content_sha256": "3401a1ec0f564fee1f8ce32807700ec1a521dd1509c98eaa5ca4f2a5d28d6ec2",
+      "git_blob": "b4fea39dc6de508be0e052e114737671599f662d",
+      "source_mtime_ns": 1780309288155454900,
+      "described_at_utc": "2026-06-01T10:37:23Z",
       "generated_self_exempt": false
     },
     {
@@ -18699,10 +18699,10 @@
       "description_lines": [
         "Guidance for root scripts: parity validators, reference refresh helpers, and operator/runbook shell tools."
       ],
-      "content_sha256": "cef077770738c6541bc2078eb73ddb0651e5175fb092f37c5027ce2a49c06bd3",
-      "git_blob": "6af9bd55d311fd7f3df93c6ba029cd8b6fadff33",
-      "source_mtime_ns": 1780307581974601900,
-      "described_at_utc": "2026-06-01T10:12:36Z",
+      "content_sha256": "374d456551b18800c70e2ee0f6cffbe194fac5e0b123e6a62032a5f084c14868",
+      "git_blob": "72fb71b215f0fc9ad192fda03ac2dd223503ab8c",
+      "source_mtime_ns": 1780309263781645500,
+      "described_at_utc": "2026-06-01T10:37:23Z",
       "generated_self_exempt": false
     },
     {
@@ -18956,10 +18956,10 @@
       "description_lines": [
         "Shell helper script for parallel blockfetch soak workflows."
       ],
-      "content_sha256": "623de689a9d673449e96facfe96f67a8c35b2018d7d5e9d797730640f1dad7e2",
-      "git_blob": "9e66c30fe9bc2e5f65eb10f12fd049f8834c6b1d",
-      "source_mtime_ns": 1780302113343616700,
-      "described_at_utc": "2026-06-01T08:34:12Z",
+      "content_sha256": "1d89bb039deb5f44e4ef211fde2f7bb6d78606f71b411d4302f1d08d89ad6de1",
+      "git_blob": "03646448366c2d765e4d8f57191159613dd105ea",
+      "source_mtime_ns": 1780310120674543400,
+      "described_at_utc": "2026-06-01T10:37:23Z",
       "generated_self_exempt": false
     },
     {
@@ -19441,10 +19441,10 @@
       "description_lines": [
         "Core-First Completion TODO: [x] Create task tracking files before code changes."
       ],
-      "content_sha256": "dfbc049183b0bc4e1d8bd01af569faee8060ec26c2b4b36fdd6a7eccee218df7",
-      "git_blob": "37b507792ee374a0319f8bbf917d98d8e9137cee",
-      "source_mtime_ns": 1780308207082341400,
-      "described_at_utc": "2026-06-01T10:12:36Z",
+      "content_sha256": "de09f55838b26749714730c27a5d513e942e31fae256e56d7ac8a8a15d1c2fb1",
+      "git_blob": "90b158ece9f8e11a37d92bc14df2c8b2221b9edc",
+      "source_mtime_ns": 1780309782929827400,
+      "described_at_utc": "2026-06-01T10:37:23Z",
       "generated_self_exempt": false
     },
     {

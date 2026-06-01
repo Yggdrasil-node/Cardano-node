@@ -411,7 +411,8 @@ The harness starts `yggdrasil-node`, captures Prometheus snapshots,
 asserts worker registration/migration, runs `compare_tip_to_haskell.sh` at
 `COMPARE_INTERVAL_S` cadence when `HASKELL_SOCK` is set, scans logs for
 worker-channel failures, and writes a concise summary under
-`$LOG_DIR/summary.txt`. Keep `REQUIRE_TIP_COMPARISON=1` for sign-off runs; it
+`$LOG_DIR/summary.txt` and machine-readable evidence under
+`$LOG_DIR/summary.json`. Keep `REQUIRE_TIP_COMPARISON=1` for sign-off runs; it
 fails before startup when no Haskell socket is configured or when the comparison
 interval cannot fit inside the run window. Each comparison inherits
 `TIP_QUERY_TIMEOUT_SECONDS` and defaults to a 60-second per-node timeout so a
@@ -421,9 +422,10 @@ refuses `EXPECT_WORKERS < MAX_CONCURRENT_BLOCK_FETCH_PEERS`,
 `REQUIRE_WORKERS=0`, `REQUIRE_PROGRESS=0`, `MIN_TIP_COMPARE_PASSES < 2`, final
 worker collapse, or post-activation worker shortfall samples, so a sign-off run
 cannot bypass the multi-worker activation, sustained-worker, progress, or
-Haskell evidence checks. Use `RUN_SECONDS=86400` for the 24-hour soak steps and
-set `TOPOLOGY=/path/to/topology.json` when rehearsing with a custom multi-relay
-topology.
+Haskell evidence checks. Preserve `summary.json` with the metrics snapshots and
+tip comparison logs for review. Use `RUN_SECONDS=86400` for the 24-hour soak
+steps and set `TOPOLOGY=/path/to/topology.json` when rehearsing with a custom
+multi-relay topology.
 
 ### 6.5a Two-peer parity check (preprod)
 
