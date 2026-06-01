@@ -282,7 +282,7 @@ if [[ "${SELF_TEST:-0}" != "1" ]]; then
   validate_signoff_contract || exit $?
 fi
 
-mkdir -p "$DB_DIR" "$LOG_DIR" "$METRICS_DIR"
+mkdir -p "$DB_DIR" "$LOG_DIR" "$METRICS_DIR" "$LOG_DIR/tip-snapshots"
 rm -f "$SOCKET_PATH"
 
 node_log="$LOG_DIR/yggdrasil-node.log"
@@ -740,7 +740,7 @@ EOF
   local apply_count=3
   local apply_avg="2.000s"
   local compare_passes=2
-  mkdir -p "$LOG_DIR" "$METRICS_DIR"
+  mkdir -p "$LOG_DIR" "$METRICS_DIR" "$LOG_DIR/tip-snapshots"
   printf 'tip comparison 1\n' >"$LOG_DIR/tip-compare-20260501T000000Z.log"
   printf 'tip comparison 2\n' >"$LOG_DIR/tip-compare-20260501T000100Z.log"
   write_summary_json "$summary_json_file"

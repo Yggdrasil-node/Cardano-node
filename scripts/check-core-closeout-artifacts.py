@@ -197,6 +197,46 @@ def artifact_result(name: str, path: Path, failures: list[str]) -> dict[str, Any
     }
 
 
+def require_path(
+    value: Any,
+    failures: list[str],
+    label: str,
+) -> Path | None:
+    if not isinstance(value, str) or not value:
+        failures.append(f"{label} must be a non-empty path")
+        return None
+    if "self-test" in value:
+        failures.append(f"{label} must not point at self-test data")
+        return None
+    return Path(value)
+
+
+def require_existing_dir(
+    value: Any,
+    failures: list[str],
+    label: str,
+) -> Path | None:
+    path = require_path(value, failures, label)
+    if path is None:
+        return None
+    if not path.is_dir():
+        failures.append(f"{label} must exist as a directory: {path}")
+    return path
+
+
+def require_existing_file(
+    value: Any,
+    failures: list[str],
+    label: str,
+) -> Path | None:
+    path = require_path(value, failures, label)
+    if path is None:
+        return None
+    if not path.is_file():
+        failures.append(f"{label} must exist as a file: {path}")
+    return path
+
+
 def validate_gap_bo(path: Path) -> dict[str, Any]:
     failures: list[str] = []
     fixture = load_json_object(path, failures)
@@ -482,10 +522,11 @@ def validate_blockfetch(
         if len(logs) < numeric(tip.get("tip_compare_passes")):
             failures.append("tip_compare_logs must include every passing comparison")
         for index, log_path in enumerate(logs):
-            if not isinstance(log_path, str) or not log_path:
-                failures.append(f"tip_compare_logs[{index}] must be a non-empty path")
-            elif "self-test" in log_path:
-                failures.append(f"tip_compare_logs[{index}] must not be self-test data")
+            require_existing_file(
+                log_path,
+                failures,
+                f"tip_compare_logs[{index}]",
+            )
 
         if numeric(run.get("run_seconds")) < min_run_seconds:
             failures.append(f"run_seconds must be at least {min_run_seconds}")
@@ -495,18 +536,17 @@ def validate_blockfetch(
             failures.append(
                 "tip_query_timeout_seconds must be below compare_interval_seconds"
             )
-        for key in ("run_dir", "log_dir", "metrics_dir", "node_log", "summary_txt"):
-            value = artifacts.get(key)
-            if not value:
-                failures.append(f"artifacts.{key} must be present")
-            elif "self-test" in str(value):
-                failures.append(f"artifacts.{key} must not point at self-test data")
-        snapshots = artifacts.get("tip_snapshots_dir")
-        if not snapshots:
-            failures.append("artifacts.tip_snapshots_dir must be present")
-        elif "self-test" in str(snapshots):
-            failures.append(
-                "artifacts.tip_snapshots_dir must not point at self-test data"
+        for key in ("run_dir", "log_dir", "metrics_dir", "tip_snapshots_dir"):
+            require_existing_dir(
+                artifacts.get(key),
+                failures,
+                f"artifacts.{key}",
+            )
+        for key in ("node_log", "summary_txt"):
+            require_existing_file(
+                artifacts.get(key),
+                failures,
+                f"artifacts.{key}",
             )
 
     return artifact_result(name, path, failures)
@@ -723,7 +763,33 @@ def sample_blockfetch(
     magic: int,
     knob: int,
     run_seconds: int,
+    artifact_base: Path | None = None,
 ) -> dict[str, Any]:
+    base = (
+        artifact_base / f"{network}-{knob}"
+        if artifact_base is not None
+        else Path("/tmp/core-closeout") / f"{network}-{knob}"
+    )
+    log_dir = base / "logs"
+    metrics_dir = base / "metrics"
+    node_log = log_dir / "yggdrasil-node.log"
+    summary_txt = log_dir / "summary.txt"
+    tip_snapshots_dir = log_dir / "tip-snapshots"
+    tip_compare_logs = [
+        log_dir / "tip-compare-1.log",
+        log_dir / "tip-compare-2.log",
+    ]
+    if artifact_base is not None:
+        metrics_dir.mkdir(parents=True, exist_ok=True)
+        tip_snapshots_dir.mkdir(parents=True, exist_ok=True)
+        node_log.write_text("sample node log\n", encoding="utf-8")
+        summary_txt.write_text("sample summary\n", encoding="utf-8")
+        for index, log_path in enumerate(tip_compare_logs, start=1):
+            log_path.write_text(
+                f"sample tip comparison {index}\n",
+                encoding="utf-8",
+            )
+
     return {
         "schema_version": 1,
         "blocker": "blockfetch-section-6.5",
@@ -750,10 +816,7 @@ def sample_blockfetch(
             "min_tip_compare_passes": 2,
             "tip_compare_passes": 2,
             "tip_compare_log_count": 2,
-            "tip_compare_logs": [
-                f"/tmp/core-closeout/{network}-{knob}/logs/tip-compare-1.log",
-                f"/tmp/core-closeout/{network}-{knob}/logs/tip-compare-2.log",
-            ],
+            "tip_compare_logs": [str(path) for path in tip_compare_logs],
         },
         "run": {
             "run_seconds": run_seconds,
@@ -761,31 +824,32 @@ def sample_blockfetch(
             "tip_query_timeout_seconds": 30,
         },
         "artifacts": {
-            "run_dir": f"/tmp/core-closeout/{network}-{knob}",
-            "log_dir": f"/tmp/core-closeout/{network}-{knob}/logs",
-            "metrics_dir": f"/tmp/core-closeout/{network}-{knob}/metrics",
-            "node_log": f"/tmp/core-closeout/{network}-{knob}/node.log",
-            "summary_txt": f"/tmp/core-closeout/{network}-{knob}/summary.txt",
-            "tip_snapshots_dir": f"/tmp/core-closeout/{network}-{knob}/logs/tip-snapshots",
+            "run_dir": str(base),
+            "log_dir": str(log_dir),
+            "metrics_dir": str(metrics_dir),
+            "node_log": str(node_log),
+            "summary_txt": str(summary_txt),
+            "tip_snapshots_dir": str(tip_snapshots_dir),
         },
     }
 
 
 def write_sample_artifacts(root: Path) -> None:
+    blockfetch_artifacts = root / "_blockfetch-artifacts"
     write_json(root / "gap-bo" / "fixture.json", sample_gap_bo())
     write_json(root / "gap-bp" / "fixture.json", sample_gap_bp())
     write_json(root / "r178" / "fixture.json", sample_r178())
     write_json(
         root / "blockfetch" / "preprod-two-peer" / "summary.json",
-        sample_blockfetch("preprod", 1, 2, 600),
+        sample_blockfetch("preprod", 1, 2, 600, blockfetch_artifacts),
     )
     write_json(
         root / "blockfetch" / "preprod-knob4" / "summary.json",
-        sample_blockfetch("preprod", 1, 4, 600),
+        sample_blockfetch("preprod", 1, 4, 600, blockfetch_artifacts),
     )
     write_json(
         root / "blockfetch" / "mainnet-24h" / "summary.json",
-        sample_blockfetch("mainnet", 764824073, 2, 86_400),
+        sample_blockfetch("mainnet", 764824073, 2, 86_400, blockfetch_artifacts),
     )
 
 
@@ -813,6 +877,22 @@ def run_self_test() -> int:
         r178 = next(check for check in checks if check["name"] == "r178")
         assert r178["status"] == "fail"
         assert any("self-test data" in item for item in r178["failures"])
+
+        write_sample_artifacts(root)
+        blockfetch_path = root / "blockfetch" / "preprod-two-peer" / "summary.json"
+        blockfetch_summary = load_json_object(blockfetch_path, [])
+        first_log = Path(blockfetch_summary["tip_comparison"]["tip_compare_logs"][0])
+        first_log.unlink()
+        write_json(blockfetch_path, blockfetch_summary)
+        checks = validate(root)
+        blockfetch = next(
+            check for check in checks if check["name"] == "blockfetch-preprod-two-peer"
+        )
+        assert blockfetch["status"] == "fail"
+        assert any(
+            "tip_compare_logs[0] must exist as a file" in item
+            for item in blockfetch["failures"]
+        )
 
     print("[ok] check-core-closeout-artifacts self-test passed")
     return 0

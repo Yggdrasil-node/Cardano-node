@@ -18,6 +18,8 @@ scripts/
 ├── check-fixture-manifest.py      # CI gate (R303): cardano-base SHA pin consistency
 ├── check-reference-artifacts.py   # Linux/WSL local-only: validates .reference-haskell-cardano-node/install/
 ├── check-core-evidence-harnesses.py # local preflight for core evidence helper self-tests
+├── check-core-closeout-artifacts.py # strict final live core closeout artifact gate
+├── stage-core-closeout-artifacts.py # stages live closeout artifacts then runs the final gate
 ├── check_upstream_drift.sh        # operator pin-drift report
 ├── compare_tip_to_haskell.sh      # upstream Haskell tip comparison helper
 ├── compare-conway-lsq.py          # R178 Conway LSQ cardano-cli comparison helper

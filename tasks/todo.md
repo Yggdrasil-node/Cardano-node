@@ -34,6 +34,7 @@
     - [x] Make the gate reject missing artifacts, self-test fixtures, weak equality modes, wrong slots/trace IDs, and weak BlockFetch soaks.
     - [x] Stamp and require `generated_at_utc` plus strict closeout-mode metadata on final Gap BO, Gap BP, and R178 fixtures.
     - [x] Add a WSL-only staging helper that copies strict live artifacts into the canonical closeout layout and runs the final gate.
+    - [x] Require final BlockFetch closeout summaries to reference existing log, metrics, summary, node-log, tip-snapshot, and Haskell tip-comparison artifacts.
   - [ ] Gap BO TPraos VRF replay and regression fixture.
     - [x] Add `YGG_DUMP_TPRAOS_VRF` / `YGG_DUMP_TPRAOS_VRF_FILE` evidence logging for overlay classification, delegate/key hashes, nonce state, TPraos seeds, VRF outputs, and proof hashes.
     - [x] Add preprod Gap BO `mkSeed` golden coverage for slots 429460 and 432000.
