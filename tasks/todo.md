@@ -28,6 +28,7 @@
     - [x] Add `scripts/check-core-evidence-harnesses.py` to run the Gap BO, Gap BP, R178, and BlockFetch helper self-tests together.
     - [x] Validate durable preflight artifacts, including the BlockFetch self-test `summary.json` strict-mode invariants.
     - [x] Validate fresh Gap BO, Gap BP, and R178 self-test fixtures in the core preflight.
+    - [x] Reject native Windows execution for the parity/shell preflight so it cannot use Windows-hosted Bash.
   - [ ] Gap BO TPraos VRF replay and regression fixture.
     - [x] Add `YGG_DUMP_TPRAOS_VRF` / `YGG_DUMP_TPRAOS_VRF_FILE` evidence logging for overlay classification, delegate/key hashes, nonce state, TPraos seeds, VRF outputs, and proof hashes.
     - [x] Add preprod Gap BO `mkSeed` golden coverage for slots 429460 and 432000.
@@ -210,3 +211,7 @@
 - Core fixture artifact-validation guards passed under WSL: `python3 -m py_compile scripts/check-core-evidence-harnesses.py scripts/compare-gap-bp-traces.py scripts/compare-conway-lsq.py`, `python3 scripts/check-core-evidence-harnesses.py`, and direct JSON assertions for all four artifact checks in `target/core-evidence-harnesses/summary.json`.
 - Core fixture artifact-validation full gates passed under WSL: `python3 scripts/check-doc-status-headers.py`, `python3 scripts/check-stale-placement.py`, `python3 scripts/check-strict-mirror.py`, `cargo fmt --all -- --check`, `cargo check-all`, `cargo lint`, `cargo lint-no-default`, and `cargo test-all`.
 - Core fixture artifact-validation security recheck passed under WSL: `cargo deny check advisories bans licenses sources` exited clean with only known duplicate/unused-license warnings, and `cargo tree -i aws-lc-sys`, `aws-lc-rs`, `native-tls`, and `openssl-sys` each reported no matching package IDs.
+- Core preflight environment hardening: `scripts/check-core-evidence-harnesses.py` now rejects native Windows execution and points operators to `wsl -e bash -lc "python3 scripts/check-core-evidence-harnesses.py"` so local parity helpers cannot accidentally run through Windows-hosted Bash.
+- Core preflight environment guards passed: WSL `python3 -m py_compile scripts/check-core-evidence-harnesses.py` and `python3 scripts/check-core-evidence-harnesses.py` pass, while native Windows `python scripts\check-core-evidence-harnesses.py` exits before running shell helpers with the WSL/Linux requirement.
+- Core preflight environment full gates passed under WSL: `python3 scripts/check-doc-status-headers.py`, `python3 scripts/check-stale-placement.py`, `python3 scripts/check-strict-mirror.py`, `cargo fmt --all -- --check`, `cargo check-all`, `cargo lint`, `cargo lint-no-default`, and `cargo test-all`.
+- Core preflight environment security recheck passed under WSL: `cargo deny check advisories bans licenses sources` exited clean with only known duplicate/unused-license warnings, and `cargo tree -i aws-lc-sys`, `aws-lc-rs`, `native-tls`, and `openssl-sys` each reported no matching package IDs.

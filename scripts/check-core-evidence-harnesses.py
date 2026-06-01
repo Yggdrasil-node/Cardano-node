@@ -90,6 +90,14 @@ def tail(text: str, line_count: int = 12) -> str:
     return "\n".join(lines[-line_count:])
 
 
+def require_wsl_or_linux() -> None:
+    if sys.platform == "win32":
+        raise SystemExit(
+            "check-core-evidence-harnesses.py must run under WSL/Linux; "
+            "use `wsl -e bash -lc \"python3 scripts/check-core-evidence-harnesses.py\"`"
+        )
+
+
 def build_cases() -> list[Case]:
     python = sys.executable
     cases = [
@@ -481,6 +489,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    require_wsl_or_linux()
     remove_expected_artifacts()
     results = [run_case(case) for case in build_cases()]
     artifact_checks = validate_artifacts()
