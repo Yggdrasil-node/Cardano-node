@@ -188,6 +188,8 @@ def validate_required_args(
         ]
         if missing:
             fail("--require-equal requires " + ", ".join(missing))
+        if not args.expected_trace_id:
+            fail("--require-equal requires --expected-trace-id")
 
 
 def write_summary(path: Path, summary: dict[str, Any]) -> None:
@@ -199,12 +201,17 @@ def run_comparison(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
     args.artifact_dir.mkdir(parents=True, exist_ok=True)
     results = [run_case(case) for case in build_cases(args)]
     failed = [result for result in results if result["status"] != "pass"]
-    identity = validate_trace_identity(results, require_haskell=args.require_haskell)
+    identity = validate_trace_identity(
+        results,
+        require_haskell=args.require_haskell,
+        expected_trace_id=args.expected_trace_id,
+    )
     summary = {
         "generated_at_utc": dt.datetime.now(dt.UTC).isoformat(),
         "status": "fail" if failed or identity["violations"] else "pass",
         "require_haskell": args.require_haskell,
         "require_equal": args.require_equal,
+        "expected_trace_id": args.expected_trace_id,
         "trace_identity": identity,
         "results": results,
     }
@@ -243,6 +250,7 @@ def trace_ids_from_results(summary: dict[str, Any], side: str) -> list[str]:
 def validate_trace_identity(
     results: list[dict[str, Any]],
     require_haskell: bool,
+    expected_trace_id: str | None,
 ) -> dict[str, Any]:
     by_name = {result["name"]: result.get("child_summary") for result in results}
     violations: list[str] = []
@@ -276,6 +284,10 @@ def validate_trace_identity(
         if script_trace_id is None:
             violations.append(f"{side}: script-context evidence has no trace identity")
             continue
+        if expected_trace_id is not None and script_trace_id != expected_trace_id:
+            violations.append(
+                f"{side}: trace_id {script_trace_id} does not match expected {expected_trace_id}"
+            )
         if cek_trace_ids != [script_trace_id]:
             violations.append(
                 f"{side}: CEK flush trace_id set {cek_trace_ids} does not match {script_trace_id}"
@@ -337,6 +349,7 @@ def run_self_test() -> int:
             artifact_dir=root / "capture",
             require_haskell=False,
             require_equal=False,
+            expected_trace_id=None,
         )
         summary, failed = run_comparison(capture_args)
         assert not failed, summary
@@ -354,6 +367,7 @@ def run_self_test() -> int:
             artifact_dir=root / "equal",
             require_haskell=True,
             require_equal=True,
+            expected_trace_id="aa:bb:V2",
         )
         summary, failed = run_comparison(equal_args)
         assert not failed, summary
@@ -375,6 +389,7 @@ def run_self_test() -> int:
             artifact_dir=root / "mismatch",
             require_haskell=True,
             require_equal=True,
+            expected_trace_id="aa:bb:V2",
         )
         summary, failed = run_comparison(mismatch_args)
         assert failed, summary
@@ -394,12 +409,32 @@ def run_self_test() -> int:
             artifact_dir=root / "trace-mismatch",
             require_haskell=True,
             require_equal=True,
+            expected_trace_id="aa:bb:V2",
         )
         summary, failed = run_comparison(trace_mismatch_args)
         assert failed, summary
         assert summary["trace_identity"]["violations"]
         assert "CEK flush trace_id" in summary["trace_identity"]["violations"][0]
         rust_cek.write_text(cek_flush, encoding="utf-8")
+
+        unexpected_trace_args = argparse.Namespace(
+            rust_script_context=rust_script,
+            haskell_script_context=haskell_script,
+            rust_cek_flushes=rust_cek,
+            haskell_cek_flushes=haskell_cek,
+            rust_builtin_costs=rust_builtin,
+            haskell_builtin_costs=haskell_builtin,
+            artifact_dir=root / "unexpected-trace",
+            require_haskell=True,
+            require_equal=True,
+            expected_trace_id="aa:wrong:V2",
+        )
+        summary, failed = run_comparison(unexpected_trace_args)
+        assert failed, summary
+        assert summary["trace_identity"]["violations"]
+        assert "does not match expected aa:wrong:V2" in summary["trace_identity"][
+            "violations"
+        ][0]
 
         missing_args = argparse.Namespace(
             rust_script_context=rust_script,
@@ -411,6 +446,7 @@ def run_self_test() -> int:
             artifact_dir=root / "missing",
             require_haskell=True,
             require_equal=True,
+            expected_trace_id="aa:bb:V2",
         )
         try:
             build_cases(missing_args)
@@ -429,6 +465,7 @@ def run_self_test() -> int:
             artifact_dir=root / "missing-equal",
             require_haskell=False,
             require_equal=True,
+            expected_trace_id="aa:bb:V2",
             self_test=False,
         )
         try:
@@ -437,6 +474,26 @@ def run_self_test() -> int:
             assert "--require-equal requires" in str(exc)
         else:
             raise AssertionError("expected require_equal missing-log failure")
+
+        missing_expected_args = argparse.Namespace(
+            rust_script_context=rust_script,
+            haskell_script_context=haskell_script,
+            rust_cek_flushes=rust_cek,
+            haskell_cek_flushes=haskell_cek,
+            rust_builtin_costs=rust_builtin,
+            haskell_builtin_costs=haskell_builtin,
+            artifact_dir=root / "missing-expected",
+            require_haskell=True,
+            require_equal=True,
+            expected_trace_id=None,
+            self_test=False,
+        )
+        try:
+            validate_required_args(missing_expected_args)
+        except SystemExit as exc:
+            assert "--require-equal requires --expected-trace-id" in str(exc)
+        else:
+            raise AssertionError("expected require_equal missing expected trace failure")
 
     print("[ok] compare-gap-bp-traces self-test passed")
     return 0
@@ -468,6 +525,13 @@ def parse_args() -> argparse.Namespace:
         "--require-equal",
         action="store_true",
         help="Exit non-zero when any supplied Haskell comparison differs",
+    )
+    parser.add_argument(
+        "--expected-trace-id",
+        help=(
+            "Expected <tx_hash>:<script_hash>:<version> identity for the "
+            "Gap BP evaluation. Required with --require-equal."
+        ),
     )
     args = parser.parse_args()
     validate_required_args(args, parser)

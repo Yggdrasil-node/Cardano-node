@@ -318,7 +318,8 @@ is capture-only.
 Runs the ScriptContext, CEK flush, and builtin-cost comparators as one Gap BP
 evidence gate. Rust logs for all three streams are required. Haskell logs are
 optional in capture mode, but the parity closeout command must use
-`--require-haskell --require-equal` so missing Haskell evidence or any
+`--require-haskell --require-equal --expected-trace-id <tx_hash>:<script_hash>:<version>`
+so missing Haskell evidence, a wrong captured evaluation identity, or any
 byte/field mismatch fails the aggregate summary in
 `target/gap-bp-trace-comparison/summary.json`. The aggregate gate also proves
 all three streams carry the same trace identity on each side and, in Haskell
