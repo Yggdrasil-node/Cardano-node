@@ -283,6 +283,11 @@ def validate_required_args(
         fail("--ygg-socket is required unless --self-test is set")
     if args.timeout_seconds <= 0:
         fail("--timeout-seconds must be positive")
+    equality_required = args.require_byte_equal or args.require_normalized_equal
+    if not args.self_test and args.require_haskell and not equality_required:
+        fail("--require-haskell requires --require-byte-equal or --require-normalized-equal")
+    if not args.self_test and equality_required and not args.require_haskell:
+        fail("--require-byte-equal/--require-normalized-equal require --require-haskell")
     if not args.self_test and args.require_haskell and args.haskell_socket is None:
         fail("--haskell-socket is required with --require-haskell")
     if (
@@ -465,7 +470,7 @@ def run_self_test() -> int:
                 ygg_socket=Path("node.sock"),
                 haskell_socket=None,
                 require_haskell=True,
-                require_byte_equal=False,
+                require_byte_equal=True,
                 require_normalized_equal=False,
                 timeout_seconds=DEFAULT_TIMEOUT_SECONDS,
             )
@@ -480,7 +485,7 @@ def run_self_test() -> int:
             argparse.Namespace(
                 self_test=False,
                 ygg_socket=Path("node.sock"),
-                haskell_socket=None,
+                haskell_socket=Path("haskell.sock"),
                 require_haskell=False,
                 require_byte_equal=True,
                 require_normalized_equal=False,
@@ -488,9 +493,26 @@ def run_self_test() -> int:
             )
         )
     except SystemExit as exc:
-        assert "--haskell-socket is required" in str(exc)
+        assert "require --require-haskell" in str(exc)
     else:
-        raise AssertionError("expected equality mode to reject missing socket")
+        raise AssertionError("expected equality mode to reject missing --require-haskell")
+
+    try:
+        validate_required_args(
+            argparse.Namespace(
+                self_test=False,
+                ygg_socket=Path("node.sock"),
+                haskell_socket=Path("haskell.sock"),
+                require_haskell=True,
+                require_byte_equal=False,
+                require_normalized_equal=False,
+                timeout_seconds=DEFAULT_TIMEOUT_SECONDS,
+            )
+        )
+    except SystemExit as exc:
+        assert "--require-haskell requires" in str(exc)
+    else:
+        raise AssertionError("expected require_haskell to require equality mode")
 
     try:
         validate_required_args(

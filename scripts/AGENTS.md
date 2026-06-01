@@ -271,9 +271,11 @@ that supplied socket paths exist and are Unix domain sockets, and each
 configurable through `CARDANO_CLI_TIMEOUT_SECONDS`) so stale sockets fail
 loudly instead of hanging an operator closeout. R178 closeout runs must pass
 `--require-haskell` plus either `--require-byte-equal` or
-`--require-normalized-equal`; otherwise the helper is only proving that the
-Yggdrasil socket is decodable by upstream `cardano-cli`. The self-test pins the
-HFC `QueryIfCurrent` envelope facts used by R178: match is a one-element `Right`
+`--require-normalized-equal`; the helper enforces that pairing in both
+directions so weak Haskell-presence runs cannot be mistaken for parity
+closeout. Without those flags the helper is only proving that the Yggdrasil
+socket is decodable by upstream `cardano-cli`. The self-test pins the HFC
+`QueryIfCurrent` envelope facts used by R178: match is a one-element `Right`
 list and mismatch is a two-element `Left` list of requested-era then ledger-era
 `NS` names.
 
