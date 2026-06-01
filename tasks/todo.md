@@ -34,6 +34,7 @@
     - [x] Add canonical nonce hex fields, a nonce-state phase marker, and a Rust evidence-line contract test for Gap BO captures.
     - [x] Add deterministic TPraos proof plumbing coverage for seedL/seedEta verification and cross-usage rejection.
     - [x] Make `scripts/compare-gap-bo-tpraos-vrf.py --require-equal` fail unless Haskell evidence is supplied.
+    - [x] Make Gap BO strict comparison require the configured target slot (`429460` by default) so wrong-slot evidence cannot close the blocker.
     - [ ] Capture upstream Haskell replay output for the failing preprod slot and add the final fixture.
   - [ ] Gap BP Plutus V2 cost replay and regression fixture.
     - [x] Add `YGG_DUMP_CEK_FLUSHES` / `YGG_DUMP_CEK_FLUSHES_FILE` accumulated-step CEK flush logging with per-kind counters and budget deltas.
@@ -158,3 +159,5 @@
 - Final WSL parity/status/security gates passed: `scripts/check-reference-artifacts.py`, stale-placement self-test/live check, doc-status self-test/live check, fixture manifest, parity matrix, strict mirror, `scripts/check-core-evidence-harnesses.py`, `cargo deny check advisories bans licenses sources`, and absence checks for `aws-lc-sys`, `aws-lc-rs`, `native-tls`, and `openssl-sys`.
 - R178 live-closeout hardening: `scripts/compare-conway-lsq.py` now rejects missing/non-socket Yggdrasil or Haskell socket paths before invoking `cardano-cli`, bounds each query with `--timeout-seconds`, records timeout metadata in `summary.json`, and self-tests stale socket and timeout rejection.
 - R178 live-closeout hardening guards passed under WSL: `python3 -m py_compile scripts/compare-conway-lsq.py scripts/check-core-evidence-harnesses.py`, `python3 scripts/compare-conway-lsq.py --self-test`, `python3 scripts/check-core-evidence-harnesses.py`, `python3 scripts/check-stale-placement.py`, `cargo fmt --all -- --check`, `cargo check-all`, `cargo lint`, `cargo lint-no-default`, and `cargo test-all`.
+- Gap BO closeout hardening: `scripts/compare-gap-bo-tpraos-vrf.py --require-equal` now fails unless the compared evidence includes `--target-slot` (default preprod slot `429460`), preventing accidental sign-off against nearby TPraos evidence.
+- Gap BO target-slot guards passed under WSL: `python3 -m py_compile scripts/compare-gap-bo-tpraos-vrf.py scripts/check-core-evidence-harnesses.py`, `python3 scripts/compare-gap-bo-tpraos-vrf.py --self-test`, `python3 scripts/check-core-evidence-harnesses.py`, `python3 scripts/check-stale-placement.py`, `python3 scripts/check-doc-status-headers.py`, `python3 scripts/check-strict-mirror.py`, `cargo fmt --all -- --check`, `cargo check-all`, `cargo lint`, `cargo lint-no-default`, and `cargo test-all`.

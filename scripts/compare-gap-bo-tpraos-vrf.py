@@ -21,6 +21,7 @@ from typing import Any
 
 EVIDENCE_PREFIX = "TPRAOS_VRF_EVIDENCE"
 KEY_RE = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)=")
+DEFAULT_GAP_BO_TARGET_SLOT = 429460
 REQUIRED_METADATA_KEYS = ("slot", "era", "verification")
 DEFAULT_COMPARE_KEYS = (
     "classification",
@@ -208,6 +209,15 @@ def compare_evidence(
     return results, failed
 
 
+def target_slot_status(results: list[dict[str, Any]], target_slot: int) -> dict[str, Any]:
+    matching = [result for result in results if result["slot"] == target_slot]
+    return {
+        "slot": target_slot,
+        "present": bool(matching),
+        "status": matching[0]["status"] if matching else "missing",
+    }
+
+
 def validate_required_args(
     args: argparse.Namespace,
     parser: argparse.ArgumentParser | None = None,
@@ -219,6 +229,10 @@ def validate_required_args(
 
     if not args.self_test and args.rust_log is None:
         fail("--rust-log is required unless --self-test is set")
+    if args.slot is not None and args.slot < 0:
+        fail("--slot must be non-negative")
+    if args.target_slot < 0:
+        fail("--target-slot must be non-negative")
     if not args.self_test and args.require_equal and args.haskell_log is None:
         fail("--haskell-log is required with --require-equal")
 
@@ -231,6 +245,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--rust-log", type=Path)
     parser.add_argument("--haskell-log", type=Path)
     parser.add_argument("--slot", type=int)
+    parser.add_argument(
+        "--target-slot",
+        type=int,
+        default=DEFAULT_GAP_BO_TARGET_SLOT,
+        help=(
+            "Slot that must be present for strict Gap BO closeout "
+            f"(default: {DEFAULT_GAP_BO_TARGET_SLOT})"
+        ),
+    )
     parser.add_argument(
         "--key",
         action="append",
@@ -321,10 +344,38 @@ def run_self_test() -> int:
                 self_test=False,
                 rust_log=Path("rust.log"),
                 haskell_log=None,
+                slot=None,
+                target_slot=DEFAULT_GAP_BO_TARGET_SLOT,
                 require_equal=True,
             )
         ),
         "--haskell-log is required",
+    )
+    expect_system_exit(
+        lambda: validate_required_args(
+            argparse.Namespace(
+                self_test=False,
+                rust_log=Path("rust.log"),
+                haskell_log=Path("haskell.log"),
+                slot=-1,
+                target_slot=DEFAULT_GAP_BO_TARGET_SLOT,
+                require_equal=True,
+            )
+        ),
+        "--slot must be non-negative",
+    )
+    expect_system_exit(
+        lambda: validate_required_args(
+            argparse.Namespace(
+                self_test=False,
+                rust_log=Path("rust.log"),
+                haskell_log=Path("haskell.log"),
+                slot=None,
+                target_slot=-1,
+                require_equal=True,
+            )
+        ),
+        "--target-slot must be non-negative",
     )
 
     changed = dict(parsed)
@@ -336,6 +387,18 @@ def run_self_test() -> int:
     )
     assert failed
     assert results[0]["mismatches"][0]["key"] == "leader_seed"
+    status = target_slot_status(results, DEFAULT_GAP_BO_TARGET_SLOT)
+    assert status == {
+        "slot": DEFAULT_GAP_BO_TARGET_SLOT,
+        "present": True,
+        "status": "fail",
+    }
+    status = target_slot_status(results, DEFAULT_GAP_BO_TARGET_SLOT + 1)
+    assert status == {
+        "slot": DEFAULT_GAP_BO_TARGET_SLOT + 1,
+        "present": False,
+        "status": "missing",
+    }
 
     print("[ok] compare-gap-bo-tpraos-vrf self-test passed")
     return 0
@@ -355,12 +418,16 @@ def main() -> int:
     if haskell_entries is not None:
         validate_required_keys(haskell_entries, keys)
     results, failed = compare_evidence(rust_entries, haskell_entries, keys)
+    target_slot = target_slot_status(results, args.target_slot)
+    if args.require_equal and not target_slot["present"]:
+        failed = True
     summary = {
         "compare_keys": keys,
         "required_keys": required_evidence_keys(keys),
         "rust_log": str(args.rust_log),
         "haskell_log": str(args.haskell_log) if args.haskell_log else None,
         "slot": args.slot,
+        "target_slot": target_slot,
         "results": results,
     }
     summary_path = args.artifact_dir / "summary.json"
@@ -373,6 +440,8 @@ def main() -> int:
                 f"  - {mismatch['key']}: rust={mismatch['rust']} "
                 f"haskell={mismatch['haskell']}"
             )
+    if args.require_equal and not target_slot["present"]:
+        print(f"target slot {args.target_slot}: missing")
     return 1 if failed and args.require_equal else 0
 
 
