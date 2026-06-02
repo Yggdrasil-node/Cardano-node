@@ -22,7 +22,7 @@ transition from `partial` to `verified_11_0_1`.
 **bech32 becomes the first sister tool with full deployment-ready
 100% parity to upstream.** Operators can replace
 `.reference-haskell-cardano-node/install/bin/bech32` with
-`target/release/bech32` (or invoke via `node/scripts/run-tools.sh
+`target/release/bech32` (or invoke via `node/dev/scripts/run-tools.sh
 bech32`) without observing any byte-level difference in CLI surface,
 encode/decode output, or error behavior.
 
@@ -54,7 +54,7 @@ is preserved.
 |---|---|---|
 | 1 | `bech32 --help` byte-equivalent to upstream (golden test pinned) | ✅ R332 |
 | 2 | Per-subcommand byte-equivalence on documented fixtures | ✅ R333 (4 round-trip tests) |
-| 3 | Drop-in deployment swap via `node/scripts/run-tools.sh bech32` | ✅ R333 |
+| 3 | Drop-in deployment swap via `node/dev/scripts/run-tools.sh bech32` | ✅ R333 |
 | 4 | Strict-mirror gate green (every production .rs has canonical docstring) | ✅ R331 + maintained |
 | 5 | `cargo test -p yggdrasil-bech32 --test integration` green | ✅ 8 golden tests pass |
 | 6 | Parity-matrix entry: `verified_11_0_1` | ✅ R334 (this round) |
@@ -69,7 +69,7 @@ All 8 acceptance criteria met. **bech32 is deployment-ready 100% parity.**
 $ cargo fmt --all -- --check
 (silent — clean)
 
-$ python3 scripts/check-strict-mirror.py --fail-on-violation
+$ python3 dev/test/check-strict-mirror.py --fail-on-violation
 strict-mirror: 0 violations (clean)
 
 $ cargo clippy --workspace --all-targets --all-features -- -D warnings
@@ -78,7 +78,7 @@ $ cargo clippy --workspace --all-targets --all-features -- -D warnings
 $ cargo test --workspace --all-features
 passed: 4887  failed: 0
 
-$ python3 scripts/check-parity-matrix.py
+$ python3 dev/test/check-parity-matrix.py
 parity matrix clean: 20 entries validated; 1 sister-tool now verified_11_0_1
 ```
 

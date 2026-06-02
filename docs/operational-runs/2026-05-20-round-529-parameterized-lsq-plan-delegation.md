@@ -17,7 +17,7 @@ preserving the existing wire envelopes and JSON result shapes.
 - `crates/tools/cardano-cli/src/parser.rs`
 - `crates/node/cardano-node/src/commands/query.rs`
 - `crates/node/cardano-node/src/commands/cardano_cli.rs`
-- `scripts/check-stale-placement.py`
+- `dev/test/check-stale-placement.py`
 - `crates/tools/cardano-cli/AGENTS.md`
 - `docs/COMPLETION_ROADMAP.md`
 - `docs/parity-matrix.json`
@@ -47,10 +47,10 @@ dispatcher expose the same parameterized query surface.
 - `cargo check-all`
 - `cargo lint`
 - `cargo test-all`
-- `python scripts/check-stale-placement.py`
-- `python scripts/check-stale-placement.py --self-test`
-- `python scripts/check-strict-mirror.py --fail-on-violation`
-- `python scripts/check-parity-matrix.py`
-- `python scripts/check-fixture-manifest.py`
-- `python .claude/scripts/filetree.py check`
+- `python dev/test/check-stale-placement.py`
+- `python dev/test/check-stale-placement.py --self-test`
+- `python dev/test/check-strict-mirror.py --fail-on-violation`
+- `python dev/test/check-parity-matrix.py`
+- `python dev/test/check-fixture-manifest.py`
+- `python dev/test/filetree.py check`
 - `git diff --check` (clean; Windows line-ending warnings only)

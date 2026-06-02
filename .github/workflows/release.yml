@@ -195,7 +195,7 @@ jobs:
           cp README.md LICENSE* "$dir/" 2>/dev/null || true
           # Wave 4 PR 6 follow-up: post-move paths.
           cp -r configuration "$dir/configuration"
-          cp -r scripts "$dir/scripts"
+          cp -r dev "$dir/dev"
           # Wave 7 PR 19: bundle the SBOM alongside the binary so
           # operators get the dep manifest in-tree.
           cp "${{ steps.sbom.outputs.sbom_src }}" "$dir/yggdrasil-node-sbom.cdx.json"

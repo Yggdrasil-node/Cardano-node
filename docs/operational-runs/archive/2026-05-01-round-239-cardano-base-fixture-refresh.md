@@ -28,7 +28,7 @@ lockstep so future fixture drift remains visible.
 Command:
 
 ```sh
-node/scripts/check_upstream_drift.sh
+node/dev/scripts/check_upstream_drift.sh
 ```
 
 Result:
@@ -72,7 +72,7 @@ Results:
 ### Status impact
 
 - Phase E.1 is closed for all 6 canonical IntersectMBO repositories.
-- `node/scripts/check_upstream_drift.sh` now reports no drift.
+- `node/dev/scripts/check_upstream_drift.sh` now reports no drift.
 - Remaining production-readiness gates are operator-time only:
   long-duration mainnet rehearsal and runbook section 6.5 parallel
   BlockFetch default-flip sign-off.

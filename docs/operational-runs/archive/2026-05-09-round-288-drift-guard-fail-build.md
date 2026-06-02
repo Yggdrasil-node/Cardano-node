@@ -7,7 +7,7 @@
 
 ## Scope
 
-Flip `scripts/check-strict-mirror.py` from warn-only to fail-build.
+Flip `dev/test/check-strict-mirror.py` from warn-only to fail-build.
 The strict 1:1 file-mirror policy goes from "informational warning"
 to "required CI gate".
 
@@ -26,7 +26,7 @@ appended `--fail-on-violation` to the script invocation:
 
 ```yaml
 - name: Strict-mirror drift-guard
-  run: python3 scripts/check-strict-mirror.py --fail-on-violation
+  run: python3 dev/test/check-strict-mirror.py --fail-on-violation
 ```
 
 The step name dropped its "(warn-only)" qualifier. The accompanying
@@ -43,7 +43,7 @@ cargo fmt --all -- --check
 cargo check-all
 cargo test-all
 cargo lint
-python3 scripts/check-strict-mirror.py --fail-on-violation
+python3 dev/test/check-strict-mirror.py --fail-on-violation
 ```
 
 The "Parity-flow gates" sub-section (run when in scope) keeps the
@@ -54,7 +54,7 @@ non-strict-mirror Python checkers (`check-parity-matrix.py`,
 ## Smoke test (synthetic violation)
 
 ```text
-$ python3 scripts/check-strict-mirror.py --fail-on-violation
+$ python3 dev/test/check-strict-mirror.py --fail-on-violation
 strict-mirror: 0 violations (clean)
 $ echo $?
 0
@@ -63,7 +63,7 @@ $ cat > crates/ledger/src/state/yggdrasil_invented_smoke.rs <<'EOF'
 //! Synthesis without docstring stanza - drift-guard smoke test.
 pub fn dummy() {}
 EOF
-$ python3 scripts/check-strict-mirror.py --fail-on-violation
+$ python3 dev/test/check-strict-mirror.py --fail-on-violation
 strict-mirror: 1 new file(s) violate the policy (neither upstream `.hs`
 mirror nor `## Naming parity` docstring stanza):
 ::warning file=crates/ledger/src/state/yggdrasil_invented_smoke.rs::(NEEDS-REVIEW) ...
@@ -71,7 +71,7 @@ $ echo $?
 1
 
 $ rm crates/ledger/src/state/yggdrasil_invented_smoke.rs
-$ python3 scripts/check-strict-mirror.py --fail-on-violation
+$ python3 dev/test/check-strict-mirror.py --fail-on-violation
 strict-mirror: 0 violations (clean)
 $ echo $?
 0
@@ -88,9 +88,9 @@ cargo fmt --all -- --check          clean
 cargo check-all                     clean (Finished `dev` profile in 0.39s)
 cargo lint                          clean (Finished `dev` profile in 0.19s)
 cargo test-all                      4855 passed; 0 failed (baseline preserved)
-python3 scripts/check-strict-mirror.py --fail-on-violation
+python3 dev/test/check-strict-mirror.py --fail-on-violation
                                     strict-mirror: 0 violations (clean), exit 0
-python3 scripts/check-parity-matrix.py
+python3 dev/test/check-parity-matrix.py
                                     parity matrix clean: 8 entries validated
 ```
 
@@ -122,9 +122,9 @@ docs/operational-runs/2026-05-09-round-288-... (new)
 The strict 1:1 file-mirror + tech-debt arc is closed. All 8 closure
 criteria from the plan are satisfied:
 
-1. ✅ `bash scripts/setup-reference.sh --force` brings vendored install
+1. ✅ `bash dev/reference/setup-reference.sh --force` brings vendored install
    to 11.0.1 (R274 step 0).
-2. ✅ `python3 scripts/check-strict-mirror.py` exits 0 on clean tree
+2. ✅ `python3 dev/test/check-strict-mirror.py` exits 0 on clean tree
    and nonzero when a synthetic violation is introduced (smoke test
    above).
 3. ✅ `cargo fmt --check && cargo check-all && cargo lint && cargo

@@ -9,7 +9,7 @@ Scope: documentary upstream pin refresh (5 of 6 pins), parallel-test
 
 ### Summary
 
-`node/scripts/check_upstream_drift.sh` reported 5/6 documentary pins
+`node/dev/scripts/check_upstream_drift.sh` reported 5/6 documentary pins
 drifted since the R245/R243/R239/R216/R201 refreshes:
 
 ```text
@@ -167,7 +167,7 @@ cargo check-all                                      # passing
 cargo test-all                                       # passing (race fix landed)
 cargo lint                                           # passing
 cargo test -p yggdrasil-node --lib upstream_pins::   # 3/3 passing
-node/scripts/check_upstream_drift.sh                 # drifted=0
+node/dev/scripts/check_upstream_drift.sh                 # drifted=0
 ```
 
 Drift result after the pin advances:
@@ -192,7 +192,7 @@ freshly built R249 binary, a short bounded soak was run against the
 preprod bootstrap peer:
 
 ```sh
-node/scripts/parallel_blockfetch_soak.sh \
+node/dev/evidence/parallel_blockfetch_soak.sh \
   NETWORK=preprod \
   MAX_CONCURRENT_BLOCK_FETCH_PEERS=2 \
   EXPECT_WORKERS=1 \
@@ -293,7 +293,7 @@ properties — transaction fees and automatic protocol-parameter
 update + application — hold across a long, real, end-to-end replay:
 
 ```sh
-node/scripts/parallel_blockfetch_soak.sh \
+node/dev/evidence/parallel_blockfetch_soak.sh \
   NETWORK=preview \
   MAX_CONCURRENT_BLOCK_FETCH_PEERS=2 \
   EXPECT_WORKERS=1 \

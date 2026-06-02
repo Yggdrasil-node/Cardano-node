@@ -43,7 +43,7 @@ cargo test -p yggdrasil-tx-generator script::selftest --lib
 cargo check -p yggdrasil-tx-generator
 cargo clippy -p yggdrasil-tx-generator --all-targets -- -D warnings
 cargo fmt --all -- --check
-python .claude/scripts/filetree.py check
+python dev/test/filetree.py check
 ```
 
 Workspace closeout gates:
@@ -52,8 +52,8 @@ Workspace closeout gates:
 cargo check-all
 cargo lint
 cargo test-all
-python scripts/check-parity-matrix.py
-python scripts/check-strict-mirror.py
+python dev/test/check-parity-matrix.py
+python dev/test/check-strict-mirror.py
 ```
 
 Observed result:

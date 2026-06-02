@@ -36,7 +36,7 @@ Per-round delivery:
 **Workspace tests:** 5,962 → 6,024 (+62 across 8 rounds).
 **Verification gates:** all five clean at HEAD (`cargo fmt`,
 `cargo check-all`, `cargo test-all`, `cargo lint`,
-`scripts/check-strict-mirror.py --fail-on-violation`).
+`dev/test/check-strict-mirror.py --fail-on-violation`).
 **Deferral status descriptors closed:**
 - `crates/tools/cardano-tracer/src/acceptors/utils.rs::prepare_data_point_requestor_status`
   — R423 deferral closed (real function shipped).
@@ -124,8 +124,8 @@ cargo fmt --all -- --check                 # clean
 cargo check-all                             # clean
 cargo test-all                              # 6,024 passing (was 5,962 pre-R452)
 cargo lint                                  # clean
-python3 scripts/check-strict-mirror.py --fail-on-violation  # 0 violations
-python3 scripts/check-parity-matrix.py     # clean
+python3 dev/test/check-strict-mirror.py --fail-on-violation  # 0 violations
+python3 dev/test/check-parity-matrix.py     # clean
 ```
 
 24/24 cardano-tracer acceptors tests pass at HEAD.

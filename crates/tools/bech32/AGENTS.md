@@ -11,7 +11,7 @@ Every production `.rs` here either mirrors a single canonical upstream
 `.hs` file by snake_case basename (with directory-prefix fallback for
 sibling collisions) OR carries a `## Naming parity` docstring stanza
 ending in `**Strict mirror:** none.` plus the upstream symbol(s)/
-file(s) the helper surfaces. CI gate: `python3 scripts/check-strict-mirror.py`.
+file(s) the helper surfaces. CI gate: `python3 dev/test/check-strict-mirror.py`.
 
 | Rust path | Upstream `.hs` |
 |---|---|
@@ -37,9 +37,9 @@ strict-mirror policy supports this absence per the `Setup.hs` /
 cargo build --release --workspace
 
 # Run via the universal launcher (R329):
-scripts/run-tools.sh bech32 --help        # byte-equivalent to upstream
-scripts/run-tools.sh bech32 --version     # byte-equivalent to upstream
-echo "706174617465" | scripts/run-tools.sh bech32 base16_
+dev/scripts/run-tools.sh bech32 --help        # byte-equivalent to upstream
+dev/scripts/run-tools.sh bech32 --version     # byte-equivalent to upstream
+echo "706174617465" | dev/scripts/run-tools.sh bech32 base16_
 # → base16_1wpshgct5v5r5mxh0
 
 # Or invoke the binary directly:
@@ -124,7 +124,7 @@ To verify the yggdrasil binary still tracks upstream byte-for-byte:
 
 ```bash
 # 1. Refresh vendored upstream tree (only needed when bumping bech32 version).
-bash scripts/setup-reference.sh
+bash dev/reference/setup-reference.sh
 
 # 2. Run cargo test for the bech32 crate.
 cargo test -p yggdrasil-bech32
@@ -145,7 +145,7 @@ diff <(.reference-haskell-cardano-node/install/bin/bech32 --help) \
 ## Maintenance Guidance
 
 - If upstream bumps the `bech32` package version: refresh the
-  vendored source via `bash scripts/setup-reference.sh`, re-capture
+  vendored source via `bash dev/reference/setup-reference.sh`, re-capture
   the help/version fixtures into `tests/fixtures/`, advance
   `UPSTREAM_BECH32_COMMIT` in `crates/node/config/src/upstream_pins.rs`, and run
   the full cargo gate.

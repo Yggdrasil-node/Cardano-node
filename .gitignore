@@ -23,9 +23,6 @@ tmp/
 .vscode/*
 !.vscode/settings.example.json
 
-# Claude Code local-only state (per-machine, not committed)
-.claude/scheduled_tasks.lock
-.claude/settings.local.json
 
 # Operator-side local files (do NOT commit secrets)
 *.skey
@@ -69,7 +66,7 @@ Thumbs.db
 *.swp
 *.swo
 
-# Backups produced by scripts/backup_db.sh when run locally
+# Backups produced by dev/scripts/backup_db.sh when run locally
 *.tar.gz.sha256
 yggdrasil-db-*.tar.gz
 

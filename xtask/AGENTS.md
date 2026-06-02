@@ -13,7 +13,7 @@ Current subcommands:
   `docs/strict-mirror-audit.tsv` for a newly-added synthesis Rust
   file. Validates the file actually carries the
   `## Naming parity ... **Strict mirror:** none.` stanza before
-  appending, then re-runs `scripts/check-strict-mirror.py
+  appending, then re-runs `dev/test/check-strict-mirror.py
   --fail-on-violation` to confirm the audit stays clean.
 - `parity-all` — runs all three Python parity validators in
   sequence (strict-mirror, parity-matrix, fixture-manifest).

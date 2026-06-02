@@ -29,7 +29,7 @@ this script and reporting an empty diff.
 
 ## Diff inventory
 
-- `node/scripts/compare_submit_api_to_upstream.sh` — new 175-line
+- `node/dev/evidence/compare_submit_api_to_upstream.sh` — new 175-line
   bash script. POSTs canonical inputs (empty body, malformed CBOR)
   to both endpoints, diffs HTTP status + body. Scrapes /metrics
   from both, diffs the `# HELP` / `# TYPE` shape (counter values
@@ -59,7 +59,7 @@ cargo run --release --bin cardano-submit-api -- \
   --metrics-port 18182
 
 # Terminal 3: comparison harness.
-node/scripts/compare_submit_api_to_upstream.sh
+node/dev/evidence/compare_submit_api_to_upstream.sh
 ```
 
 Expected output on success:
@@ -157,7 +157,7 @@ The decision to ship the harness as a bash script in `node/scripts/`
 2. **Operator-facing format.** Operators who want to verify the
    binary swap in their own environment expect a runnable script,
    not a test target.
-3. **Existing pattern.** `node/scripts/compare_tip_to_haskell.sh`
+3. **Existing pattern.** `node/dev/evidence/compare_tip_to_haskell.sh`
    uses the same shape for the chain-tip comparison; staying
    consistent reduces operator cognitive load.
 

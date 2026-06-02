@@ -21,7 +21,7 @@ cardano-cli LSQ owner.
 - Exposed `query-era-history` and `query-current-epoch` through the
   standalone `yggdrasil-cardano-cli` command enum and run dispatcher so
   the shared LSQ plan is reachable without the node wrapper.
-- Extended `scripts/check-stale-placement.py` so the era-history query
+- Extended `dev/test/check-stale-placement.py` so the era-history query
   must remain mapped to the shared LSQ plan.
 - Updated AGENTS and parity docs to record the 22-query shared LSQ
   surface.
@@ -37,10 +37,10 @@ cardano-cli LSQ owner.
 - `cargo check-all`
 - `cargo lint`
 - `cargo test-all`
-- `python scripts/check-stale-placement.py`
-- `python scripts/check-stale-placement.py --self-test`
-- `python scripts/check-strict-mirror.py --fail-on-violation`
-- `python scripts/check-parity-matrix.py`
-- `python scripts/check-fixture-manifest.py`
-- `python .claude/scripts/filetree.py check`
+- `python dev/test/check-stale-placement.py`
+- `python dev/test/check-stale-placement.py --self-test`
+- `python dev/test/check-strict-mirror.py --fail-on-violation`
+- `python dev/test/check-parity-matrix.py`
+- `python dev/test/check-fixture-manifest.py`
+- `python dev/test/filetree.py check`
 - `git diff --check` (exit 0; Windows CRLF warnings only)

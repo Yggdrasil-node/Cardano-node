@@ -128,7 +128,7 @@ under per-round approval.
 ### References
 
 - R269 first slice: `2026-05-06-round-269-state-mir-extraction.md`
-- Plan: `~/.claude/plans/dapper-giggling-haven.md`
+- Plan: `docs/COMPLETION_ROADMAP.md`
 - Upstream RATIFY rule:
   `.reference-haskell-cardano-node/deps/cardano-ledger/eras/conway/impl/src/Cardano/Ledger/Conway/Rules/Ratify.hs`
 - Upstream RATIFY internals:

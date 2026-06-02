@@ -21,7 +21,7 @@ for the remaining completeness risks.
 - Repaired the parity-matrix validator so the accepted Phase 2.D and
   Phase 2.E sister-tool milestone ranges cover the current R591/R823-era
   matrix entries.
-- Repaired `.claude/scripts/filetree.py` description generation so Rust
+- Repaired `dev/test/filetree.py` description generation so Rust
   doc summaries stop before `## Naming parity` stanzas, markdown summaries
   ignore YAML front matter, operational-run descriptions are stable, and
   unchanged accepted entries keep their existing accepted metadata.
@@ -37,23 +37,23 @@ for the remaining completeness risks.
   held mutex guard. This keeps Rust 2024's unsafe environment mutation
   localized to two documented helper bodies instead of repeating unsafe
   blocks through the test cases.
-- Regenerated and accepted `.claude/filetree/manifest.json` and
-  `.claude/filetree/FILETREE.md`.
+- Regenerated and accepted `dev/filetree/manifest.json` and
+  `dev/filetree/FILETREE.md`.
 - Tightened `deny.toml` license policy by removing unused `MPL-2.0`
   and `Unicode-DFS-2016` allowances after `cargo-deny` reported that
   neither license appears in the current dependency graph.
-- Tightened `scripts/check-doc-status-headers.py` so central status
+- Tightened `dev/test/check-doc-status-headers.py` so central status
   headers must agree on `As of date` and must not declare a round
   ceiling behind the highest `docs/operational-runs/*round-*.md` record.
-- Extended `scripts/check-doc-status-headers.py` to load
+- Extended `dev/test/check-doc-status-headers.py` to load
   `docs/parity-matrix.json` and fail if the central docs' `Parity tag`
   drifts from `reference.tag`, keeping prose status metadata tied to
   the machine-readable parity source of truth.
-- Extended `scripts/check-doc-status-headers.py` to validate
+- Extended `dev/test/check-doc-status-headers.py` to validate
   `docs/PARITY_DASHBOARD.md` against the canonical header date and the
   live `docs/parity-matrix.json` entry/status counts, then refreshed
   the dashboard's last-updated date to the R824 audit date.
-- Hardened the dashboard parser in `scripts/check-doc-status-headers.py`
+- Hardened the dashboard parser in `dev/test/check-doc-status-headers.py`
   so duplicate dashboard date rows, total rows, or status-count rows
   fail explicitly instead of being masked during summary comparison.
 - Scoped dashboard total/status parsing to the compact metric summary
@@ -75,17 +75,17 @@ for the remaining completeness risks.
 - Hardened the doc-status self-test fixtures so temporary `ROOT` and
   `DASHBOARD_PATH` overrides are restored immediately after each
   fixture, even when an assertion fails.
-- Added `scripts/check-doc-status-headers.py --self-test` so the
+- Added `dev/test/check-doc-status-headers.py --self-test` so the
   markdown-only latest-round scan and duplicate dashboard-row checks
   are permanent regression coverage, then wired the self-test into CI
   before the live doc-status scan.
-- Tightened `scripts/check-doc-status-headers.py` to reject duplicate
+- Tightened `dev/test/check-doc-status-headers.py` to reject duplicate
   canonical status-header fields instead of letting later field lines
   silently overwrite earlier ones.
 - Replaced the doc-status self-test's last Python `assert` statement
   with an explicit `AssertionError` branch so the regression check is
   not disabled under optimized Python execution.
-- Tightened `scripts/check-doc-status-headers.py` to reject duplicate
+- Tightened `dev/test/check-doc-status-headers.py` to reject duplicate
   `## Canonical Status Header` sections instead of parsing the first
   section and silently ignoring a later duplicate.
 - Removed the now-unused `parity_matrix_tag()` helper after the
@@ -99,20 +99,20 @@ for the remaining completeness risks.
   validator inventories so future agents see it as part of the
   workspace verification surface.
 - Wired the doc-status validator into `.github/workflows/ci.yml` and
-  documented it in `scripts/AGENTS.md`, closing the gap where the
+  documented it in `dev/AGENTS.md`, closing the gap where the
   guard existed locally but was not enforced by CI.
-- Corrected the `scripts/AGENTS.md` `check-reference-artifacts.py`
+- Corrected the `dev/AGENTS.md` `check-reference-artifacts.py`
   inventory so its per-network file list matches the validator's
   actual eight-file install-tree contract.
 - Removed stale `shutil` commentary and the unused import from
-  `scripts/check-reference-artifacts.py`; its docstring now states that
+  `dev/test/check-reference-artifacts.py`; its docstring now states that
   the policy tag is read at runtime from `docs/parity-matrix.json`.
 - Removed stale current-facing BlockFetch default-flip wording from
   the manual runbook and upstream parity notes. The code default is
   already pinned at `2`; §6.5 sign-off now closes the operator gate
   rather than flipping a default that has already graduated.
 - Removed the same stale BlockFetch default-flip wording from the
-  completion roadmap and widened `scripts/check-stale-placement.py`
+  completion roadmap and widened `dev/test/check-stale-placement.py`
   so the unbackticked `from 1 to 2` variant is rejected as well.
 - Renamed the sync crate's explicit single-peer concurrency test so it
   no longer describes knob `1` as the shipped default.
@@ -120,7 +120,7 @@ for the remaining completeness risks.
   isolated-test default remains single-peer, while the binary runtime
   overrides it from `NodeConfigFile`, whose shipped default is pinned
   at `2`.
-- Extended `scripts/check-stale-placement.py` and the script/root/docs
+- Extended `dev/test/check-stale-placement.py` and the script/root/docs
   AGENTS guidance so old pre-R258 BlockFetch default-flip wording is
   rejected in living docs.
 - Refreshed the canonical status headers in `docs/PARITY_SUMMARY.md`,
@@ -139,7 +139,7 @@ for the remaining completeness risks.
 - Refreshed the README, docs home page, architecture reference, and
   installation manual so user-facing docs no longer advertised the
   old 2026-05-17 / 6,519-test or 4.7K+ baselines.
-- Extended `scripts/check-stale-placement.py` and its self-test to
+- Extended `dev/test/check-stale-placement.py` and its self-test to
   catch stale README/docs-site verification-baseline wording such as
   the old rounded/shorthand test-count strings and pre-R824 status
   headings.
@@ -156,10 +156,10 @@ for the remaining completeness risks.
   `sister-tool.cardano-submit-api` parity-matrix entry so they describe
   the R569-R688 typed rejection decoder state instead of the older
   R344 raw-bytes-only surface.
-- Extended `scripts/check-stale-placement.py` so the closed
+- Extended `dev/test/check-stale-placement.py` so the closed
   cardano-submit-api structured-decoder debt wording cannot return in
   current scanned docs or Rustdoc.
-- Extended `scripts/check-parity-matrix.py` with the R824-R843
+- Extended `dev/test/check-parity-matrix.py` with the R824-R843
   follow-on band and moved the cardano-submit-api next milestone to
   R825, preserving the validator contract that milestones are concrete
   R-round identifiers.
@@ -178,10 +178,10 @@ for the remaining completeness risks.
 - Reused that shared helper in the cardano-cli transaction runner,
   preserving the existing CLI txid behavior while moving the raw-CBOR
   body-span extraction to the ledger crate.
-- Extended `scripts/check-stale-placement.py` and its self-test so old
+- Extended `dev/test/check-stale-placement.py` and its self-test so old
   cardano-submit-api R345/R346 current-status wording is rejected in
   scanned current surfaces.
-- Extended `scripts/check-stale-placement.py` and its self-test so the
+- Extended `dev/test/check-stale-placement.py` and its self-test so the
   closed cardano-submit-api accepted-response `"OK"` wording cannot
   return in current-facing surfaces.
 - Refreshed the root `Cargo.toml` workspace-member label for
@@ -201,13 +201,13 @@ for the remaining completeness risks.
   descriptor, parity matrix, and unreleased changelog so its
   ControlClient socket I/O gate points at the R444+ kes-agent
   daemon/socket follow-on instead of the superseded early mini-arc.
-- Extended `scripts/check-stale-placement.py` and its self-test so old
+- Extended `dev/test/check-stale-placement.py` and its self-test so old
   kes-agent / kes-agent-control early-mini-arc current-status wording
   cannot return in scanned current surfaces.
 - Refreshed the remaining root `Cargo.toml` sister-tool member comments
   so they match the current parity-matrix status/milestone view instead
   of older historical arc labels.
-- Extended `scripts/check-stale-placement.py` and its self-test so those
+- Extended `dev/test/check-stale-placement.py` and its self-test so those
   old root-manifest sister-tool status labels cannot return in scanned
   current surfaces.
 - Refreshed the root/docs/scripts validator guidance so the documented
@@ -216,14 +216,14 @@ for the remaining completeness risks.
 - Refreshed the `bech32` parity-matrix role after finding that the
   verified entry still described concrete implementation as future
   A.1 work instead of the shipped R331-R334 closeout.
-- Extended `scripts/check-stale-placement.py` and its self-test so the
+- Extended `dev/test/check-stale-placement.py` and its self-test so the
   old bech32 pre-verified current-status wording cannot return in
   scanned current surfaces.
 - Refreshed the `dmq-node` current-status surface after finding that
   the code/AGENTS evidence had advanced through the R717-R816 pure-logic
   and mux-bundle arcs while `status.rs`, `lib.rs`, the parity matrix,
   and tail AGENTS guidance still described the old pre-R816 boundary.
-- Extended `scripts/check-stale-placement.py` and its self-test so the
+- Extended `dev/test/check-stale-placement.py` and its self-test so the
   old dmq-node pre-R816 current-status strings cannot return in scanned
   current surfaces.
 - Refreshed the `cardano-testnet` current-status surface after finding
@@ -231,7 +231,7 @@ for the remaining completeness risks.
   type/parser-composition arcs while `status.rs`, `lib.rs`,
   `parser.rs`, root `Cargo.toml`, AGENTS guidance, and the parity
   matrix still described older R359/R367/R445/R534 boundaries.
-- Extended `scripts/check-stale-placement.py` and its self-test so the
+- Extended `dev/test/check-stale-placement.py` and its self-test so the
   old cardano-testnet pre-R823 current-status strings and root manifest
   label cannot return in scanned current surfaces.
 - Repaired the Windows `cargo test-all` failure in
@@ -411,11 +411,11 @@ for the remaining completeness risks.
   with no unused-license allowance warnings after tightening
   `deny.toml`.
 - `git diff --check` - green.
-- `python3 -m py_compile .claude/scripts/filetree.py scripts/check-parity-matrix.py scripts/check-doc-status-headers.py` - green.
-- `python3 scripts/check-doc-status-headers.py` - green after the
+- `python3 -m py_compile dev/test/filetree.py dev/test/check-parity-matrix.py dev/test/check-doc-status-headers.py` - green.
+- `python3 dev/test/check-doc-status-headers.py` - green after the
   R824 header refresh, stale-ceiling guard tightening, and parity-matrix
   tag cross-check.
-- `python3 scripts/check-doc-status-headers.py --self-test` - green
+- `python3 dev/test/check-doc-status-headers.py --self-test` - green
   after adding permanent regression coverage for doc-status edge cases,
   including prose mentions of the canonical status-header heading text
   and unrelated dashboard tables after the metric summary, while
@@ -423,105 +423,105 @@ for the remaining completeness risks.
   duplicate dashboard status-date lines, inline classification mentions,
   duplicate classification banners, duplicate status-count rows, and
   self-test fixture path leaks.
-- `python3 -O scripts/check-doc-status-headers.py --self-test` - green;
+- `python3 -O dev/test/check-doc-status-headers.py --self-test` - green;
   the self-test remains active under optimized Python execution.
-- `python3 scripts/check-parity-matrix.py` - green; 22 entries validated
+- `python3 dev/test/check-parity-matrix.py` - green; 22 entries validated
   against reference tag 11.0.1.
-- `python3 scripts/check-strict-mirror.py --fail-on-violation` - green;
+- `python3 dev/test/check-strict-mirror.py --fail-on-violation` - green;
   0 violations.
-- `python3 scripts/check-stale-placement.py --self-test` - green,
+- `python3 dev/test/check-stale-placement.py --self-test` - green,
   including the stale parity-proof R529 cap guard.
-- `python3 scripts/check-stale-placement.py` - green.
-- `python scripts/check-stale-placement.py --self-test` - green after
+- `python3 dev/test/check-stale-placement.py` - green.
+- `python dev/test/check-stale-placement.py --self-test` - green after
   the README/docs-site stale-baseline guard extension and the
   unbackticked BlockFetch default-flip wording plus post-R529
   current-baseline wording guards in this Windows shell.
-- `python scripts/check-stale-placement.py` - green after the
+- `python dev/test/check-stale-placement.py` - green after the
   README/docs-site baseline refresh in this Windows shell.
-- `python scripts/check-stale-placement.py --self-test` - red after
+- `python dev/test/check-stale-placement.py --self-test` - red after
   adding the URL-encoded stale README badge fixture, then green after
   widening the stale-baseline pattern.
-- `python scripts/check-stale-placement.py` - green after correcting
+- `python dev/test/check-stale-placement.py` - green after correcting
   the README badge to `7,211 passing`.
-- `python scripts/check-stale-placement.py --self-test` - red after
+- `python dev/test/check-stale-placement.py --self-test` - red after
   adding the closed cardano-submit-api structured-decoder debt fixture,
   then green after adding the stale pattern.
-- `python scripts/check-stale-placement.py` - red while the obsolete
+- `python dev/test/check-stale-placement.py` - red while the obsolete
   cardano-submit-api tech-debt entry and Rustdoc comments remained, then
   green after removing/updating those current surfaces.
-- `python scripts/check-parity-matrix.py` - green after refreshing the
+- `python dev/test/check-parity-matrix.py` - green after refreshing the
   cardano-submit-api entry and allowing the R824-R843 follow-on band.
 - `cargo fmt --all -- --check` - green after the cardano-submit-api
   documentation and parity-matrix cleanup.
 - `cargo test -p yggdrasil-cardano-submit-api` - green after the
   cardano-submit-api documentation cleanup; 355 lib tests, 4 CLI
   golden tests, and 1 doctest passed.
-- `python scripts/check-stale-placement.py --self-test` - red after
+- `python dev/test/check-stale-placement.py --self-test` - red after
   adding stale R345/R346 cardano-submit-api evidence fixtures, then
   green after adding the stale pattern.
-- `python scripts/check-stale-placement.py` - red while current
+- `python dev/test/check-stale-placement.py` - red while current
   cardano-submit-api AGENTS/script/roadmap surfaces still pointed at
   R345/R346, then green after the R825+ refresh.
-- `python scripts/check-stale-placement.py --self-test` - red after
+- `python dev/test/check-stale-placement.py --self-test` - red after
   adding the root `Cargo.toml` stale R338-R345 cardano-submit-api member
   label fixture, then green after widening the R345/R346 stale-evidence
   pattern.
-- `python scripts/check-stale-placement.py` - green after the root
+- `python dev/test/check-stale-placement.py` - green after the root
   `Cargo.toml` workspace-member comment was refreshed away from the old
   R338-R345 implementation-arc label.
-- `python scripts/check-stale-placement.py --self-test` - red after
+- `python dev/test/check-stale-placement.py --self-test` - red after
   adding the stale kes-agent early-mini-arc fixture, then green after
   adding the stale pattern.
 - `cargo test -p yggdrasil-kes-agent daemon_status_describes_deferral --lib`
   - red after requiring the R444+ follow-on in `daemon_status()`, then
   green after refreshing the deferral descriptor.
-- `python scripts/check-stale-placement.py` - red while current
+- `python dev/test/check-stale-placement.py` - red while current
   kes-agent and kes-agent-control AGENTS/status/changelog surfaces still
   pointed at the superseded early mini-arc, then green after the R444+
   daemon/socket refresh.
-- `python scripts/check-stale-placement.py --self-test` - red after
+- `python dev/test/check-stale-placement.py --self-test` - red after
   adding stale kes-agent-control pre-R444 fixture strings, then green
   after adding the stale pattern.
 - `cargo test -p yggdrasil-kes-agent-control control_client_status_describes_deferral --lib`
   - red after requiring the R444+ daemon follow-on in
   `control_client_status()`, then green after refreshing the descriptor.
-- `python scripts/check-stale-placement.py --self-test` - red after
+- `python dev/test/check-stale-placement.py --self-test` - red after
   adding root-manifest sister-tool status-label fixtures for the old
   parity-matrix drift, then green after adding the stale pattern.
-- `python scripts/check-stale-placement.py` - green after the root
+- `python dev/test/check-stale-placement.py` - green after the root
   `Cargo.toml` sister-tool member comments were refreshed to the current
   parity-matrix status/milestone view.
-- `python scripts/check-stale-placement.py --self-test` - red after
+- `python dev/test/check-stale-placement.py --self-test` - red after
   adding the stale bech32 pre-verified role fixture, then green after
   adding the stale pattern.
-- `python scripts/check-stale-placement.py` - green after the bech32
+- `python dev/test/check-stale-placement.py` - green after the bech32
   parity-matrix role was refreshed to the verified closeout state.
 - `cargo test -p yggdrasil-dmq-node diffusion_wiring_status_describes_deferral --lib`
   - red after requiring the status descriptor to name R717-R816 and the
   R817+ event-loop gate, then green after refreshing the descriptor.
-- `python scripts/check-stale-placement.py --self-test` - red after
+- `python dev/test/check-stale-placement.py --self-test` - red after
   adding stale dmq-node pre-R816 current-status fixtures, then green
   after adding the stale pattern.
-- `python scripts/check-stale-placement.py` - green after the dmq-node
+- `python dev/test/check-stale-placement.py` - green after the dmq-node
   status descriptors, AGENTS guidance, and parity-matrix entry were
   refreshed to the post-R816 state.
-- `python scripts/check-parity-matrix.py` - green after advancing the
+- `python dev/test/check-parity-matrix.py` - green after advancing the
   dmq-node entry to the R817+ run-loop event-loop gate.
 - `cargo test -p yggdrasil-cardano-testnet era_dispatch_status_describes_deferral --lib`
   - red after requiring the status descriptor to name R772-R823 and the
   R824+ `Command` payload/runtime gate, then green after refreshing the
   descriptor.
-- `python scripts/check-stale-placement.py --self-test` - red after
+- `python dev/test/check-stale-placement.py --self-test` - red after
   adding stale cardano-testnet pre-R823 current-status fixtures and the
   root manifest label fixture, then green after adding the stale
   pattern.
-- `python scripts/check-stale-placement.py` - green after the
+- `python dev/test/check-stale-placement.py` - green after the
   cardano-testnet status descriptors, parser/lib docs, AGENTS guidance,
   root manifest comment, parity-matrix entry, and filetree descriptions
   were refreshed to the post-R823 state.
-- `python scripts/check-parity-matrix.py` - green after advancing the
+- `python dev/test/check-parity-matrix.py` - green after advancing the
   cardano-testnet entry to the post-R823 parser/runtime gate.
-- `python scripts/check-parity-matrix.py` - green after closing the
+- `python dev/test/check-parity-matrix.py` - green after closing the
   accepted-response TxId gap in the cardano-submit-api entry.
 - `cargo test -p yggdrasil-ledger compute_tx_id_from_tx_cbor --lib` -
   red before adding the shared helper, then green with 2 focused tests.
@@ -536,20 +536,20 @@ for the remaining completeness risks.
   1 doctest passed.
 - `cargo clippy -p yggdrasil-ledger -p yggdrasil-cardano-cli -p yggdrasil-cardano-submit-api --all-targets -- -D warnings` -
   green after the shared helper and submit-api response changes.
-- `python scripts/check-stale-placement.py --self-test` - red after
+- `python dev/test/check-stale-placement.py --self-test` - red after
   adding the stale accepted-response `"OK"` fixture, then green after
   adding the stale pattern.
-- `python scripts/check-stale-placement.py` - green after current
+- `python dev/test/check-stale-placement.py` - green after current
   cardano-submit-api docs, roadmap, parity matrix, and operational
   evidence stopped advertising the closed `"OK"` response gap.
-- `python scripts/check-doc-status-headers.py` - green after the B2
+- `python dev/test/check-doc-status-headers.py` - green after the B2
   roadmap refresh.
-- `python3 scripts/check-fixture-manifest.py` - green.
-- `python3 scripts/check-reference-artifacts.py` - green under WSL;
+- `python3 dev/test/check-fixture-manifest.py` - green.
+- `python3 dev/test/check-reference-artifacts.py` - green under WSL;
   cardano-node 11.0.1 install, nine binaries, and three network share
   dirs validated. Native Windows correctly refuses this gate because the
   reference install contains Linux executables.
-- `python3 .claude/scripts/filetree.py check` - green.
+- `python3 dev/test/filetree.py check` - green.
 - `cargo test -p yggdrasil-cardano-testnet filepath::tests:: --lib` -
   green after the explicit slash-join repair; 7 focused tests passed.
 - `cargo test -p yggdrasil-cardano-testnet` - green after the explicit
@@ -566,16 +566,16 @@ for the remaining completeness risks.
   `cargo test-all` all exited 0. The broad test gate retained
   0 failures and the expected three ignored node-tracer doctests.
 - Final non-Cargo closeout pass on 2026-05-26 exited 0 for
-  `python scripts/check-parity-matrix.py`,
-  `python scripts/check-strict-mirror.py --fail-on-violation`,
-  `python scripts/check-stale-placement.py --self-test`,
-  `python scripts/check-stale-placement.py`,
-  `python scripts/check-fixture-manifest.py`,
-  `python scripts/check-doc-status-headers.py --self-test`,
-  `python scripts/check-doc-status-headers.py`,
-  `python -m py_compile scripts/check-stale-placement.py scripts/check-parity-matrix.py scripts/check-doc-status-headers.py .claude/scripts/filetree.py`,
-  `python .claude/scripts/filetree.py check`,
-  `wsl.exe -e bash -lc "cd /mnt/v/workspace/Cardano-node && python3 scripts/check-reference-artifacts.py"`,
+  `python dev/test/check-parity-matrix.py`,
+  `python dev/test/check-strict-mirror.py --fail-on-violation`,
+  `python dev/test/check-stale-placement.py --self-test`,
+  `python dev/test/check-stale-placement.py`,
+  `python dev/test/check-fixture-manifest.py`,
+  `python dev/test/check-doc-status-headers.py --self-test`,
+  `python dev/test/check-doc-status-headers.py`,
+  `python -m py_compile dev/test/check-stale-placement.py dev/test/check-parity-matrix.py dev/test/check-doc-status-headers.py dev/test/filetree.py`,
+  `python dev/test/filetree.py check`,
+  `wsl.exe -e bash -lc "cd /mnt/v/workspace/Cardano-node && python3 dev/test/check-reference-artifacts.py"`,
   and `git diff --check`.
 
 ## Remaining risk

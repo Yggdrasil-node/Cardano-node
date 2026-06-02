@@ -122,7 +122,7 @@ behaviour with two call sites qualified to `super::enact::...`.
 
 - R269 first slice: `2026-05-06-round-269-state-mir-extraction.md`
 - R269 second slice: `2026-05-06-round-269b-state-ratify-extraction.md`
-- Plan: `~/.claude/plans/dapper-giggling-haven.md`
+- Plan: `docs/COMPLETION_ROADMAP.md`
 - Upstream ENACT rule:
   `.reference-haskell-cardano-node/deps/cardano-ledger/eras/conway/impl/src/Cardano/Ledger/Conway/Rules/Enact.hs`
 - Upstream EnactState record:

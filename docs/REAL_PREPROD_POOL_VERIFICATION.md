@@ -26,7 +26,7 @@ This workflow verifies yggdrasil block-producer runtime behavior against the rea
 KES_SKEY_PATH=/abs/path/kes.skey \
 VRF_SKEY_PATH=/abs/path/vrf.skey \
 OPCERT_PATH=/abs/path/node.cert \
-scripts/run_preprod_real_pool_producer.sh
+dev/scripts/run_preprod_real_pool_producer.sh
 ```
 
 Strict mode for active pools (longer observation window):
@@ -38,7 +38,7 @@ OPCERT_PATH=/abs/path/node.cert \
 RUN_SECONDS=900 \
 EXPECT_FORGE_EVENTS=1 \
 EXPECT_ADOPTED_EVENTS=1 \
-scripts/run_preprod_real_pool_producer.sh
+dev/scripts/run_preprod_real_pool_producer.sh
 ```
 
 ## What The Script Verifies

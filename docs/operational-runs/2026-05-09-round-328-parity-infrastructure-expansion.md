@@ -23,7 +23,7 @@ repos at R326b. Concrete deliverables:
    `next_milestone` pointing at the tool's skeleton round (R331
    bech32 through R450 dmq-node). Total entries: 8 → 20.
 
-2. **`scripts/check-parity-matrix.py`**: allowlist extended:
+2. **`dev/test/check-parity-matrix.py`**: allowlist extended:
    - `ALLOWED_AREAS` gains `"sister-tools"` (the new area for all
      12 sister-tool entries).
    - `ALLOWED_MILESTONES` gains 12 new round IDs (R331, R335,
@@ -39,7 +39,7 @@ repos at R326b. Concrete deliverables:
    renamed to `upstream_pins_cover_all_nine_canonical_repos` and
    the expected-repo list extended.
 
-4. **`node/scripts/check_upstream_drift.sh`**: extended to handle
+4. **`node/dev/scripts/check_upstream_drift.sh`**: extended to handle
    cross-org URLs (kes-agent lives under `input-output-hk`, the
    other 8 under `IntersectMBO`). Replaced the hardcoded
    `https://github.com/IntersectMBO/${repo}.git` URL prefix with a
@@ -53,9 +53,9 @@ repos at R326b. Concrete deliverables:
 | Path | Change |
 |---|---|
 | `docs/parity-matrix.json` | 12 new entries appended (sister-tool.{bech32, cardano-submit-api, kes-agent, kes-agent-control, cardano-tracer, db-truncater, db-analyser, snapshot-converter, db-synthesizer, cardano-testnet, tx-generator, dmq-node}). All entries `status: "absent"`. Total entries: 8 → 20. |
-| `scripts/check-parity-matrix.py` | `ALLOWED_AREAS` gains `"sister-tools"`. `ALLOWED_MILESTONES` extended with 12 new round IDs. |
+| `dev/test/check-parity-matrix.py` | `ALLOWED_AREAS` gains `"sister-tools"`. `ALLOWED_MILESTONES` extended with 12 new round IDs. |
 | `node/src/upstream_pins.rs` | 3 new const declarations + extended `UPSTREAM_PINS` slice (6 → 9). Cardinality test renamed + extended. Module docstring updated to mention the 9 repos. |
-| `node/scripts/check_upstream_drift.sh` | Per-repo URL table replacing hardcoded org prefix; `PIN_ORDER` array for canonical iteration; total count derived from array length. |
+| `node/dev/scripts/check_upstream_drift.sh` | Per-repo URL table replacing hardcoded org prefix; `PIN_ORDER` array for canonical iteration; total count derived from array length. |
 | `docs/operational-runs/2026-05-09-round-328-parity-infrastructure-expansion.md` | This round-doc. |
 
 ## Verification
@@ -73,14 +73,14 @@ $ cargo clippy --workspace --all-targets --all-features -- -D warnings
 $ cargo test --workspace --all-features
 passed: 4856  failed: 0
 
-$ python3 scripts/check-strict-mirror.py --fail-on-violation
+$ python3 dev/test/check-strict-mirror.py --fail-on-violation
 strict-mirror: 0 violations (clean)
 
-$ python3 scripts/check-parity-matrix.py
+$ python3 dev/test/check-parity-matrix.py
 parity matrix clean: 20 entries validated against
     .reference-haskell-cardano-node (reference tag 11.0.1)
 
-$ python3 scripts/check-fixture-manifest.py
+$ python3 dev/test/check-fixture-manifest.py
 fixture manifest clean: SHA 7a8a991945d401d89e27f53b3d3bb464a354ad4c
     consistent across pin source, fixture tree, and docs;
     2 corpora validated.
@@ -95,11 +95,11 @@ runs as part of `cargo test-all` and passes — the 9-entry order
 - 12 sister-tool entries in `docs/parity-matrix.json` with `status:
   "absent"` and `next_milestone` pointing at the tool's skeleton
   round.
-- `scripts/check-parity-matrix.py` allowlist extended for the new
+- `dev/test/check-parity-matrix.py` allowlist extended for the new
   area + milestones; validator green.
 - `node/src/upstream_pins.rs` carries 3 new SHAs; `UPSTREAM_PINS`
   cardinality test pins 9; cargo test-all green.
-- `node/scripts/check_upstream_drift.sh` handles cross-org URLs
+- `node/dev/scripts/check_upstream_drift.sh` handles cross-org URLs
   and iterates 9 repos.
 - All 5 cargo gates + 3 CI parity validators clean.
 
@@ -107,7 +107,7 @@ All five are met.
 
 ## Out of scope (R329+ next steps)
 
-- **R329** — `node/scripts/run-tools.sh` launcher (mirror of
+- **R329** — `node/dev/scripts/run-tools.sh` launcher (mirror of
   `install/run-node.sh`) routing `$1 <tool> <args>` to each
   yggdrasil sister-tool binary. Plus `node/configuration/preprod/checkpoints.json`
   (the only operator-config gap identified in R326's audit).

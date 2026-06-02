@@ -16,7 +16,7 @@ Every production `.rs` here either mirrors a single canonical upstream
 sibling collisions) OR carries a `## Naming parity` docstring stanza
 ending in `**Strict mirror:** none.` plus the upstream symbol(s)/
 file(s) the helper surfaces. CI gate:
-`python3 scripts/check-strict-mirror.py --fail-on-violation`.
+`python3 dev/test/check-strict-mirror.py --fail-on-violation`.
 
 ## Upstream source
 
@@ -111,11 +111,11 @@ descriptor. **Post-R481 status:** `block-only-shipped`.
 cargo build --release -p yggdrasil-db-analyser
 
 # Run via the universal launcher (recommended).
-scripts/run-tools.sh db-analyser --help
-scripts/run-tools.sh db-analyser --version
+dev/scripts/run-tools.sh db-analyser --help
+dev/scripts/run-tools.sh db-analyser --version
 
 # Run an analysis (R481+R482 wire-up):
-scripts/run-tools.sh db-analyser \
+dev/scripts/run-tools.sh db-analyser \
   --db /path/to/chaindb \
   --analysis count-blocks
 
@@ -175,7 +175,7 @@ on `--help` / `--version`:
 
 ```bash
 # 1. Refresh vendored upstream tree (only when bumping the upstream version).
-bash scripts/setup-reference.sh
+bash dev/reference/setup-reference.sh
 
 # 2. Run cargo test for the crate.
 cargo test -p yggdrasil-db-analyser
@@ -198,9 +198,8 @@ upstream OR is documented as semantically-equivalent here.
 - Update this AGENTS.md when ledger-state apply-loop arc ships
   (replace `🚧 RequiresLedgerStateApplyLoop` rows in the dispatch
   matrix with `✅ shipped` + round number).
-- Keep the per-tool round numbers in sync with the authoritative
-  plan file at `/home/daniel/.claude/plans/playful-tickling-plum.md`
-  + `CHANGELOG.md`.
+- Keep the per-tool round numbers in sync with `docs/COMPLETION_ROADMAP.md`
+  and `CHANGELOG.md`.
 - If upstream ships a new release: refresh the help/version
   fixtures, advance the relevant SHA pin in `upstream_pins.rs`,
   re-run the full cargo gate.

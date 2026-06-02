@@ -9,7 +9,7 @@ Every production `.rs` here either mirrors a single canonical upstream
 sibling collisions) OR carries a `## Naming parity` docstring stanza
 ending in `**Strict mirror:** none.` plus the upstream symbol(s)/
 file(s) the helper surfaces. CI gate:
-`python3 scripts/check-strict-mirror.py --fail-on-violation`.
+`python3 dev/test/check-strict-mirror.py --fail-on-violation`.
 
 ## Upstream source
 
@@ -27,7 +27,7 @@ Vendored at: `.reference-haskell-cardano-node/cardano-submit-api/` (14 `.hs` fil
 | R343  | LocalTxSubmission wiring: async Handler refactor; submit_via_ntc opens ntc_connect per request, drives LocalTxSubmissionClient::submit, maps outcomes to TxCmdError; lib.rs::run() spins tokio runtime + serves the listener | done   |
 | R344  | Metrics.hs Prometheus surface: `metrics.rs` ships `MetricsRegistry` (lock-free `AtomicU64` `tx_submit` + `tx_submit_fail` counters with `register_metrics_server` doing port-occupied retry up to `MAX_PORT_OFFSET=1000` adjacent ports), `web.rs::run_tx_submit_server_from_params` spawns `register_metrics_server` on `params.metrics_port` + wraps the operator tracer via `make_metrics_aware_tracer` so `TraceSubmitApi::ApplicationTxSubmitPostResult` events increment counters. 13 metrics tests pin the path. | done |
 | R569-R688 | Structured rejection decoder arc: `TxValidationErrorInCardanoMode` and the typed per-era predicate-failure tree decode Shelley-family and Conway submission rejections end-to-end. | done |
-| R825+ | Operator comparison follow-on: run `scripts/compare_submit_api_to_upstream.sh`, then promote the parity-matrix entry to `verified_11_0_1` when response diffs are empty. | scheduled (operator-time) |
+| R825+ | Operator comparison follow-on: run `dev/evidence/compare_submit_api_to_upstream.sh`, then promote the parity-matrix entry to `verified_11_0_1` when response diffs are empty. | scheduled (operator-time) |
 
 ## Current functional surface
 
@@ -74,8 +74,8 @@ Vendored at: `.reference-haskell-cardano-node/cardano-submit-api/` (14 `.hs` fil
 cargo build --release -p yggdrasil-cardano-submit-api
 
 # Run via the universal launcher.
-scripts/run-tools.sh cardano-submit-api --help
-scripts/run-tools.sh cardano-submit-api --version
+dev/scripts/run-tools.sh cardano-submit-api --help
+dev/scripts/run-tools.sh cardano-submit-api --version
 
 # Live test against the upstream cardano-node socket on preview testnet
 # after starting `.reference-haskell-cardano-node/install/run-node.sh preview`.
@@ -153,7 +153,7 @@ To verify the yggdrasil binary still tracks upstream byte-for-byte:
 
 ```bash
 # 1. Refresh vendored upstream tree (only when bumping the upstream version).
-bash scripts/setup-reference.sh
+bash dev/reference/setup-reference.sh
 
 # 2. Run cargo test for the crate.
 cargo test -p yggdrasil-cardano-submit-api  # 356 lib tests pass after accepted-response TxId derivation
@@ -175,8 +175,8 @@ diff <(.reference-haskell-cardano-node/install/bin/cardano-submit-api --version)
 
 - Update this AGENTS.md when concrete cardano-submit-api surfaces
   land (replace stale `❌` rows with `✅ shipped` + round number).
-- Keep the per-tool migration round numbers in sync with the
-  authoritative plan file at `/home/daniel/.claude/plans/playful-tickling-plum.md`.
+- Keep the per-tool migration round numbers in sync with
+  `docs/COMPLETION_ROADMAP.md` and `CHANGELOG.md`.
 - If upstream ships a new release: refresh the help/version
   fixtures, advance the relevant SHA pin in `upstream_pins.rs`,
   re-run the full cargo gate.

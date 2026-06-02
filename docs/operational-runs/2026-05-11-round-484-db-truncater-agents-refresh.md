@@ -25,7 +25,7 @@ Files touched:
    the **Status**, **Current functional surface**, **Carve-out
    inventory**, and **Round roadmap** sections. Marks the crate
    as functionally complete; identifies the operator soak
-   (`node/scripts/compare_db_truncater_to_upstream.sh`) as the
+   (`node/dev/evidence/compare_db_truncater_to_upstream.sh`) as the
    only remaining gate before `partial → verified_11_0_1`
    parity-matrix promotion.
 
@@ -45,8 +45,8 @@ None — documentation round. Test count unchanged at 6,176.
 
 ```
 cargo fmt --all -- --check                                  clean
-python3 scripts/check-strict-mirror.py --fail-on-violation   0 violations
-python3 scripts/check-parity-matrix.py                       clean
+python3 dev/test/check-strict-mirror.py --fail-on-violation   0 violations
+python3 dev/test/check-parity-matrix.py                       clean
 ```
 
 ## Stop point
@@ -62,7 +62,7 @@ implementation to ship first.
 
 ## References
 
-- Plan: `/home/daniel/.claude/plans/playful-tickling-plum.md`
+- Plan: `docs/COMPLETION_ROADMAP.md`
   (R326-R459 sister-tools port arc).
 - R349 commit: db-truncater Run.hs port.
 - R347 commit: ImmutableStore::trim_after_slot.

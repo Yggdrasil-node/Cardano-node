@@ -29,7 +29,7 @@ Two small but visible doc-tree gaps closed:
    docs site can see what shifted between R248 and R307 without
    chasing the per-round operational-runs trail.
 
-2. **`scripts/AGENTS.md` was missing.** `CLAUDE.md` policy is "Every
+2. **`scripts/AGENTS.md` was missing.** `AGENTS.md` policy is "Every
    meaningful subdirectory has an `@AGENTS.md`" — the `scripts/`
    directory now hosts five Python validators + one shell helper, each
    with specific operational rules (CI vs local-only, four-source SHA
@@ -47,7 +47,7 @@ Two small but visible doc-tree gaps closed:
 |---|---|
 | `docs/PARITY_PROOF.md` | Front-matter title `(Round 248)` → ``; document-round line refreshed; test-count line refreshed (4.7K+ → 4,855); five-gate snapshot added; R273-rename + R274–R307 arc summary blockquote added at the top of the body. |
 | `scripts/AGENTS.md` | New file (~140 lines). Directory shape diagram; per-validator `check-strict-mirror.py` / `check-parity-matrix.py` / `check-fixture-manifest.py` / `check-reference-artifacts.py` sections; refresh helper `setup-reference.sh` section; discovery script `audit-strict-mirror.py` section; non-negotiable rules; maintenance guidance; upstream references. |
-| `CLAUDE.md` | "AGENTS.md Files Are Primary Context" table: new row for `scripts/AGENTS.md` between `docs/AGENTS.md` and `specs/AGENTS.md`. |
+| `AGENTS.md` | "AGENTS.md Files Are Primary Context" table: new row for `scripts/AGENTS.md` between `docs/AGENTS.md` and `specs/AGENTS.md`. |
 | `crates/cardano-cli/src/helper.rs`, `node/src/runtime/{mempool_helpers,peer_management}.rs` | Tail repair: `cargo fmt` auto-fix on three files where pre-R308 commits left rustfmt drift (mechanical only — multi-line `format!` reflow + a wrapped `use` statement + a trailing whitespace strip). 7 insertions / 4 deletions across the three files. Necessary so the five-gate evidence claim in the new PARITY_PROOF.md header is true at HEAD. |
 | `docs/operational-runs/2026-05-09-round-308-parity-proof-and-scripts-agents.md` | This round-doc. |
 
@@ -66,13 +66,13 @@ $ cargo clippy --workspace --all-targets --all-features -- -D warnings
 $ cargo test --workspace --all-features
 passed: 4855  failed: 0
 
-$ python3 scripts/check-strict-mirror.py --fail-on-violation
+$ python3 dev/test/check-strict-mirror.py --fail-on-violation
 strict-mirror: 0 violations (clean)
 
-$ python3 scripts/check-parity-matrix.py
+$ python3 dev/test/check-parity-matrix.py
 parity matrix clean: 8 entries validated against .reference-haskell-cardano-node (reference tag 11.0.1)
 
-$ python3 scripts/check-fixture-manifest.py
+$ python3 dev/test/check-fixture-manifest.py
 fixture manifest clean: SHA 7a8a991945d401d89e27f53b3d3bb464a354ad4c consistent across pin source, fixture tree, and docs; 2 corpora validated.
 ```
 
@@ -83,11 +83,11 @@ clean. Workspace test baseline preserved at 4,855 passing / 0 failing.
 
 - `docs/PARITY_PROOF.md` header reflects the post-R307 state (round
   stamp, test count, five-gate evidence, arc summary).
-- `scripts/AGENTS.md` exists and is registered in `CLAUDE.md`'s
+- `scripts/AGENTS.md` exists and is registered in `AGENTS.md`'s
   AGENTS-files-table.
-- `scripts/check-strict-mirror.py --fail-on-violation`,
-  `scripts/check-parity-matrix.py`, and
-  `scripts/check-fixture-manifest.py` all exit zero.
+- `dev/test/check-strict-mirror.py --fail-on-violation`,
+  `dev/test/check-parity-matrix.py`, and
+  `dev/test/check-fixture-manifest.py` all exit zero.
 
 All three are met. The R273-rename + R274–R307 strict 1:1 file-mirror
 arc is now durably reflected in `docs/PARITY_PROOF.md` (the canonical

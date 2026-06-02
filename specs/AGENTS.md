@@ -8,13 +8,13 @@ the workspace strict-mirror file-policy (R274+) does not apply
 directly here. Two CI / on-demand validators guard the invariants
 that matter for this directory:
 
-- `python3 scripts/check-fixture-manifest.py` (CI gate since R303) —
+- `python3 dev/test/check-fixture-manifest.py` (CI gate since R303) —
   cross-checks the `cardano-base` SHA pin across
   `crates/node/config/src/upstream_pins.rs::UPSTREAM_CARDANO_BASE_COMMIT`,
   `specs/upstream-test-vectors/cardano-base/<SHA>/` directory name,
   `docs/SPECS.md`, and `docs/UPSTREAM_PARITY.md`. Asserts every
   expected upstream-vendored corpus is present + non-empty.
-- `python3 scripts/check-reference-artifacts.py` (local/operator) —
+- `python3 dev/test/check-reference-artifacts.py` (local/operator) —
   validates the vendored Haskell `cardano-node` install at
   `.reference-haskell-cardano-node/install/` against the policy tag
   in `docs/parity-matrix.json::reference.tag`. Adjacent to specs/

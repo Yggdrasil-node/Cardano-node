@@ -11,7 +11,7 @@
 //! (cardano-api types, transaction-construction, key derivation,
 //! text-envelope codec), and shipping it independently keeps
 //! `crates/node/` an integration layer per the workspace topology rule in
-//! [`CLAUDE.md`](../../CLAUDE.md).
+//! the root `AGENTS.md`.
 //!
 //! ## Phase F — operator surface
 //!

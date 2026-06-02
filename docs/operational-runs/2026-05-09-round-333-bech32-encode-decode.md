@@ -96,7 +96,7 @@ test result: ok. 8 passed; 0 failed
 $ cargo fmt --all -- --check
 (silent — clean)
 
-$ python3 scripts/check-strict-mirror.py --fail-on-violation
+$ python3 dev/test/check-strict-mirror.py --fail-on-violation
 strict-mirror: 0 violations (clean)
 
 $ cargo clippy --workspace --all-targets --all-features -- -D warnings
@@ -105,7 +105,7 @@ $ cargo clippy --workspace --all-targets --all-features -- -D warnings
 $ cargo test --workspace --all-features
 passed: 4887  failed: 0    (was 4872 → +15 new tests)
 
-$ python3 scripts/check-parity-matrix.py
+$ python3 dev/test/check-parity-matrix.py
 parity matrix clean: 20 entries validated
 ```
 
@@ -122,7 +122,7 @@ $ diff <(echo -n "base16_1wpshgct5v5r5mxh0" | upstream/bech32) \
        <(echo -n "base16_1wpshgct5v5r5mxh0" | target/debug/bech32)
 (empty diff — byte-equivalent)
 
-$ node/scripts/run-tools.sh bech32 --help | head -1
+$ node/dev/scripts/run-tools.sh bech32 --help | head -1
 Usage: bech32 [PREFIX]
 ```
 

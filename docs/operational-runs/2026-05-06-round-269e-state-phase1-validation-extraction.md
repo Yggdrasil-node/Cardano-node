@@ -160,7 +160,7 @@ the same code via `super::*` re-exports.
 ### References
 
 - R269 a–d closures: `2026-05-06-round-269{,b,c,d}-state-*.md`
-- Plan: `~/.claude/plans/dapper-giggling-haven.md`
+- Plan: `docs/COMPLETION_ROADMAP.md`
 - Upstream UTXO rule:
   `.reference-haskell-cardano-node/deps/cardano-ledger/eras/shelley/impl/src/Cardano/Ledger/Shelley/Rules/Utxo.hs`
 - Upstream Alonzo UTXO + UTXOW (feesOK, witness coverage):

@@ -90,13 +90,13 @@ without a runtime API to mirror.
 ## Verification
 
 ```text
-$ python3 scripts/audit-strict-mirror.py
+$ python3 dev/test/audit-strict-mirror.py
 audit complete: 447 rust files; candidate_match=390, no_candidate_match=57
 auto-grading bucket counts:
   (a): 258
   (c): 189
 
-$ python3 scripts/check-strict-mirror.py --fail-on-violation
+$ python3 dev/test/check-strict-mirror.py --fail-on-violation
 strict-mirror: 0 violations (clean)
 
 $ cargo fmt --all -- --check

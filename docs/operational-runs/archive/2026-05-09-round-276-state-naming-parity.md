@@ -80,7 +80,7 @@ rename or keep the docstring caveat.
 
 ## Audit infrastructure improvement
 
-`scripts/audit-strict-mirror.py` now excludes unit-test modules at any
+`dev/test/audit-strict-mirror.py` now excludes unit-test modules at any
 level:
 - `tests.rs` (the conventional sibling-of-mod-file unit-test module).
 - `*_tests.rs` (e.g. `node/src/main_tests.rs`).
@@ -94,7 +94,7 @@ own test trees under `test/` directories that are already filtered).
 ## Drift-guard verification
 
 ```text
-$ python3 scripts/check-strict-mirror.py
+$ python3 dev/test/check-strict-mirror.py
 strict-mirror: 0 violations (clean)
 ```
 
@@ -123,9 +123,9 @@ cargo fmt --all -- --check          clean
 cargo check-all                     clean (Finished `dev` profile in 8.88s)
 cargo lint                          clean (Finished `dev` profile in 16.57s)
 cargo test-all                      4855 passed; 0 failed (baseline preserved)
-python3 scripts/check-strict-mirror.py
+python3 dev/test/check-strict-mirror.py
                                     strict-mirror: 0 violations (clean)
-python3 scripts/check-parity-matrix.py
+python3 dev/test/check-parity-matrix.py
                                     parity matrix clean: 8 entries validated
 ```
 
@@ -155,7 +155,7 @@ crates/ledger/src/state/stake_credentials.rs             +8 lines
 crates/ledger/src/state/treasury.rs                      +8 lines
 docs/strict-mirror-audit.tsv                             rebuilt
 docs/operational-runs/2026-05-09-round-276-state-naming-parity.md  (new)
-scripts/audit-strict-mirror.py                           +6 lines (tests.rs exclusion)
+dev/test/audit-strict-mirror.py                           +6 lines (tests.rs exclusion)
 ```
 
 ## Stop point — Phase B progress

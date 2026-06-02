@@ -300,5 +300,5 @@ export YGG_BIN="$PWD/target/release/yggdrasil-node"
 
 # §6 restart resilience
 YGG_BIN="$YGG_BIN" NETWORK=preprod CYCLES=3 INTERVAL_BASE_S=60 \
-  node/scripts/restart_resilience.sh
+  node/dev/scripts/restart_resilience.sh
 ```

@@ -12,7 +12,7 @@ basename index, an auto-graded TSV, and this round-doc.
 
 Step 0 (operator-authorized via the approved plan): refresh the vendored
 Haskell checkout from 10.7.1 to policy tag 11.0.1 via
-`bash scripts/setup-reference.sh --force`. Confirmed:
+`bash dev/reference/setup-reference.sh --force`. Confirmed:
 
 ```
 .reference-haskell-cardano-node/install/bin/cardano-node --version
@@ -24,7 +24,7 @@ git rev 97036a66bcf8c89f687ae57a048eecc0389977ef
 
 | Path | Purpose |
 |---|---|
-| `scripts/audit-strict-mirror.py` | walks production `.rs` files, derives candidate upstream basenames, emits the audit TSV with auto-graded final verdicts |
+| `dev/test/audit-strict-mirror.py` | walks production `.rs` files, derives candidate upstream basenames, emits the audit TSV with auto-graded final verdicts |
 | `docs/upstream-haskell-files.txt` | flat-file index of every `.hs` under `.reference-haskell-cardano-node/` (basenames + paths); built from `find` and committed for fast reverse-index lookup |
 | `docs/strict-mirror-audit.tsv` | per-Rust-file audit table with 8 columns: `rust_path`, `candidates`, `matched_candidate`, `upstream_hits`, `docstring_parity`, `initial_verdict`, `final_verdict`, `notes` |
 | `docs/operational-runs/2026-05-09-round-274-strict-mirror-discovery.md` | this doc |
@@ -210,7 +210,7 @@ cargo test-all                4855 passed; 0 failed (baseline preserved)
 Audit script self-verification:
 
 ```text
-$ python3 scripts/audit-strict-mirror.py
+$ python3 dev/test/audit-strict-mirror.py
   audit complete: 225 rust files; candidate_match=175, no_candidate_match=50
   auto-grading bucket counts:
     (NEEDS-REVIEW): 115
@@ -221,7 +221,7 @@ $ python3 scripts/audit-strict-mirror.py
 ```
 
 `docs/upstream-haskell-files.txt` is built once per `setup-reference.sh
---force`; rebuilt on demand with `python3 scripts/audit-strict-mirror.py
+--force`; rebuilt on demand with `python3 dev/test/audit-strict-mirror.py
 --rebuild-index`.
 
 ## Diff stat
@@ -230,7 +230,7 @@ $ python3 scripts/audit-strict-mirror.py
 docs/operational-runs/2026-05-09-round-274-strict-mirror-discovery.md   | (new file)
 docs/strict-mirror-audit.tsv                                            | (new file, 226 lines)
 docs/upstream-haskell-files.txt                                         | (new file, ~12k lines)
-scripts/audit-strict-mirror.py                                          | (new file, ~280 lines)
+dev/test/audit-strict-mirror.py                                          | (new file, ~280 lines)
 ```
 
 ## Stop point — Phase A status

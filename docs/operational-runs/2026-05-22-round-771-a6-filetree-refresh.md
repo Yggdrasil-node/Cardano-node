@@ -16,13 +16,13 @@ open item was the filetree-description bullet.
 
 ## What shipped
 
-`python3 .claude/scripts/filetree.py check` reported the
-`.claude/filetree/manifest.json` stale after the R717-R770 dmq-node
+`python3 dev/test/filetree.py check` reported the
+`dev/filetree/manifest.json` stale after the R717-R770 dmq-node
 arc — new dmq-node source files and a large backlog of
 `docs/operational-runs/` records absent from the manifest, plus
 modified files with stale metadata.
 
-The `filetree-reviewer` agent brought the manifest fully current:
+The filetree maintenance pass brought the manifest fully current:
 
 - Added 183 entries — 13 dmq-node source files (the DMQ diffusion
   types, NtN/NtC protocol/version surfaces, mini-protocol policy, and
@@ -30,13 +30,13 @@ The `filetree-reviewer` agent brought the manifest fully current:
   docstring; plus 170 dated `docs/operational-runs/` records.
 - Rewrote 4 weak descriptions and refreshed the metadata of the
   remaining stale entries (`Cargo.lock`, db-tool sources, etc.).
-- Regenerated `.claude/filetree/FILETREE.md`.
+- Regenerated `dev/filetree/FILETREE.md`.
 
 ## Validation
 
-- `python3 .claude/scripts/filetree.py check` — "Filetree check
+- `python3 dev/test/filetree.py check` — "Filetree check
   clean: all non-exempt entries match accepted metadata."
-- Only `.claude/filetree/{manifest.json,FILETREE.md}` changed — no
+- Only `dev/filetree/{manifest.json,FILETREE.md}` changed — no
   source code, no other docs (the cargo gates are unaffected by
   harness-metadata changes).
 

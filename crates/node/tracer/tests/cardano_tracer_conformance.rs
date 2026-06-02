@@ -28,7 +28,7 @@
 //! The test self-skips when the upstream binary is absent (CI's
 //! `--sources-only` reference tree, or no reference tree at all).
 //! Override the binary path with `YGGDRASIL_CARDANO_TRACER_BIN`;
-//! materialize the default with `bash scripts/setup-reference.sh`.
+//! materialize the default with `bash dev/reference/setup-reference.sh`.
 
 #![cfg(unix)]
 #![allow(clippy::unwrap_used)]
@@ -193,7 +193,7 @@ async fn handshake_completes_against_upstream_cardano_tracer() {
         eprintln!(
             "SKIP handshake_completes_against_upstream_cardano_tracer: \
              upstream cardano-tracer binary not found — run \
-             `bash scripts/setup-reference.sh` or set \
+             `bash dev/reference/setup-reference.sh` or set \
              YGGDRASIL_CARDANO_TRACER_BIN"
         );
         return;
@@ -350,7 +350,7 @@ async fn trace_objects_delivered_to_upstream_cardano_tracer() {
         eprintln!(
             "SKIP trace_objects_delivered_to_upstream_cardano_tracer: \
              upstream cardano-tracer binary not found — run \
-             `bash scripts/setup-reference.sh` or set \
+             `bash dev/reference/setup-reference.sh` or set \
              YGGDRASIL_CARDANO_TRACER_BIN"
         );
         return;

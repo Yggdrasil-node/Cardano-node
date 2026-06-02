@@ -77,10 +77,10 @@ pre-push:
     # and verifies each has either an upstream .hs mirror or a
     # `## Naming parity` stanza ending in `**Strict mirror:** none.`
     parity-mirror:
-      run: python3 scripts/check-strict-mirror.py --fail-on-violation
+      run: python3 dev/test/check-strict-mirror.py --fail-on-violation
     # Gate 6: parity-matrix schema + on-disk-paths validator.
     parity-matrix:
-      run: python3 scripts/check-parity-matrix.py
+      run: python3 dev/test/check-parity-matrix.py
     # Gate 7: JSON-schema validator for parity-matrix.json. The
     # CI workflow installs check-jsonschema on the fly; we use a
     # best-effort `python3 -m check_jsonschema` here so devs who
@@ -95,7 +95,7 @@ pre-push:
         fi
     # Gate 8: cardano-base fixture-manifest pin validator.
     parity-fixtures:
-      run: python3 scripts/check-fixture-manifest.py
+      run: python3 dev/test/check-fixture-manifest.py
     # Gate 9: supply-chain (cargo-deny). Best-effort — skip with
     # a warning when the binary isn't installed locally.
     deny:

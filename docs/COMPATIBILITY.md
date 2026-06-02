@@ -155,7 +155,7 @@ notice and operators should not depend on them.
   files under `tmp/`.
 - All AGENTS.md content, R-arc round identifiers, and internal
   validation scripts (`scripts/check-*.py`,
-  `scripts/audit-strict-mirror.py`).
+  `dev/test/audit-strict-mirror.py`).
 
 ## Deprecation policy
 

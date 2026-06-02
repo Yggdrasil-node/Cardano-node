@@ -57,16 +57,16 @@ queries, and JSON result decoding.
 - Green: `cargo test -p yggdrasil-cardano-testnet` passed with 111 lib
   tests and 3 CLI golden tests.
 - Green: `cargo fmt --all -- --check`.
-- Green: `python scripts/check-stale-placement.py --self-test`.
-- Green: `python scripts/check-stale-placement.py`.
-- Green: `python scripts/check-doc-status-headers.py --self-test`.
-- Green: `python scripts/check-doc-status-headers.py`.
-- Green: `python scripts/check-parity-matrix.py` validated 22 entries
+- Green: `python dev/test/check-stale-placement.py --self-test`.
+- Green: `python dev/test/check-stale-placement.py`.
+- Green: `python dev/test/check-doc-status-headers.py --self-test`.
+- Green: `python dev/test/check-doc-status-headers.py`.
+- Green: `python dev/test/check-parity-matrix.py` validated 22 entries
   against the 11.0.1 reference tag.
-- Green: `python scripts/check-strict-mirror.py --fail-on-violation`.
-- Green: `python -m py_compile scripts/check-stale-placement.py scripts/check-doc-status-headers.py scripts/check-parity-matrix.py .claude/scripts/filetree.py`.
+- Green: `python dev/test/check-strict-mirror.py --fail-on-violation`.
+- Green: `python -m py_compile dev/test/check-stale-placement.py dev/test/check-doc-status-headers.py dev/test/check-parity-matrix.py dev/test/filetree.py`.
 - Green after accepting the R830 metadata update:
-  `python .claude/scripts/filetree.py check`.
+  `python dev/test/filetree.py check`.
 - Green: `cargo check-all`.
 - Green: `cargo lint`.
 - Test inventory:

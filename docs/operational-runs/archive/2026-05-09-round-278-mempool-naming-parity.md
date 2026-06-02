@@ -12,7 +12,7 @@ under `crates/consensus/src/mempool/`. Three parent shells receive a
 `## Naming parity` docstring stanza; sub-modules already annotated in
 R273-rename are reverified by the strengthened audit grader.
 
-Also tightens `scripts/audit-strict-mirror.py` non-production-fragment
+Also tightens `dev/test/audit-strict-mirror.py` non-production-fragment
 filter to catch `plutus-benchmark`, `nofib`, `cardano-recon-framework`,
 `cardano-timeseries-io`, `sim-tests`, `sim-bench`, `examples/`, etc.
 which were leaking through to false-positive `(a)` auto-grades.
@@ -79,9 +79,9 @@ cargo fmt --all -- --check          clean
 cargo check-all                     clean (Finished `dev` profile in 4.86s)
 cargo lint                          clean (Finished `dev` profile in 10.35s)
 cargo test-all                      4855 passed; 0 failed (baseline preserved)
-python3 scripts/check-strict-mirror.py
+python3 dev/test/check-strict-mirror.py
                                     strict-mirror: 0 violations (clean)
-python3 scripts/check-parity-matrix.py
+python3 dev/test/check-parity-matrix.py
                                     parity matrix clean: 8 entries validated
 ```
 
@@ -93,7 +93,7 @@ crates/consensus/src/mempool/queue.rs        +13 lines (full docstring + parity 
 crates/consensus/src/mempool/tx_state.rs     +9 lines (parity block)
 docs/strict-mirror-audit.tsv                 rebuilt
 docs/operational-runs/2026-05-09-round-278-... (new)
-scripts/audit-strict-mirror.py               +11 lines (non-production fragment additions)
+dev/test/audit-strict-mirror.py               +11 lines (non-production fragment additions)
 ```
 
 ## Stop point — Phase B progress

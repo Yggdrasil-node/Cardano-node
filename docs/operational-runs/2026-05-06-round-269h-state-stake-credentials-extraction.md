@@ -129,7 +129,7 @@ keep behaviour via `super::*` re-exports.
 ### References
 
 - R269 a–g closures: `2026-05-06-round-269{,b,c,d,e,f,g}-state-*.md`
-- Plan: `~/.claude/plans/dapper-giggling-haven.md`
+- Plan: `docs/COMPLETION_ROADMAP.md`
 - Upstream DState:
   `.reference-haskell-cardano-node/deps/cardano-ledger/eras/shelley/impl/src/Cardano/Ledger/Shelley/LedgerState.hs`
 - Upstream UMap (`RDPair` / `dsUnified`):

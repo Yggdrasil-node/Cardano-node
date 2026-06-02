@@ -117,8 +117,8 @@ cargo fmt --all -- --check                                  clean
 cargo check-all                                              clean
 cargo lint                                                   clean (after .is_multiple_of() fix)
 cargo test-all                                               6,188 → 6,191
-python3 scripts/check-strict-mirror.py --fail-on-violation   0 violations
-python3 scripts/check-parity-matrix.py                       clean
+python3 dev/test/check-strict-mirror.py --fail-on-violation   0 violations
+python3 dev/test/check-parity-matrix.py                       clean
 ```
 
 Clippy `manual-is-multiple-of` lint required switching from

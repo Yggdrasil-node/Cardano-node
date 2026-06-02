@@ -2,15 +2,15 @@
 
 **Date:** 2026-05-09
 **Phase:** D (parallel with Phase C)
-**Plan:** `~/.claude/plans/playful-tickling-plum.md`
+**Plan:** `docs/COMPLETION_ROADMAP.md`
 
 ## Scope
 
 Update living docs to:
 1. Cite the new strict 1:1 file-mirror policy from R274 across all
    per-crate `AGENTS.md` files.
-2. Register `python3 scripts/check-strict-mirror.py` and
-   `python3 scripts/audit-strict-mirror.py` as parity-flow gates in
+2. Register `python3 dev/test/check-strict-mirror.py` and
+   `python3 dev/test/audit-strict-mirror.py` as parity-flow gates in
    the root `AGENTS.md`.
 3. Strip "pragmatic mirror" / "not 1:1" / "best-effort mirror" hedges
    from the docs body (none found — the language was already clean).
@@ -21,7 +21,7 @@ runs in parallel with Phase C.
 ## Investigation
 
 `grep -rin "pragmatic mirror\|not 1:1\|best.effort.mirror\|pragmatic-mirror"`
-across `CLAUDE.md`, `AGENTS.md`, `docs/*.md`, and per-crate
+across `AGENTS.md`, `AGENTS.md`, `docs/*.md`, and per-crate
 `AGENTS.md` returned **zero hits** in living docs. Historical
 operational-runs are intentionally excluded per the round-doc
 immutability rule.
@@ -37,16 +37,16 @@ verification-gate registration + strict-mirror policy citations.
 Updated the **Verification Expectations** section's Parity-flow gates
 list to include the two new Python checkers:
 
-- `python3 scripts/check-strict-mirror.py` — strict 1:1 file-mirror
+- `python3 dev/test/check-strict-mirror.py` — strict 1:1 file-mirror
   drift-guard (warn-only since R275; fail-build at R288).
-- `python3 scripts/audit-strict-mirror.py` — rebuilds
+- `python3 dev/test/audit-strict-mirror.py` — rebuilds
   `docs/strict-mirror-audit.tsv` after Phase B graduates rows.
 
 Added a paragraph **Strict 1:1 file-mirror policy (R274 onward)**
 stating the policy in one place, with cross-references to:
 - the authoring-time skill at
-  `.claude/skills/round-extraction/SKILL.md`,
-- the CI counterpart `python3 scripts/check-strict-mirror.py`,
+  `docs/AGENTS.md`,
+- the CI counterpart `python3 dev/test/check-strict-mirror.py`,
 - the allowlist source-of-truth `docs/strict-mirror-audit.tsv`.
 
 Updated the Parity-flow surfaces list to register
@@ -66,7 +66,7 @@ Every production `.rs` here either mirrors a single canonical upstream
 `.hs` file by snake_case basename (with directory-prefix fallback for
 sibling collisions) OR carries a `## Naming parity` docstring stanza
 ending in `**Strict mirror:** none.` plus the upstream symbol(s)/
-file(s) the helper surfaces. CI gate: `python3 scripts/check-strict-mirror.py`
+file(s) the helper surfaces. CI gate: `python3 dev/test/check-strict-mirror.py`
 (warn-only since R275; fail-build at R288). Allowlist source-of-truth:
 [`docs/strict-mirror-audit.tsv`](<rel-link>).
 ```
@@ -96,7 +96,7 @@ Files updated:
 | `node/src/AGENTS.md` |
 | `specs/AGENTS.md` |
 
-The `CLAUDE.md` Commands section was already updated in R275 to
+The `AGENTS.md` Commands section was already updated in R275 to
 register `check-strict-mirror.py` and `audit-strict-mirror.py`; no
 change needed here.
 
@@ -167,10 +167,10 @@ Phase D shipped its two work products:
 
 ## References
 
-- Plan: `~/.claude/plans/playful-tickling-plum.md`
+- Plan: `docs/COMPLETION_ROADMAP.md`
 - Phase A: R274 (`docs/operational-runs/2026-05-09-round-274-strict-mirror-discovery.md`),
   R275 (`docs/operational-runs/2026-05-09-round-275-strict-mirror-drift-guard.md`)
 - Phase B: R276–R281
 - Phase C: R282–R287
-- Authoring-time skill: `.claude/skills/round-extraction/SKILL.md`
+- Authoring-time skill: `docs/AGENTS.md`
 - Allowlist source-of-truth: `docs/strict-mirror-audit.tsv`

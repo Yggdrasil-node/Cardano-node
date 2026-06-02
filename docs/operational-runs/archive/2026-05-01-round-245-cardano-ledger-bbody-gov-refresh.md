@@ -4,7 +4,7 @@ Date: 2026-05-01
 
 ## Summary
 
-`node/scripts/check_upstream_drift.sh` found a fresh `cardano-ledger`
+`node/dev/scripts/check_upstream_drift.sh` found a fresh `cardano-ledger`
 drift after R244:
 
 - pinned: `110b30e7abd8f507ea21625f8ac06fb6c8b66768`
@@ -52,7 +52,7 @@ cargo fmt --all -- --check
 cargo check-all
 cargo test-all
 cargo lint
-node/scripts/check_upstream_drift.sh
+node/dev/scripts/check_upstream_drift.sh
 git diff --check
 ```
 

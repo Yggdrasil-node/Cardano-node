@@ -108,7 +108,7 @@ continue to pass.
 - R269 first slice: `2026-05-06-round-269-state-mir-extraction.md`
 - R269 second slice: `2026-05-06-round-269b-state-ratify-extraction.md`
 - R269 third slice: `2026-05-06-round-269c-state-enact-extraction.md`
-- Plan: `~/.claude/plans/dapper-giggling-haven.md`
+- Plan: `docs/COMPLETION_ROADMAP.md`
 - Upstream Obligations record:
   `.reference-haskell-cardano-node/deps/cardano-ledger/libs/cardano-ledger-core/src/Cardano/Ledger/State/CertState.hs`
 - Upstream `utxosDeposited`:

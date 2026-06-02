@@ -59,7 +59,7 @@ pub mod transaction_view; pub mod command; pub mod option; pub mod run;`,
 so on a fresh CI checkout (or any clone) the `cargo fmt` invocation
 attempts to walk into the missing children and fails.
 
-The local strict-mirror gate (`scripts/check-strict-mirror.py`) +
+The local strict-mirror gate (`dev/test/check-strict-mirror.py`) +
 `docs/strict-mirror-audit.tsv` were already aware of all 12 files
 (they were graded at R294's discovery + hand-grade pass) — the gate
 walks the local working tree, not git history, so the divergence
@@ -123,7 +123,7 @@ $ cargo clippy --workspace --all-targets --all-features -- -D warnings
 $ cargo test --workspace --all-features
 passed: 4855  failed: 0
 
-$ python3 scripts/check-strict-mirror.py --fail-on-violation
+$ python3 dev/test/check-strict-mirror.py --fail-on-violation
 strict-mirror: 0 violations (clean)
 ```
 
@@ -180,7 +180,7 @@ All four are met.
   Cargo's gitignore convention assumes `target/debug/` is the only
   `debug` of interest. The two collide at the bare-pattern boundary.
 - **The strict-mirror gate is local-tree-aware, not index-aware.**
-  `scripts/check-strict-mirror.py` walks the working tree filesystem,
+  `dev/test/check-strict-mirror.py` walks the working tree filesystem,
   not `git ls-files`. A future enhancement could cross-check against
   `git ls-files` to catch divergences between the local tree and the
   index (the silent-ignore failure mode of R310). Deferred — R310's

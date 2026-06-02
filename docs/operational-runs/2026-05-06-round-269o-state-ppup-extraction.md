@@ -158,7 +158,7 @@ deliberate scope decision, not another quick slice.
 ### References
 
 - R269 a–n closures: `2026-05-06-round-269{,b,…,n}-state-*.md`
-- Plan: `~/.claude/plans/dapper-giggling-haven.md`
+- Plan: `docs/COMPLETION_ROADMAP.md`
 - Upstream PPUP rule:
   `.reference-haskell-cardano-node/deps/cardano-ledger/eras/shelley/impl/src/Cardano/Ledger/Shelley/Rules/Ppup.hs`
 - Upstream pvCanFollow:

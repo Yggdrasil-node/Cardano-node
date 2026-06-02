@@ -106,7 +106,7 @@ cargo fmt --all -- --check                                  # clean
 cargo check-all                                              # clean
 cargo test-all                                               # 5,962 passing
 cargo lint                                                   # clean
-python3 scripts/check-strict-mirror.py --fail-on-violation   # 0 violations
+python3 dev/test/check-strict-mirror.py --fail-on-violation   # 0 violations
 ```
 
 R446 test surface: yggdrasil-storage gains **12 R446 version tests**

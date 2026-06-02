@@ -152,7 +152,7 @@ lines are dominated by:
 - **Free functions** like `accumulate_mir_from_certs`,
   era-min-protocol-major helpers, `conway_*` governance predicates.
 
-Per the user-confirmed sequencing in `~/.claude/plans/playful-tickling-plum.md`,
+Per the user-confirmed sequencing in `docs/COMPLETION_ROADMAP.md`,
 **the next round is R266 (Gap BP root cause), not a continuation of
 the LedgerState carve.** R266 is the only open code-level
 protocol-parity blocker; with operator forensic time now available, it
@@ -169,8 +169,8 @@ closes.
 ### References
 
 - R269 a–o closures: `2026-05-06-round-269{,b,…,o}-state-*.md`
-- Plan: `~/.claude/plans/playful-tickling-plum.md` (refresh) and
-  `~/.claude/plans/dapper-giggling-haven.md` (long arc)
+- Plan: `docs/COMPLETION_ROADMAP.md` (refresh) and
+  `docs/COMPLETION_ROADMAP.md` (long arc)
 - Upstream `LedgerState` CBOR codec:
   `.reference-haskell-cardano-node/deps/cardano-ledger/eras/shelley/impl/src/Cardano/Ledger/Shelley/LedgerState.hs`
   (the `EncCBOR` / `DecCBOR` instances)

@@ -23,7 +23,7 @@ the files existed on disk; CI's first attempt at `cargo fmt --all
 `failed to resolve mod` error.
 
 Root cause was a `.gitignore` pattern bug, fixed in R310. But the
-**failure-detection gap** remains: `scripts/check-strict-mirror.py`
+**failure-detection gap** remains: `dev/test/check-strict-mirror.py`
 walks the local filesystem (`audit.iter_rust_files()`), not the git
 index. A future contributor introducing a sibling subtree under
 another inadvertently-gitignored basename would hit the same opaque
@@ -39,7 +39,7 @@ R311 closes that gap.
 
 ## Implementation
 
-`scripts/check-strict-mirror.py` now has a second pass per file:
+`dev/test/check-strict-mirror.py` now has a second pass per file:
 
 ```python
 def get_tracked_rust_files() -> set[str] | None:
@@ -90,7 +90,7 @@ The check degrades gracefully:
 
 ```text
 $ touch crates/cardano-cli/src/era_independent/synthetic_drift_test.rs
-$ python3 scripts/check-strict-mirror.py --fail-on-violation
+$ python3 dev/test/check-strict-mirror.py --fail-on-violation
 strict-mirror: 1 new file(s) violate the policy …
 ::warning file=…/synthetic_drift_test.rs::(NEEDS-REVIEW) … must either
   rename to an upstream `.hs` basename or add a `## Naming parity`
@@ -117,7 +117,7 @@ $ cat > crates/cardano-cli/src/era_independent/r310_simulate.rs <<EOF
 fn x() {}
 EOF
 $ echo "/crates/cardano-cli/src/era_independent/r310_simulate.rs" >> .gitignore
-$ python3 scripts/check-strict-mirror.py --fail-on-violation
+$ python3 dev/test/check-strict-mirror.py --fail-on-violation
 strict-mirror: 1 file(s) exist locally but are NOT tracked in
   `git ls-files` (R311 index-vs-tree drift …):
 ::warning file=…/r310_simulate.rs::index-vs-tree drift - …
@@ -132,7 +132,7 @@ opaque module-resolution error.
 
 | Path | Change |
 |---|---|
-| `scripts/check-strict-mirror.py` | New `subprocess` import; new `get_tracked_rust_files()` helper; main loop now walks both the existing mirror/docstring check AND the new index-vs-tree check; combined exit-code logic. ~50 lines added. |
+| `dev/test/check-strict-mirror.py` | New `subprocess` import; new `get_tracked_rust_files()` helper; main loop now walks both the existing mirror/docstring check AND the new index-vs-tree check; combined exit-code logic. ~50 lines added. |
 | `scripts/AGENTS.md` | `check-strict-mirror.py` section: subhead bumped to "(R275 warn-only → R288 fail-build, R311 drift-aware)"; new "Also cross-checks the working tree against the git index" paragraph; failure-mode list expanded from a single sentence to two named classes (Mirror/docstring violation + Index-vs-tree drift). |
 | `docs/operational-runs/2026-05-09-round-311-strict-mirror-index-drift-check.md` | This round-doc. |
 
@@ -145,14 +145,14 @@ passing) is preserved by construction.
 $ cargo fmt --all -- --check
 (silent — clean)
 
-$ python3 scripts/check-strict-mirror.py --fail-on-violation
+$ python3 dev/test/check-strict-mirror.py --fail-on-violation
 strict-mirror: 0 violations (clean)
 
-$ python3 scripts/check-parity-matrix.py
+$ python3 dev/test/check-parity-matrix.py
 parity matrix clean: 8 entries validated against
     .reference-haskell-cardano-node (reference tag 11.0.1)
 
-$ python3 scripts/check-fixture-manifest.py
+$ python3 dev/test/check-fixture-manifest.py
 fixture manifest clean: SHA 7a8a991945d401d89e27f53b3d3bb464a354ad4c
     consistent across pin source, fixture tree, and docs;
     2 corpora validated.

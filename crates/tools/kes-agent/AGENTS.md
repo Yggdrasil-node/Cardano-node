@@ -11,7 +11,7 @@ Every production `.rs` here either mirrors a single canonical upstream
 sibling collisions) OR carries a `## Naming parity` docstring stanza
 ending in `**Strict mirror:** none.` plus the upstream symbol(s)/
 file(s) the helper surfaces. CI gate:
-`python3 scripts/check-strict-mirror.py --fail-on-violation`.
+`python3 dev/test/check-strict-mirror.py --fail-on-violation`.
 
 ## Upstream source
 
@@ -52,8 +52,8 @@ returning a `DaemonStatus` descriptor.
 cargo build --release -p yggdrasil-kes-agent
 
 # Run via the universal launcher (recommended).
-scripts/run-tools.sh kes-agent --help
-scripts/run-tools.sh kes-agent --version
+dev/scripts/run-tools.sh kes-agent --help
+dev/scripts/run-tools.sh kes-agent --version
 
 # Or invoke the binary directly:
 target/release/kes-agent --help
@@ -98,7 +98,7 @@ To verify the yggdrasil binary still tracks upstream byte-for-byte:
 
 ```bash
 # 1. Refresh vendored upstream tree (only when bumping the upstream version).
-bash scripts/setup-reference.sh
+bash dev/reference/setup-reference.sh
 
 # 2. Run cargo test for the crate.
 cargo test -p yggdrasil-kes-agent
@@ -116,8 +116,8 @@ diff <(.reference-haskell-cardano-node/install/bin/kes-agent --version) \
 - Update this AGENTS.md when concrete subcommand implementations
   land (replace `❌ not yet implemented` rows with `✅ shipped` +
   round number).
-- Keep the per-tool migration round numbers in sync with the
-  authoritative plan file at `/home/daniel/.claude/plans/playful-tickling-plum.md`.
+- Keep the per-tool migration round numbers in sync with
+  `docs/COMPLETION_ROADMAP.md` and `CHANGELOG.md`.
 - If upstream ships a new release: refresh the help/version
   fixtures, advance the relevant SHA pin in `upstream_pins.rs`,
   re-run the full cargo gate.

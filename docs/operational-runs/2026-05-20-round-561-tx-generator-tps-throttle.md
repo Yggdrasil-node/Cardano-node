@@ -50,8 +50,8 @@ cargo fmt --all -- --check
 cargo check-all
 cargo lint
 cargo test-all
-python scripts/check-parity-matrix.py
-python .claude/scripts/filetree.py check
+python dev/test/check-parity-matrix.py
+python dev/test/filetree.py check
 ```
 
 Observed result: all commands passed locally.

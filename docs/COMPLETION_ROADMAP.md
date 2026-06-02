@@ -1308,11 +1308,11 @@ Post-reorganization cleanup guardrails:
 - **Historical-doc paths:** round-stamped historical narratives now use the
   post-split `crates/node/<sub-crate>/...` paths where they mention local Rust
   files; keep upstream Haskell `cardano-node/...` URLs unchanged.
-- **Filetree descriptions:** closed R771. `.claude/filetree/manifest.json`
-  (bootstrapped 2026-05-17) was brought fully current after the R717-R770
-  dmq-node arc — the `filetree-reviewer` agent added entries for the new
+- **Filetree descriptions:** closed R771. `dev/filetree/manifest.json`
+  (bootstrapped 2026-05-17 and later moved to the dev-owned tree) was brought fully current after the R717-R770
+  dmq-node arc — the filetree maintenance pass added entries for the new
   dmq-node source files and the `docs/operational-runs/` history and
-  refreshed stale entries; `python3 .claude/scripts/filetree.py check` is
+  refreshed stale entries; `python3 dev/test/filetree.py check` is
   clean. Keep it current via the `cardano-filetree-maintainer` skill /
   `filetree-reviewer` agent after future file additions.
 
@@ -1334,7 +1334,7 @@ Functional binary exists with the R569-R688 typed rejection decoder arc
 closed, and the 202 Accepted response now returns the submitted
 transaction `TxId`. Remaining parity work is the drop-in byte-equivalence
 soak vs the upstream `cardano-submit-api`.
-**Closes with:** empty `scripts/compare_submit_api_to_upstream.sh`
+**Closes with:** empty `dev/evidence/compare_submit_api_to_upstream.sh`
 response diffs → `verified_11_0_1`.
 
 ### B3 — db-truncater integration soak (R351)
@@ -1348,7 +1348,7 @@ update sites bridged.
 
 ### B5 — Production-readiness operator gates
 `MANUAL_TEST_RUNBOOK.md` §2–9 mainnet endurance rehearsal (24h+) and the §6.5
-parallel-fetch sign-off (`scripts/parallel_blockfetch_soak.sh`)
+parallel-fetch sign-off (`dev/evidence/parallel_blockfetch_soak.sh`)
 remain open operator gates. The shipped default is already `2`; these runs close
 the evidence requirement for the current default and any richer-topology stress
 settings.
@@ -1371,7 +1371,7 @@ drift. **Closes with:** per-block VRF input/seed/key diff vs upstream
 ### C2 — Gap BP: preview Plutus V2 cost-budget overrun (slot ~1,462,057)
 CEK overruns the CPU budget by ≈0.0185% on a real V2 script. Workaround:
 `YGG_SKIP_PHASE2=1` (sync-only; never on a block producer). **Closes with:**
-aggregate `scripts/compare-gap-bp-traces.py --require-haskell --require-equal`
+aggregate `dev/evidence/compare-gap-bp-traces.py --require-haskell --require-equal`
 evidence over ScriptContext CBOR, CEK accumulated-step flushes, and
 per-builtin costs vs upstream `Cek/Internal.hs::stepAndMaybeSpend`.
 
@@ -1379,7 +1379,7 @@ per-builtin costs vs upstream `Cek/Internal.hs::stepAndMaybeSpend`.
 cardano-cli's HFC decoder expects a different Conway-era LSQ response envelope
 than yggdrasil's current `[1, body]` shape. **Closes with:** captured upstream
 Conway-era wire fixtures via
-`scripts/compare-conway-lsq.py --require-haskell --require-byte-equal --write-fixture <fixture.json>`
+`dev/evidence/compare-conway-lsq.py --require-haskell --require-byte-equal --write-fixture <fixture.json>`
 plus any required `encode_query_if_current_match` adjustment.
 
 ### C4 — Performance: 2× Haskell sync throughput

@@ -62,7 +62,7 @@
         "partial": { "type": "string" },
         "absent": { "type": "string" }
       },
-      "description": "Status enum docstrings. Keys must match the ALLOWED_STATUS set in scripts/check-parity-matrix.py."
+      "description": "Status enum docstrings. Keys must match the ALLOWED_STATUS set in dev/test/check-parity-matrix.py."
     },
     "entries": {
       "type": "array",
@@ -162,7 +162,7 @@
         "path": {
           "type": "string",
           "minLength": 4,
-          "description": "Filesystem path relative to repo root. For haskell_reference, MUST start with '.reference-haskell-cardano-node/'; for rust_surface, MUST start with 'crates/'. scripts/check-parity-matrix.py asserts each path exists at validation time."
+          "description": "Filesystem path relative to repo root. For haskell_reference, MUST start with '.reference-haskell-cardano-node/'; for rust_surface, MUST start with 'crates/'. dev/test/check-parity-matrix.py asserts each path exists at validation time."
         },
         "role": {
           "type": "string",

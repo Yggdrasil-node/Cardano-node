@@ -58,7 +58,7 @@ cargo fmt --all -- --check          clean
 cargo check-all                     clean (Finished `dev` profile in 4.52s)
 cargo lint                          clean (Finished `dev` profile in 10.68s)
 cargo test-all                      4855 passed; 0 failed (baseline preserved)
-python3 scripts/check-strict-mirror.py
+python3 dev/test/check-strict-mirror.py
                                     strict-mirror: 0 violations (clean)
 ```
 

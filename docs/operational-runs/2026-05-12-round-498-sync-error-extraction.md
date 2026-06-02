@@ -31,7 +31,7 @@ with R508.
 | `node/src/sync/error.rs` | none (synthesis). Wraps protocol-client errors from `Ouroboros.Network.{ChainSync,BlockFetch,KeepAlive}.Client` plus `Ouroboros.Consensus` validation errors. `is_peer_attributable` mirrors `Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment` peer-attribution semantics. |
 
 `error.rs` carries an explicit `## Naming parity` stanza ending
-`**Strict mirror:** none.` per CLAUDE.md.
+`**Strict mirror:** none.` per AGENTS.md.
 
 ## Cross-module dependencies
 
@@ -71,7 +71,7 @@ $ cargo lint
 $ cargo test-all | grep 'test result:' | awk ...
 passing: 6224
 
-$ python3 scripts/check-strict-mirror.py --fail-on-violation
+$ python3 dev/test/check-strict-mirror.py --fail-on-violation
 strict-mirror: 0 violations (clean)
 ```
 
@@ -100,7 +100,7 @@ Awaits explicit `proceed` per the continuous-agent-loop pattern.
 
 - Plan: [`2026-05-12-round-498-plan-sync-rs-split-arc.md`](2026-05-12-round-498-plan-sync-rs-split-arc.md)
 - Predecessor: [`R497`](2026-05-11-round-497-to-raw-tx-bytes-fidelity.md) (db-analyser HasAnalysis arc closure)
-- Skill: [`.claude/skills/round-extraction/SKILL.md`](../../.claude/skills/round-extraction/SKILL.md)
+- Skill: `docs/AGENTS.md`
 - Upstream affinity:
   - `.reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/ChainDB/API/Types/InvalidBlockPunishment.hs`
   - `.reference-haskell-cardano-node/deps/ouroboros-network/ouroboros-network/src/Ouroboros/Network/Protocol/ChainSync/Client.hs`

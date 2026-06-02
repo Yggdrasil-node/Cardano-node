@@ -94,16 +94,16 @@ cargo check-all                     clean (yggdrasil-cardano-cli compiles
                                             in 0.52s; full workspace 12.01s)
 cargo lint                          clean
 cargo test-all                      4855 passed; 0 failed (baseline preserved)
-python3 scripts/check-strict-mirror.py --fail-on-violation
+python3 dev/test/check-strict-mirror.py --fail-on-violation
                                     strict-mirror: 0 violations (clean), exit 0
-python3 scripts/check-parity-matrix.py
+python3 dev/test/check-parity-matrix.py
                                     parity matrix clean: 8 entries validated
 ```
 
 ## Strict-mirror audit table
 
 ```text
-$ python3 scripts/audit-strict-mirror.py
+$ python3 dev/test/audit-strict-mirror.py
   audit complete: 217 rust files; candidate_match=168, no_candidate_match=49
   auto-grading bucket counts:
     (a): 60   (+8 cardano-cli skeleton files)

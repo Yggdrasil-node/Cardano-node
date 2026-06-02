@@ -53,15 +53,15 @@ Process/Property execution harness land.
 - Formatting: `cargo fmt --all -- --check` exited 0 after applying rustfmt to
   the new module and tests.
 - Focused validators:
-  `python scripts/check-stale-placement.py --self-test`,
-  `python scripts/check-stale-placement.py`,
-  `python scripts/check-doc-status-headers.py --self-test`,
-  `python scripts/check-doc-status-headers.py`,
-  `python scripts/check-parity-matrix.py`,
-  `python scripts/check-strict-mirror.py --fail-on-violation`, and
-  `python -m py_compile scripts/check-stale-placement.py
-  scripts/check-doc-status-headers.py scripts/check-parity-matrix.py
-  .claude/scripts/filetree.py` exited 0.
+  `python dev/test/check-stale-placement.py --self-test`,
+  `python dev/test/check-stale-placement.py`,
+  `python dev/test/check-doc-status-headers.py --self-test`,
+  `python dev/test/check-doc-status-headers.py`,
+  `python dev/test/check-parity-matrix.py`,
+  `python dev/test/check-strict-mirror.py --fail-on-violation`, and
+  `python -m py_compile dev/test/check-stale-placement.py
+  dev/test/check-doc-status-headers.py dev/test/check-parity-matrix.py
+  dev/test/filetree.py` exited 0.
 - Broad Rust gates: `cargo check-all`, `cargo lint`, and `cargo test-all`
   exited 0.
 - Green inventory: `cargo test-all -- --list | Select-String -Pattern

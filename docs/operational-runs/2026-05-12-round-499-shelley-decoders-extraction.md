@@ -38,7 +38,7 @@ inline" budget.
 | `node/src/sync/shelley_decoders.rs` | `Ouroboros.Consensus.Shelley.Ledger.Block` — `decodeShelleyBlock`, `decodeShelleyHeader`. Plus byte-span preserving conversion that is byte-exact-fee-correct per `Cardano.Ledger.Shelley.Tx.minfee`. |
 
 The new leaf carries an explicit `## Naming parity` stanza ending
-`**Strict mirror:** none.` per CLAUDE.md (Yggdrasil's adapter layer
+`**Strict mirror:** none.` per AGENTS.md (Yggdrasil's adapter layer
 between the upstream Shelley typed surface and the storage `Block`
 wrapper is a synthesis — upstream splits the same concerns across
 multiple files).
@@ -82,7 +82,7 @@ $ cargo lint
 $ cargo test-all | grep 'test result:' | awk ...
 passing: 6224
 
-$ python3 scripts/check-strict-mirror.py --fail-on-violation
+$ python3 dev/test/check-strict-mirror.py --fail-on-violation
 strict-mirror: 0 violations (clean)
 ```
 
@@ -113,7 +113,7 @@ All four gates green. Test count unchanged from R498 (6,224 passing,
 
 - Plan: [`2026-05-12-round-498-plan-sync-rs-split-arc.md`](2026-05-12-round-498-plan-sync-rs-split-arc.md)
 - Predecessor: [`R498`](2026-05-12-round-498-sync-error-extraction.md)
-- Skill: [`.claude/skills/round-extraction/SKILL.md`](../../.claude/skills/round-extraction/SKILL.md)
+- Skill: `docs/AGENTS.md`
 - Upstream affinity:
   - `.reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus-shelley/src/Ouroboros/Consensus/Shelley/Ledger/Block.hs`
   - `.reference-haskell-cardano-node/deps/cardano-ledger/eras/shelley/impl/src/Cardano/Ledger/Shelley/Tx.hs` (minfee byte-preservation rationale)

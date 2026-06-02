@@ -49,13 +49,13 @@ implementation detail rather than as a parity caveat.
 ## Verification
 
 ```text
-$ python3 scripts/audit-strict-mirror.py
+$ python3 dev/test/audit-strict-mirror.py
 audit complete: 448 rust files; candidate_match=391, no_candidate_match=57
 auto-grading bucket counts:
   (a): 262
   (c): 186
 
-$ python3 scripts/check-strict-mirror.py --fail-on-violation
+$ python3 dev/test/check-strict-mirror.py --fail-on-violation
 strict-mirror: 0 violations (clean)
 
 $ cargo fmt --all -- --check          # clean

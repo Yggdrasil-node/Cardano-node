@@ -37,7 +37,7 @@ EXPECT_WORKERS=2 \
 RUN_SECONDS=180 \
 SAMPLE_INTERVAL_S=15 \
 START_DEADLINE_S=120 \
-node/scripts/parallel_blockfetch_soak.sh
+node/dev/evidence/parallel_blockfetch_soak.sh
 ```
 
 ### Result

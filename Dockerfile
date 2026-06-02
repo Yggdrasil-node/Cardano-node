@@ -68,8 +68,8 @@ COPY --from=builder /src/target/release/yggdrasil-node /usr/local/bin/yggdrasil-
 COPY --from=builder /src/configuration /usr/share/yggdrasil/configuration
 
 # Operator scripts — useful for one-shot ops via `docker exec`.
-COPY --from=builder /src/scripts/check_upstream_drift.sh /usr/local/bin/yggdrasil-check-upstream-drift
-COPY --from=builder /src/scripts/restart_resilience.sh    /usr/local/bin/yggdrasil-restart-resilience
+COPY --from=builder /src/dev/scripts/check_upstream_drift.sh /usr/local/bin/yggdrasil-check-upstream-drift
+COPY --from=builder /src/dev/scripts/restart_resilience.sh    /usr/local/bin/yggdrasil-restart-resilience
 RUN chmod +x /usr/local/bin/yggdrasil-*
 
 USER yggdrasil

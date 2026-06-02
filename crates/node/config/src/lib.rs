@@ -15,7 +15,7 @@
 //!  * [`upstream_pins`]: cardano-base / ouroboros-consensus / etc.
 //!    git SHA constants pinned at the policy tag from
 //!    `docs/parity-matrix.json::reference.tag` (currently 11.0.1).
-//!    Cross-checked by `scripts/check-fixture-manifest.py`.
+//!    Cross-checked by `dev/test/check-fixture-manifest.py`.
 //!
 //! The `yggdrasil-node` binary re-exports this crate via
 //! `pub use yggdrasil_node_config as config;` so the public surface

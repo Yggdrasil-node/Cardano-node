@@ -72,7 +72,7 @@ unused workspace deps are not flagged by clippy or cargo check.
 $ cargo fmt --all -- --check
 (silent — clean)
 
-$ python3 scripts/check-strict-mirror.py --fail-on-violation
+$ python3 dev/test/check-strict-mirror.py --fail-on-violation
 strict-mirror: 0 violations (clean)
 
 $ cargo check --workspace --all-targets
@@ -84,11 +84,11 @@ $ cargo clippy --workspace --all-targets --all-features -- -D warnings
 $ cargo test --workspace --all-features
 passed: 4856  failed: 0
 
-$ python3 scripts/check-parity-matrix.py
+$ python3 dev/test/check-parity-matrix.py
 parity matrix clean: 20 entries validated against
     .reference-haskell-cardano-node (reference tag 11.0.1)
 
-$ python3 scripts/check-fixture-manifest.py
+$ python3 dev/test/check-fixture-manifest.py
 fixture manifest clean: SHA 7a8a991945d401d89e27f53b3d3bb464a354ad4c
     consistent across pin source, fixture tree, and docs;
     2 corpora validated.
@@ -113,7 +113,7 @@ All three are met.
 | R327 | `e952e83` | 12 sister-tool skeleton crates (Cargo.toml + lib.rs + main.rs + AGENTS.md per tool) |
 | R327b | `532f1fd` | Cargo.lock + audit TSV byproduct refresh |
 | R328 | `0534223` | Parity-matrix +12 entries; upstream_pins +3 SHAs; drift detector cross-org URL support |
-| R329 | `71516ef` | `node/scripts/run-tools.sh` 12-binary dispatcher |
+| R329 | `71516ef` | `node/dev/scripts/run-tools.sh` 12-binary dispatcher |
 | R330 | (this) | `bech32` workspace dep + deferred dep documentation |
 
 **Workspace state at prep-block closure:**
@@ -123,7 +123,7 @@ All three are met.
 - Workspace tests: 4,856 (unchanged — skeletons have no tests yet)
 - Upstream `.hs` index: 4,676 → 4,804
 - New workspace dep: `bech32 = "0.11"` (pure-Rust, MIT)
-- Operator-side launcher: `node/scripts/run-tools.sh` ready
+- Operator-side launcher: `node/dev/scripts/run-tools.sh` ready
 
 ## Authorization checkpoint — Phase A entry
 

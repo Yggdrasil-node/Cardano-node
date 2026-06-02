@@ -16,7 +16,7 @@ permalink: /operational-runs/2026-05-09-round-326-vendored-source-survey/
 
 R326 is the first round of the multi-quarter sister-tools port arc.
 The plan assigned R326 to "vendor missing upstream repos" — extend
-`scripts/setup-reference.sh` with `bech32`, `kes-agent`, `dmq-node`
+`dev/reference/setup-reference.sh` with `bech32`, `kes-agent`, `dmq-node`
 clones. Implementation surfaced two corrections:
 
 1. **`.hs` file counts are 2-3× larger than the Plan agent's
@@ -108,17 +108,17 @@ audit-table binary at 246 (a) + 202 (c) = 448) is preserved.
 $ cargo fmt --all -- --check
 (silent — clean)
 
-$ python3 scripts/check-strict-mirror.py --fail-on-violation
+$ python3 dev/test/check-strict-mirror.py --fail-on-violation
 strict-mirror: 0 violations (clean)
 
 $ cargo check --workspace --all-targets
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.63s
 
-$ python3 scripts/check-parity-matrix.py
+$ python3 dev/test/check-parity-matrix.py
 parity matrix clean: 8 entries validated against
     .reference-haskell-cardano-node (reference tag 11.0.1)
 
-$ python3 scripts/check-fixture-manifest.py
+$ python3 dev/test/check-fixture-manifest.py
 fixture manifest clean: SHA 7a8a991945d401d89e27f53b3d3bb464a354ad4c
     consistent across pin source, fixture tree, and docs;
     2 corpora validated.
@@ -149,7 +149,7 @@ All four are met.
 - **R326b (deferred)** — Once operator confirms the 3 canonical
   IntersectMBO repo URLs (or authorizes external GitHub probing),
   re-enter R326 to extend `setup-reference.sh` and run
-  `bash scripts/setup-reference.sh --force` for the new repos.
+  `bash dev/reference/setup-reference.sh --force` for the new repos.
   This is a hard prerequisite for Tier 1 entry (R331).
 
 The plan continues to R327 (Cargo skeleton stubs) without delay,

@@ -6,14 +6,14 @@ name: Parity snapshot
 # yggdrasil-node and a vendored upstream Haskell `cardano-node`, lets
 # both sync for the requested duration, then samples the chain tip
 # from each on the configured interval and runs the existing
-# `scripts/compare_tip_to_haskell.sh`
+# `dev/evidence/compare_tip_to_haskell.sh`
 # parity script. Any tip divergence in slot or hash fails the
 # workflow.
 #
 # The harness scripts already handle the comparison logic; this
 # workflow is the CI wiring around them. Vendored upstream binary is
 # at `.reference-haskell-cardano-node/install/bin/cardano-node` per
-# `scripts/setup-reference.sh --force` (fetched here on first run).
+# `dev/reference/setup-reference.sh --force` (fetched here on first run).
 #
 # Why workflow_dispatch only (no scheduled cron):
 #   - Each run takes 30+ minutes of wallclock (sync + comparison
@@ -84,7 +84,7 @@ jobs:
         # Pulls the vendored Haskell binary + source trees into
         # .reference-haskell-cardano-node/ at the policy-tag SHA
         # declared in docs/parity-matrix.json::reference.tag.
-        run: bash scripts/setup-reference.sh --force
+        run: bash dev/reference/setup-reference.sh --force
 
       - name: Verify reference artifacts present
         run: |
@@ -136,7 +136,7 @@ jobs:
           echo "[ygg] launched (pid=$ygg_pid)"
 
           # Launch upstream cardano-node (path layout follows the
-          # vendored tree from scripts/setup-reference.sh).
+          # vendored tree from dev/reference/setup-reference.sh).
           haskell_log="tmp/parity-snapshot/haskell/cardano-node.log"
           .reference-haskell-cardano-node/install/bin/cardano-node run \
             --config ".reference-haskell-cardano-node/install/share/$NETWORK/config.json" \
@@ -176,7 +176,7 @@ jobs:
                HASKELL_SOCK=tmp/parity-snapshot/haskell/node.sock \
                NETWORK_MAGIC=$NETWORK_MAGIC \
                SNAPSHOT_DIR=tmp/parity-snapshot/snapshots \
-               bash scripts/compare_tip_to_haskell.sh; then
+               bash dev/evidence/compare_tip_to_haskell.sh; then
               echo "[sample $sample_count] tips match"
             else
               rc=$?

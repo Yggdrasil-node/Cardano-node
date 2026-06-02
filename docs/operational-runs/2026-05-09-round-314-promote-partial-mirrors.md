@@ -18,7 +18,7 @@ declaration so we could achieve better parity and code quality."
 
 R314 closes the docstring-classification gap revealed by R313:
 
-1. **Audit regex bug fix.** `scripts/audit-strict-mirror.py`'s
+1. **Audit regex bug fix.** `dev/test/audit-strict-mirror.py`'s
    `STRICT_PARTIAL_PATTERN` was `\*\*Strict mirror\s*\(partial\)\*\*`
    (no colon). All 41 affected files actually used
    `**Strict mirror (partial):**` (with colon), so they fell
@@ -137,7 +137,7 @@ honest:
 
 | Path | Change |
 |---|---|
-| `scripts/audit-strict-mirror.py` | `STRICT_PARTIAL_PATTERN` regex tightened to recognize `**Strict mirror (partial):**` (with optional colon). 1-character change. |
+| `dev/test/audit-strict-mirror.py` | `STRICT_PARTIAL_PATTERN` regex tightened to recognize `**Strict mirror (partial):**` (with optional colon). 1-character change. |
 | 24 production `.rs` files | `**Strict mirror (partial):** mirrors upstream\n//! \`<haskell.module.path>\`.` blocks replaced with single-line `**Strict mirror:** <slash/path>.`. Mechanical change via Python script (regex replacement). |
 | `docs/strict-mirror-audit.tsv` | Re-generated from updated source files; bucket counts shifted per the table above. |
 | `docs/operational-runs/2026-05-09-round-314-promote-partial-mirrors.md` | This round-doc. |
@@ -149,13 +149,13 @@ is preserved by construction; no behavior changes.
 ## Verification
 
 ```text
-$ python3 scripts/audit-strict-mirror.py
+$ python3 dev/test/audit-strict-mirror.py
 audit complete: 445 rust files; candidate_match=387, no_candidate_match=58
 auto-grading bucket counts:
   (a): 254   (was 230)
   (c): 191   (was 215)
 
-$ python3 scripts/check-strict-mirror.py --fail-on-violation
+$ python3 dev/test/check-strict-mirror.py --fail-on-violation
 strict-mirror: 0 violations (clean)
 
 $ cargo fmt --all -- --check
@@ -170,10 +170,10 @@ $ cargo clippy --workspace --all-targets --all-features -- -D warnings
 $ cargo test --workspace --all-features
 passed: 4855  failed: 0
 
-$ python3 scripts/check-parity-matrix.py
+$ python3 dev/test/check-parity-matrix.py
 parity matrix clean: 8 entries validated
 
-$ python3 scripts/check-fixture-manifest.py
+$ python3 dev/test/check-fixture-manifest.py
 fixture manifest clean: SHA 7a8a991945… consistent
 ```
 

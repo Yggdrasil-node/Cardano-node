@@ -115,7 +115,7 @@ CBOR round-trip and `find_account_by_credential` /
 ### References
 
 - R269 a–f closures: `2026-05-06-round-269{,b,c,d,e,f}-state-*.md`
-- Plan: `~/.claude/plans/dapper-giggling-haven.md`
+- Plan: `docs/COMPLETION_ROADMAP.md`
 - Upstream AccountState:
   `.reference-haskell-cardano-node/deps/cardano-ledger/libs/cardano-ledger-core/src/Cardano/Ledger/State/AccountState.hs`
 - Upstream DState reward-account map:

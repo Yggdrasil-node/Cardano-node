@@ -33,8 +33,8 @@ after the R561 `Cardano.Benchmarking.Types` / `TpsThrottle` and R562
 - `cargo test-all`
 - `cargo test -p yggdrasil-tx-generator submission`
 - `cargo clippy -p yggdrasil-tx-generator --all-targets`
-- `python scripts/check-parity-matrix.py`
-- `python .claude/scripts/filetree.py check`
+- `python dev/test/check-parity-matrix.py`
+- `python dev/test/filetree.py check`
 
 ## Remaining
 

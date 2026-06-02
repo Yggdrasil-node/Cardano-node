@@ -58,8 +58,8 @@ No source code touched. Tests unchanged.
 
 ```
 cargo fmt --all -- --check                                  clean
-python3 scripts/check-strict-mirror.py --fail-on-violation   0 violations
-python3 scripts/check-parity-matrix.py                       clean
+python3 dev/test/check-strict-mirror.py --fail-on-violation   0 violations
+python3 dev/test/check-parity-matrix.py                       clean
 ```
 
 ## Stop point

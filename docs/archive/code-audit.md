@@ -382,7 +382,7 @@ Commits `9918d77` and `dac8e41` are authored as `Daniel <daniel@example.com>`. N
 
 #### L-7 — `restart_resilience.sh` uses fixed `/tmp/ygg-restart-db` path [CLOSED in 2026-Q3]
 
-- **Location:** `node/scripts/restart_resilience.sh:30-37`
+- **Location:** `node/dev/scripts/restart_resilience.sh:30-37`
 - **Severity:** Low (multi-user host only)
 
 If two operators run the script concurrently on the same host (CI runner, shared dev box) they'll race on `/tmp/ygg-restart-db`, `/tmp/ygg-restart.sock`, and the metrics port (`9099`). Convert to `mktemp -d` and pick a free port. Same applies to `run_*_real_pool_producer.sh`.
@@ -451,7 +451,7 @@ Same pattern as L-8. `usize::MAX` boundary unreachable in practice (would requir
 
 #### I-9 — systemd unit applies meaningful hardening
 
-- `node/scripts/yggdrasil-node.service`: `NoNewPrivileges=true`, `ProtectSystem=full`, `ProtectHome=true`, `ProtectKernelTunables=true`, `ProtectKernelModules=true`, `ProtectControlGroups=true`, `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK`, `RestrictRealtime=true`, `LockPersonality=true`, `ReadWritePaths=/var/lib/yggdrasil`. Runs as a dedicated `yggdrasil` user. `KillSignal=SIGINT` matches the node's graceful-shutdown handler. `LimitNOFILE=65536` is appropriate.
+- `node/dev/scripts/yggdrasil-node.service`: `NoNewPrivileges=true`, `ProtectSystem=full`, `ProtectHome=true`, `ProtectKernelTunables=true`, `ProtectKernelModules=true`, `ProtectControlGroups=true`, `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK`, `RestrictRealtime=true`, `LockPersonality=true`, `ReadWritePaths=/var/lib/yggdrasil`. Runs as a dedicated `yggdrasil` user. `KillSignal=SIGINT` matches the node's graceful-shutdown handler. `LimitNOFILE=65536` is appropriate.
 
 #### I-10 — Dockerfile is well-structured
 
@@ -469,7 +469,7 @@ Same pattern as L-8. `usize::MAX` boundary unreachable in practice (would requir
 
 #### I-13 — Audit-pin documentation is unusually rigorous
 
-- `node/src/upstream_pins.rs` records the exact upstream IntersectMBO commit SHAs the Rust port was last audited against (cardano-base, cardano-ledger, ouroboros-consensus, ouroboros-network, plutus, cardano-node). `node/scripts/check_upstream_drift.sh` compares each against live `git ls-remote HEAD`. Drift is informational, not a build failure, but the discipline is exemplary and uncommon in re-implementation projects.
+- `node/src/upstream_pins.rs` records the exact upstream IntersectMBO commit SHAs the Rust port was last audited against (cardano-base, cardano-ledger, ouroboros-consensus, ouroboros-network, plutus, cardano-node). `node/dev/scripts/check_upstream_drift.sh` compares each against live `git ls-remote HEAD`. Drift is informational, not a build failure, but the discipline is exemplary and uncommon in re-implementation projects.
 
 #### I-14 — Genesis files are cryptographically authentic
 
@@ -599,7 +599,7 @@ This section covers every non-trivial file. Files marked `(read in full)` were r
 | `node/src/lib.rs` | Re-exports. Trivial. |
 | `node/configuration/{mainnet,preprod,preview}/*` (verified) | All four genesis hashes match canonical IOG values (I-14). Topology files reference IOG/CF/Emurgo backbones. |
 | `node/scripts/*.sh` (read in full) | 8 scripts. `install_from_release.sh` does verify SHA-256. `backup_db.sh` uses `sudo systemctl`. `compare_tip_to_haskell.sh`, `restart_resilience.sh` (L-7), `run_*_real_pool_producer.sh` rehearsals, `healthcheck.sh`, `check_upstream_drift.sh`. No `eval`, no `curl \| bash`. Clean. |
-| `node/scripts/yggdrasil-node.service` (read in full) | See I-9. |
+| `node/dev/scripts/yggdrasil-node.service` (read in full) | See I-9. |
 
 ### `crates/crypto`
 

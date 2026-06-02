@@ -62,7 +62,7 @@ live-successor docs.
 | File | Updates |
 |---|---|
 | `AGENTS.md` | `docs/PARITY_PLAN.md` -> `docs/archive/PARITY_PLAN.md` |
-| `CLAUDE.md` | `docs/PARITY_PLAN.md` reference (one site) |
+| `AGENTS.md` | `docs/PARITY_PLAN.md` reference (one site) |
 | `crates/consensus/src/genesis_density.rs` | inline Rust comment ref |
 | `crates/network/src/blockfetch_pool.rs` | inline Rust comment ref |
 | `node/src/sync.rs` | inline Rust comment ref |
@@ -119,9 +119,9 @@ cargo fmt --all -- --check          clean
 cargo check-all                     clean (Finished `dev` profile in 4.76s)
 cargo lint                          clean (Finished `dev` profile in 8.78s)
 cargo test-all                      4855 passed; 0 failed (baseline preserved)
-python3 scripts/check-strict-mirror.py --fail-on-violation
+python3 dev/test/check-strict-mirror.py --fail-on-violation
                                     strict-mirror: 0 violations (clean), exit 0
-python3 scripts/check-parity-matrix.py
+python3 dev/test/check-parity-matrix.py
                                     parity matrix clean: 8 entries validated
 ```
 

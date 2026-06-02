@@ -34,11 +34,11 @@ into the config owner crate.
 - `cargo check-all`
 - `cargo lint`
 - `cargo test-all`
-- `python scripts/check-stale-placement.py`
-- `python scripts/check-strict-mirror.py --fail-on-violation`
-- `python scripts/check-parity-matrix.py`
-- `python scripts/check-fixture-manifest.py`
-- `python .claude/scripts/filetree.py check`
+- `python dev/test/check-stale-placement.py`
+- `python dev/test/check-strict-mirror.py --fail-on-violation`
+- `python dev/test/check-parity-matrix.py`
+- `python dev/test/check-fixture-manifest.py`
+- `python dev/test/filetree.py check`
 - `git diff --check`
 
 All listed checks passed. `git diff --check` emitted only CRLF-normalization

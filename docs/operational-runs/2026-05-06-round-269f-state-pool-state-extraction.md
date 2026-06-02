@@ -150,7 +150,7 @@ and one explicit test import (`PoolParams`).
 ### References
 
 - R269 a–e closures: `2026-05-06-round-269{,b,c,d,e}-state-*.md`
-- Plan: `~/.claude/plans/dapper-giggling-haven.md`
+- Plan: `docs/COMPLETION_ROADMAP.md`
 - Upstream PoolState record:
   `.reference-haskell-cardano-node/deps/cardano-ledger/libs/cardano-ledger-core/src/Cardano/Ledger/State/PoolState.hs`
 - Upstream PState (Shelley registry):

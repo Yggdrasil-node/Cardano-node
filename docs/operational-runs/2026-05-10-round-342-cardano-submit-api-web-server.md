@@ -118,9 +118,9 @@ cargo fmt --all -- --check                          # clean
 cargo check-all                                     # clean
 cargo test-all                                      # 5,099 passed
 cargo lint                                          # clean
-python3 scripts/check-strict-mirror.py --fail-on-violation   # 0 violations
-python3 scripts/check-parity-matrix.py              # clean (20 entries vs tag 11.0.1)
-python3 scripts/check-fixture-manifest.py           # clean
+python3 dev/test/check-strict-mirror.py --fail-on-violation   # 0 violations
+python3 dev/test/check-parity-matrix.py              # clean (20 entries vs tag 11.0.1)
+python3 dev/test/check-fixture-manifest.py           # clean
 cargo test -p yggdrasil-cardano-submit-api          # 132 tests pass
 ```
 

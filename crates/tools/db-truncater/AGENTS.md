@@ -14,7 +14,7 @@ Every production `.rs` here either mirrors a single canonical upstream
 sibling collisions) OR carries a `## Naming parity` docstring stanza
 ending in `**Strict mirror:** none.` plus the upstream symbol(s)/
 file(s) the helper surfaces. CI gate:
-`python3 scripts/check-strict-mirror.py --fail-on-violation`.
+`python3 dev/test/check-strict-mirror.py --fail-on-violation`.
 
 ## Upstream source
 
@@ -58,7 +58,7 @@ operator-procedure level is sufficient.
 - **Operator soak vs. upstream binary** — the only remaining
   gate before parity-matrix `partial → verified_11_0_1`
   promotion. Operator runs
-  `scripts/compare_db_truncater_to_upstream.sh` against a
+  `dev/evidence/compare_db_truncater_to_upstream.sh` against a
   synthesized upstream + yggdrasil ChainDB pair; the script
   asserts the post-truncate tip slot + block count match. This
   is an operator-side task — the crate code itself is complete.
@@ -70,11 +70,11 @@ operator-procedure level is sufficient.
 cargo build --release -p yggdrasil-db-truncater
 
 # Run via the universal launcher (recommended).
-scripts/run-tools.sh db-truncater --help
-scripts/run-tools.sh db-truncater --version
+dev/scripts/run-tools.sh db-truncater --help
+dev/scripts/run-tools.sh db-truncater --version
 
 # Run a truncation:
-scripts/run-tools.sh db-truncater \
+dev/scripts/run-tools.sh db-truncater \
   --db /path/to/chaindb \
   --truncate-after-slot 12345
 
@@ -116,7 +116,7 @@ Post-R349 status:
 - ✅ Typed config surface (R348).
 - ✅ `Run.hs` equivalent (R349).
 - 🟡 **Closeout** (operator side): run
-  `scripts/compare_db_truncater_to_upstream.sh` and report.
+  `dev/evidence/compare_db_truncater_to_upstream.sh` and report.
   When the soak passes, parity-matrix advances `partial →
   verified_11_0_1`.
 
@@ -127,7 +127,7 @@ on `--help` / `--version`:
 
 ```bash
 # 1. Refresh vendored upstream tree (only when bumping the upstream version).
-bash scripts/setup-reference.sh
+bash dev/reference/setup-reference.sh
 
 # 2. Run cargo test for the crate.
 cargo test -p yggdrasil-db-truncater
@@ -146,16 +146,15 @@ verified_11_0_1):
 ```bash
 # Synthesize an upstream + yggdrasil ChainDB pair, truncate both
 # to the same slot, diff the resulting tips:
-bash scripts/compare_db_truncater_to_upstream.sh
+bash dev/evidence/compare_db_truncater_to_upstream.sh
 ```
 
 ## Maintenance Guidance
 
 - Update this AGENTS.md when the operator soak completes
   successfully (mark the parity-matrix promotion as shipped).
-- Keep the per-tool round numbers in sync with the authoritative
-  plan file at `/home/daniel/.claude/plans/playful-tickling-plum.md`
-  + `CHANGELOG.md`.
+- Keep the per-tool round numbers in sync with `docs/COMPLETION_ROADMAP.md`
+  and `CHANGELOG.md`.
 - If upstream ships a new release: refresh the help/version
   fixtures, advance the relevant SHA pin in `upstream_pins.rs`,
   re-run the full cargo gate.

@@ -16,8 +16,8 @@ item).
 
 ## Rationale
 
-`docs/PARITY_SUMMARY.md` is a living status doc (per CLAUDE.md's
-"living status" list). Its journal was current only through
+`docs/PARITY_SUMMARY.md` is a living status doc (per the root `AGENTS.md`
+living-status policy). Its journal was current only through
 R568; the 120-round A5 cardano-submit-api typed-rejection arc
 (R569-R688) was unrecorded, so the doc understated the
 implemented surface.

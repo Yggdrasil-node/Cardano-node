@@ -36,7 +36,7 @@ volatile-store apply helpers) from `node/src/sync.rs` into
 |---|---|
 | `node/src/sync/chain_sync.rs` | `Ouroboros.Consensus.MiniProtocol.ChainSync.Client` (client driver) + `Ouroboros.Network.Protocol.ChainSync.Client` (intersect semantics). The volatile-store apply path corresponds to upstream's `ChainDB.addBlockAsync` + `ChainSel.chainSelectionForBlock`. Yggdrasil collapses these into batch-shaped helper functions. |
 
-Strict mirror: none. Explicit `## Naming parity` stanza per CLAUDE.md.
+Strict mirror: none. Explicit `## Naming parity` stanza per AGENTS.md.
 
 ## Cross-module dependencies
 
@@ -86,7 +86,7 @@ $ cargo lint
 $ cargo test-all | grep 'test result:' | awk ...
 passing: 6224
 
-$ python3 scripts/check-strict-mirror.py --fail-on-violation
+$ python3 dev/test/check-strict-mirror.py --fail-on-violation
 strict-mirror: 0 violations (clean)
 ```
 

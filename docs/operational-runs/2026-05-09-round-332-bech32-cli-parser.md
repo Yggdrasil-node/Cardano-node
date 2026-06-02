@@ -76,7 +76,7 @@ running 10 tests in src/parser.rs (parser unit tests)
 $ cargo fmt --all -- --check
 (silent — clean)
 
-$ python3 scripts/check-strict-mirror.py --fail-on-violation
+$ python3 dev/test/check-strict-mirror.py --fail-on-violation
 strict-mirror: 0 violations (clean)
 
 $ cargo clippy --workspace --all-targets --all-features -- -D warnings
@@ -85,7 +85,7 @@ $ cargo clippy --workspace --all-targets --all-features -- -D warnings
 $ cargo test --workspace --all-features
 passed: 4872  failed: 0    (was 4856 → +16 new tests)
 
-$ python3 scripts/check-parity-matrix.py
+$ python3 dev/test/check-parity-matrix.py
 parity matrix clean: 20 entries validated
 ```
 
@@ -133,7 +133,7 @@ All six are met.
     `args.prefix` to either encode (Some(prefix)) or decode (None).
   - Round-trip test against upstream test vectors at
     `.reference-haskell-cardano-node/deps/bech32/bech32/test/`.
-  - Wire `node/scripts/run-tools.sh bech32` end-to-end.
+  - Wire `node/dev/scripts/run-tools.sh bech32` end-to-end.
 - **R334 — Closeout**: CHANGELOG entry; AGENTS.md operational
   guide refresh; parity-matrix transition `partial → verified_11_0_1`.
 

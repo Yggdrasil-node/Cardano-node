@@ -115,8 +115,8 @@ cargo fmt --all -- --check                                  clean
 cargo check-all                                              clean
 cargo test-all                                               6,166 passing (was 6,084 pre-R475)
 cargo lint                                                   clean
-python3 scripts/check-strict-mirror.py --fail-on-violation   0 violations
-python3 scripts/check-parity-matrix.py                       clean
+python3 dev/test/check-strict-mirror.py --fail-on-violation   0 violations
+python3 dev/test/check-parity-matrix.py                       clean
 ```
 
 Per-round test breakdown:

@@ -29,9 +29,9 @@ The upstream `PayToScript` branch still depends on the later
 - `cargo fmt --all -- --check`
 - `cargo test -p yggdrasil-tx-generator script::core --lib`
 - `cargo test -p yggdrasil-tx-generator`
-- `python scripts/check-strict-mirror.py --fail-on-violation`
-- `python scripts/check-parity-matrix.py`
-- `python .claude/scripts/filetree.py check`
+- `python dev/test/check-strict-mirror.py --fail-on-violation`
+- `python dev/test/check-parity-matrix.py`
+- `python dev/test/filetree.py check`
 - `cargo check-all`
 - `cargo lint`
 - `cargo test-all`

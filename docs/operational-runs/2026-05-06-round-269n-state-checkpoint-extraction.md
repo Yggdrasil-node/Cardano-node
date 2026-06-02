@@ -139,7 +139,7 @@ remains queued — best done after `LedgerState` itself is also carved.
 ### References
 
 - R269 a–m closures: `2026-05-06-round-269{,b,…,m}-state-*.md`
-- Plan: `~/.claude/plans/dapper-giggling-haven.md`
+- Plan: `docs/COMPLETION_ROADMAP.md`
 - Storage caller of LedgerStateCheckpoint:
   `crates/storage/src/chain_db.rs::checkpoint_persisted`,
   `crates/storage/src/ocert_sidecar.rs`

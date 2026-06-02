@@ -56,12 +56,12 @@ docker compose logs -f
 **From a published release tarball (Linux x86_64 / aarch64):**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/yggdrasil-node/Cardano-node/main/scripts/install_from_release.sh | bash
+curl -fsSL https://raw.githubusercontent.com/yggdrasil-node/Cardano-node/main/dev/scripts/install_from_release.sh | bash
 ```
 
 The installer verifies the downloaded archive against the published
 `SHA256SUMS.txt`, installs the binary, and places the bundled
-`configuration/` and `scripts/` trees under `/usr/local/share/yggdrasil/`.
+`configuration/` and `dev/` helper trees under `/usr/local/share/yggdrasil/`.
 The `--network` presets resolve from that installed configuration root by
 default; set `YGGDRASIL_CONFIG_ROOT` to point at a custom root containing
 `mainnet/`, `preprod/`, and `preview/`.
@@ -81,7 +81,7 @@ Full details: [Installing from Releases](https://yggdrasil-node.github.io/Cardan
 - **Node CLI**: `clap`-based binary with `run` (connect to peer and sync), `validate-config` (operator preflight for config, peer-snapshot inputs, and any existing storage recovery state), `status` (inspect on-disk storage and report sync position, block counts, and checkpoint state), and `default-config` (emit JSON config) subcommands. JSON configuration file support with CLI flag overrides, topology/config parsing that feeds reusable network-crate topology and peer-ordering helpers, and upstream-aligned tracing fields (`TurnOnLogging`, `UseTraceDispatcher`, `TraceOptions`, `TraceOptionNodeName`, `TraceOptionForwarder`). `NodeMetrics` provides atomic operational counters wired into the hot sync loops, with `--metrics-port` exposing a Prometheus-compatible HTTP `/metrics` endpoint and a JSON `/metrics/json` endpoint on `127.0.0.1`.
 - **Node sync orchestration**: Full multi-era sync pipeline from bootstrap through managed service. Multi-era block decode (all 7 era tags). Consensus header verification bridge. Block header hash computation (Blake2b-256). Ordered bootstrap relay fallback plus reconnecting verified sync on ChainSync or BlockFetch connectivity loss. Graceful shutdown via Ctrl-C signal handling. A local `NodeTracer` emits human- or machine-formatted runtime trace objects for bootstrap, reconnect, sync progress, and shutdown/failure paths. Live sync evicts confirmed and expired transactions from the shared mempool, epoch-boundary reward math uses tracked per-pool performance, and rollback recovery restores nonce/OpCert ChainDepState from sidecar history before replaying stored blocks to the selected rollback point.
 - **Upstream parity**: CBOR golden round-trip tests, cross-subsystem integration tests, and wire-format field naming aligned with official Cardano CDDL specifications.
-- **Validation baseline**: all four cargo gates pass as of 2026-05-26 on the pinned Rust 1.95.0 toolchain — `cargo fmt --all -- --check`, `cargo check-all`, `cargo lint`, and `cargo test-all` (**7,251 tests passing, 0 failing, 3 ignored**; 7,254 listed tests total). The strict 1:1 file-mirror drift-guard (`scripts/check-strict-mirror.py`) and the checked-in parity-flow validators (`check-parity-matrix.py`, `check-fixture-manifest.py`, `check-stale-placement.py`, `check-doc-status-headers.py`, and `.claude/scripts/filetree.py`) are clean. See [`docs/PARITY_DASHBOARD.md`](docs/PARITY_DASHBOARD.md) for the compact status board, [`docs/PARITY_SUMMARY.md`](docs/PARITY_SUMMARY.md), [`docs/PARITY_PROOF.md`](docs/PARITY_PROOF.md), and [`docs/UPSTREAM_PARITY.md`](docs/UPSTREAM_PARITY.md) for the round-by-round parity arc, and [`docs/COMPLETION_ROADMAP.md`](docs/COMPLETION_ROADMAP.md) for the remaining-work backlog.
+- **Validation baseline**: all four cargo gates pass as of 2026-05-26 on the pinned Rust 1.95.0 toolchain — `cargo fmt --all -- --check`, `cargo check-all`, `cargo lint`, and `cargo test-all` (**7,251 tests passing, 0 failing, 3 ignored**; 7,254 listed tests total). The strict 1:1 file-mirror drift-guard (`dev/test/check-strict-mirror.py`) and the checked-in parity-flow validators (`check-parity-matrix.py`, `check-fixture-manifest.py`, `check-stale-placement.py`, `check-doc-status-headers.py`, and `dev/test/filetree.py`) are clean. See [`docs/PARITY_DASHBOARD.md`](docs/PARITY_DASHBOARD.md) for the compact status board, [`docs/PARITY_SUMMARY.md`](docs/PARITY_SUMMARY.md), [`docs/PARITY_PROOF.md`](docs/PARITY_PROOF.md), and [`docs/UPSTREAM_PARITY.md`](docs/UPSTREAM_PARITY.md) for the round-by-round parity arc, and [`docs/COMPLETION_ROADMAP.md`](docs/COMPLETION_ROADMAP.md) for the remaining-work backlog.
 - CI workflow and workspace cargo aliases for check/test/lint.
 
 ### Status: core parity closure in progress
@@ -145,28 +145,23 @@ All four must pass. The release build also runs `cargo doc --workspace --no-deps
 Yggdrasil tracks the **latest IntersectMBO/cardano-node release tag** as the parity target (currently `11.0.1`). Additional parity-flow gates surface parity-risk early:
 
 ```bash
-python3 scripts/check-parity-matrix.py          # validates docs/parity-matrix.json
-python3 scripts/check-stale-placement.py --self-test
-python3 scripts/check-stale-placement.py        # flags retired paths and stale current-status gates
-python3 scripts/check-doc-status-headers.py     # aligns central parity-doc headers and dashboard counts
-python3 .claude/scripts/filetree.py check       # flags stale .claude/filetree manifest entries
-bash    scripts/setup-reference.sh              # refresh reference snapshot + Linux/WSL install to policy tag
+python3 dev/test/check-parity-matrix.py          # validates docs/parity-matrix.json
+python3 dev/test/check-stale-placement.py --self-test
+python3 dev/test/check-stale-placement.py        # flags retired paths and stale current-status gates
+python3 dev/test/check-doc-status-headers.py     # aligns central parity-doc headers and dashboard counts
+python3 dev/test/filetree.py check       # flags stale dev/filetree manifest entries
+bash    dev/reference/setup-reference.sh              # refresh reference snapshot + Linux/WSL install to policy tag
 ```
 
-Run `check-parity-matrix.py` whenever `docs/parity-matrix.json` changes or upstream paths move between releases. Run `check-stale-placement.py` after any post-reorganization move so retired locations cannot re-enter current docs, scripts, tracked files, Cargo metadata, node-crate-local operator artifact directories, release/repro packaging, Docker packaging, or the ignored metadata-free reference snapshot, and so stale current-status claims such as obsolete cardano-cli gate wording, old subcommand counts or subset wording, and old workspace-member gaps do not re-enter living docs. It also confirms the accepted replacement placements, canonical root configuration bundles, executable root shell scripts, and root operator/reference script entrypoints remain present. Run `filetree.py check` after filename-mirror restructures (R271-style runtime split, R273-style subsystem split). Run `setup-reference.sh --sources-only` for the portable source snapshot, or the full `setup-reference.sh` under Linux/WSL when upstream ships a new release and the compiled Haskell reference install must be refreshed.
+Run `check-parity-matrix.py` whenever `docs/parity-matrix.json` changes or upstream paths move between releases. Run `check-stale-placement.py` after any post-reorganization move so retired locations cannot re-enter current docs, scripts, tracked files, Cargo metadata, node-crate-local operator artifact directories, release/repro packaging, Docker packaging, or the ignored metadata-free reference snapshot, and so stale current-status claims such as obsolete cardano-cli gate wording, old subcommand counts or subset wording, and old workspace-member gaps do not re-enter living docs. It also confirms the accepted replacement placements, canonical root configuration bundles, executable `dev/{scripts,evidence,reference}` shell helpers, and operator/reference script entrypoints remain present. Run `filetree.py check` after filename-mirror restructures (R271-style runtime split, R273-style subsystem split). Run `setup-reference.sh --sources-only` for the portable source snapshot, or the full `setup-reference.sh` under Linux/WSL when upstream ships a new release and the compiled Haskell reference install must be refreshed.
 
-### Claude Code workflow
+### Codex workflow
 
-Slash commands wired in [.claude/commands/](.claude/commands/):
-
-- `/four-gates` — runs the four cargo gates and reports outcomes.
-- `/parity-check` — runs the parity-matrix validator.
-- `/filetree-check` — runs the filetree staleness check.
-- `/parity-plan <feature>` — authors a parity plan before substantive code edits.
-- `/round-doc <round-id> <slug>` — authors `docs/operational-runs/YYYY-MM-DD-round-NNN-<slug>.md` for the just-completed R-arc round.
-- `/setup-reference` — refresh the pinned IntersectMBO/cardano-node reference.
-
-Sub-agents and skills under [.claude/agents/](.claude/agents/) + [.claude/skills/](.claude/skills/) encode the R-arc patterns confirmed across R271 (runtime split: 7,269 → 140 lines) and R273 (consensus + plutus subsystem splits).
+Codex uses `AGENTS.md` plus the checked-in `dev/test/*` validators as the
+operational workflow. For protocol-sensitive changes, write the plan in
+`tasks/todo.md`, read the relevant local `AGENTS.md` files and upstream
+Haskell sources under `.reference-haskell-cardano-node/`, then run the cargo
+and parity gates listed above before declaring the slice complete.
 
 For preview block-producer parity evidence, use a real registered/delegated preview pool's KES, VRF, and operational-certificate files. The generated preview harness remains useful for wallet/cert reference material and relay smoke, but its generated producer credentials are not accepted as the parity producer source.
 
@@ -195,7 +190,7 @@ TIP_COMPARE_CHECKPOINTS=900,3600,21600 \
 REQUIRE_TIP_COMPARISON=1 \
 EXPECT_FORGE_EVENTS=1 \
 EXPECT_ADOPTED_EVENTS=1 \
-scripts/run_preview_real_pool_producer.sh
+dev/scripts/run_preview_real_pool_producer.sh
 ```
 
 For the epoch-1304 resume path, the wrapper below checks that the pool is
@@ -206,14 +201,14 @@ the same producer command with the required 6-hour comparison window:
 ```bash
 CRED_DIR=/tmp/ygg-preview-generated-bp-... \
 POOL_ID=pool1... \
-scripts/run_preview_active_pool_signoff.sh
+dev/scripts/run_preview_active_pool_signoff.sh
 ```
 
 The runner preflights `HASKELL_SOCK` with
 `cardano-cli query tip --testnet-magic 2` before starting Yggdrasil, then
 requires all configured Haskell checkpoints when `REQUIRE_TIP_COMPARISON=1`.
 
-For reference material only, `scripts/preview_producer_harness.sh` can generate a funding wallet, pool registration certificates, and pool metadata under `tmp/preview-producer/`. Defaults are ticker `RUST` and name `WORLDS FIRST RUST NODE`; override `POOL_TICKER`, `POOL_NAME`, `POOL_DESCRIPTION`, `POOL_HOMEPAGE`, or `POOL_METADATA_URL` before running `certs` when needed.
+For reference material only, `dev/scripts/preview_producer_harness.sh` can generate a funding wallet, pool registration certificates, and pool metadata under `tmp/preview-producer/`. Defaults are ticker `RUST` and name `WORLDS FIRST RUST NODE`; override `POOL_TICKER`, `POOL_NAME`, `POOL_DESCRIPTION`, `POOL_HOMEPAGE`, or `POOL_METADATA_URL` before running `certs` when needed.
 
 ## Documentation
 

@@ -106,8 +106,8 @@ cargo fmt --all -- --check                                  clean
 cargo check-all                                              clean
 cargo lint                                                   clean
 cargo test-all                                               6,201 → 6,207
-python3 scripts/check-strict-mirror.py --fail-on-violation   0 violations
-python3 scripts/check-parity-matrix.py                       clean
+python3 dev/test/check-strict-mirror.py --fail-on-violation   0 violations
+python3 dev/test/check-parity-matrix.py                       clean
 ```
 
 ## Stop point

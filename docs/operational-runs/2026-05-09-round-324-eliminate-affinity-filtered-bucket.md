@@ -87,13 +87,13 @@ genuinely combines multiple upstream concerns:
 ## Verification
 
 ```text
-$ python3 scripts/audit-strict-mirror.py
+$ python3 dev/test/audit-strict-mirror.py
 audit complete: 448 rust files; candidate_match=391, no_candidate_match=57
 auto-grading bucket counts:
   (a): 246
   (c): 202
 
-$ python3 scripts/check-strict-mirror.py --fail-on-violation
+$ python3 dev/test/check-strict-mirror.py --fail-on-violation
 strict-mirror: 0 violations (clean)
 
 $ cargo fmt --all -- --check          # clean

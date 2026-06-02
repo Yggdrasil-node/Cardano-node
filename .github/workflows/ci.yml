@@ -79,7 +79,7 @@ jobs:
             --features bls12-381 --profile ci
 
       # Strict-mirror drift-guard (fifth verification gate).
-      # Counterpart to .claude/skills/round-extraction/SKILL.md (the
+      # Counterpart to root AGENTS.md (the
       # authoring-time guard). Walks production .rs files, looks each
       # up against the upstream basename index at
       # docs/upstream-haskell-files.txt, and flags any file with neither
@@ -94,7 +94,7 @@ jobs:
       # any new file lacking an upstream mirror or `## Naming parity`
       # docstring stanza fails the build.
       - name: Strict-mirror drift-guard
-        run: python3 scripts/check-strict-mirror.py --fail-on-violation
+        run: python3 dev/test/check-strict-mirror.py --fail-on-violation
 
       # Post-reorganization placement guard.
       # Keeps current code, docs, generated filetree metadata, and CI from
@@ -103,8 +103,8 @@ jobs:
       # root-configuration, and root-scripts split.
       - name: Stale-placement guard
         run: |
-          python3 scripts/check-stale-placement.py --self-test
-          python3 scripts/check-stale-placement.py
+          python3 dev/test/check-stale-placement.py --self-test
+          python3 dev/test/check-stale-placement.py
 
       # Central parity-doc status guard.
       # Keeps PARITY_SUMMARY, UPSTREAM_PARITY, COMPLETION_ROADMAP, and
@@ -112,8 +112,8 @@ jobs:
       # and docs/parity-matrix.json status counts.
       - name: Doc-status header guard
         run: |
-          python3 scripts/check-doc-status-headers.py --self-test
-          python3 scripts/check-doc-status-headers.py
+          python3 dev/test/check-doc-status-headers.py --self-test
+          python3 dev/test/check-doc-status-headers.py
 
       # Fetch upstream Haskell source trees only (no 870 MB install
       # tarball). Required by the parity-matrix validator below, which
@@ -121,7 +121,7 @@ jobs:
       # `.reference-haskell-cardano-node/deps/`. The full install tree
       # is local-only (see check-reference-artifacts.py).
       - name: Fetch upstream Haskell reference sources
-        run: bash scripts/setup-reference.sh --sources-only
+        run: bash dev/reference/setup-reference.sh --sources-only
 
       # Parity-matrix path/schema validator.
       # Walks docs/parity-matrix.json and asserts every entry's
@@ -130,7 +130,7 @@ jobs:
       # set. Required when matrix entries change; cheap to run on
       # every CI build.
       - name: Parity-matrix validator
-        run: python3 scripts/check-parity-matrix.py
+        run: python3 dev/test/check-parity-matrix.py
 
       # Wave 10 PR 30 — JSON Schema gate for parity-matrix.json.
       # Catches editor / hand-edit errors that pass the Python
@@ -150,12 +150,12 @@ jobs:
       # `docs/SPECS.md`, and `docs/UPSTREAM_PARITY.md`. Asserts every
       # required upstream-vendored fixture corpus is present.
       - name: Fixture-manifest validator
-        run: python3 scripts/check-fixture-manifest.py
+        run: python3 dev/test/check-fixture-manifest.py
 
       # Reference-artifacts validator runs locally only:
-      # `scripts/check-reference-artifacts.py` requires the vendored
+      # `dev/test/check-reference-artifacts.py` requires the vendored
       # `.reference-haskell-cardano-node/install/` tree (~1.3 GB,
-      # rebuilt by `bash scripts/setup-reference.sh`). CI does not
+      # rebuilt by `bash dev/reference/setup-reference.sh`). CI does not
       # carry the install tree; operators run the check before parity
       # rehearsals.
 

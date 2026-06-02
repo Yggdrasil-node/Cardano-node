@@ -31,7 +31,7 @@ Every production `.rs` here either mirrors a single canonical upstream
 sibling collisions) OR carries a `## Naming parity` docstring stanza
 ending in `**Strict mirror:** none.` plus the upstream symbol(s)/
 file(s) the helper surfaces. CI gate:
-`python3 scripts/check-strict-mirror.py --fail-on-violation`.
+`python3 dev/test/check-strict-mirror.py --fail-on-violation`.
 
 ## Upstream source
 
@@ -177,8 +177,8 @@ Hedgehog Process/Property carve-out (`tokio::process` + `proptest`).
 cargo build --release -p yggdrasil-cardano-testnet
 
 # Run via the universal launcher (recommended).
-scripts/run-tools.sh cardano-testnet --help
-scripts/run-tools.sh cardano-testnet --version
+dev/scripts/run-tools.sh cardano-testnet --help
+dev/scripts/run-tools.sh cardano-testnet --version
 
 # Or invoke the binary directly:
 target/release/cardano-testnet --help
@@ -259,7 +259,7 @@ To verify the yggdrasil binary still tracks upstream byte-for-byte:
 
 ```bash
 # 1. Refresh vendored upstream tree (only when bumping the upstream version).
-bash scripts/setup-reference.sh
+bash dev/reference/setup-reference.sh
 
 # 2. Run cargo test for the crate.
 cargo test -p yggdrasil-cardano-testnet

@@ -91,8 +91,8 @@ cargo fmt --all -- --check                                  clean
 cargo check-all                                              clean
 cargo lint                                                   clean
 cargo test-all                                               6,084 → 6,105
-python3 scripts/check-strict-mirror.py --fail-on-violation   0 violations
-python3 scripts/check-parity-matrix.py                       clean
+python3 dev/test/check-strict-mirror.py --fail-on-violation   0 violations
+python3 dev/test/check-parity-matrix.py                       clean
 ```
 
 ## Arc progress (R475/R481)
@@ -109,7 +109,7 @@ python3 scripts/check-parity-matrix.py                       clean
 
 ## References
 
-- Plan: `.claude/plans/playful-tickling-plum.md`.
+- Plan: `docs/COMPLETION_ROADMAP.md`.
 - Upstream: `.reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus-cardano/src/unstable-cardano-tools/Cardano/Tools/DBAnalyser/HasAnalysis.hs`
   + per-era `HasAnalysis.{Byron,Shelley,Allegra,Mary,Alonzo,Babbage,Conway}.hs`.
 - Yggdrasil trait surface from R373: `crates/tools/db-analyser/src/has_analysis.rs:87-134`.

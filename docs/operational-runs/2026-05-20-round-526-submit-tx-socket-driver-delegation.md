@@ -19,7 +19,7 @@ transaction submission client.
 - Updated `crates/node/cardano-node/src/commands/cardano_cli.rs` so migrated
   `cardano-cli` LSQ and transaction-submit paths use `TokioLsqClient`
   directly rather than a node-specific `NodeCardanoCliClient`.
-- Extended `scripts/check-stale-placement.py` to require that the node
+- Extended `dev/test/check-stale-placement.py` to require that the node
   `submit-tx` adapter delegates to the shared cardano-cli client.
 - Updated AGENTS guidance and cardano-cli LSQ docs to pin the ownership
   boundary: LocalTxSubmission socket driving belongs to `TokioLsqClient`.
@@ -37,12 +37,12 @@ transaction submission client.
   (`WSAENOBUFS`) in `yggdrasil-network::keepalive_client_single_ping`.
 - `cargo test -p yggdrasil-network --test integration keepalive_client_single_ping -- --exact` passed.
 - Rerun `cargo test-all` passed.
-- `python scripts/check-stale-placement.py` passed.
-- `python scripts/check-stale-placement.py --self-test` passed.
-- `python scripts/check-strict-mirror.py --fail-on-violation` passed.
-- `python scripts/check-parity-matrix.py` passed.
-- `python scripts/check-fixture-manifest.py` passed.
-- `python .claude/scripts/filetree.py accept-current` refreshed the manifest
+- `python dev/test/check-stale-placement.py` passed.
+- `python dev/test/check-stale-placement.py --self-test` passed.
+- `python dev/test/check-strict-mirror.py --fail-on-violation` passed.
+- `python dev/test/check-parity-matrix.py` passed.
+- `python dev/test/check-fixture-manifest.py` passed.
+- `python dev/test/filetree.py accept-current` refreshed the manifest
   for this round's changed files.
-- `python .claude/scripts/filetree.py check` passed after manifest refresh.
+- `python dev/test/filetree.py check` passed after manifest refresh.
 - `git diff --check` passed with only existing Windows CRLF warnings.

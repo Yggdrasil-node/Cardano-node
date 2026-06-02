@@ -33,7 +33,7 @@ registered/delegated on preview after the operator funded its generated payment
 address.
 
 This round added an operator runner for the blocked step:
-`scripts/run_preview_real_pool_producer.sh`.
+`dev/scripts/run_preview_real_pool_producer.sh`.
 The runner validates the real preview credentials first, starts
 `yggdrasil-node run --network preview` directly, and fails if required
 producer-startup, forge, adoption, Haskell tip-comparison, or error-absence
@@ -41,7 +41,7 @@ evidence is missing. It does not call `preview_producer_harness.sh` and does not
 read generated harness credential paths.
 
 The runner's optional Haskell comparison path uses
-`scripts/compare_tip_to_haskell.sh` at
+`dev/evidence/compare_tip_to_haskell.sh` at
 `TIP_COMPARE_CHECKPOINTS=900,3600,21600` when `HASKELL_SOCK` is set. Setting
 `REQUIRE_TIP_COMPARISON=1` fails the run unless `HASKELL_SOCK` is set, every
 configured checkpoint fits inside `RUN_SECONDS`, and each due comparison runs
@@ -50,7 +50,7 @@ and passes.
 ## Completed Commands
 
 ```sh
-bash scripts/setup-reference.sh --force
+bash dev/reference/setup-reference.sh --force
 ```
 
 Result: exit 0. The reference install reports:
@@ -73,10 +73,10 @@ tests, integration tests, and doctests successfully; the tracer forwarder
 doctests remain the expected three ignored doctests.
 
 ```sh
-python3 scripts/check-parity-matrix.py
-python3 scripts/check-strict-mirror.py --fail-on-violation
-python3 scripts/check-fixture-manifest.py
-python3 scripts/check-reference-artifacts.py
+python3 dev/test/check-parity-matrix.py
+python3 dev/test/check-strict-mirror.py --fail-on-violation
+python3 dev/test/check-fixture-manifest.py
+python3 dev/test/check-reference-artifacts.py
 ```
 
 Results:
@@ -108,7 +108,7 @@ warning: storage directories are not initialized; a deployment preflight cannot 
 ## Attempted Auxiliary Checks
 
 ```sh
-python3 .claude/scripts/filetree.py check
+python3 dev/test/filetree.py check
 ```
 
 Result: exit 1. The manifest is stale before this audit record is added. A
@@ -120,8 +120,8 @@ evidence of a new parity failure.
 Follow-up:
 
 ```sh
-python3 .claude/scripts/filetree.py scan --write
-python3 .claude/scripts/filetree.py check
+python3 dev/test/filetree.py scan --write
+python3 dev/test/filetree.py check
 ```
 
 Result: `scan --write` added missing entries for the new preview real-pool
@@ -138,7 +138,7 @@ stale. Remaining stale entries are older unrelated workspace changes
 manual chapters).
 
 ```sh
-scripts/check_upstream_drift.sh --json
+dev/scripts/check_upstream_drift.sh --json
 ```
 
 Initial result: exit 3. The script still looked for
@@ -217,7 +217,7 @@ legacy node-local script prefix scan:
 ```sh
 for f in scripts/*.sh; do bash -n "$f"; done
 cargo test -p yggdrasil-node --test smoke
-scripts/check_upstream_drift.sh --json
+dev/scripts/check_upstream_drift.sh --json
 ```
 
 Results: no stale legacy node-local script command references remained in those
@@ -232,10 +232,10 @@ for f in scripts/*.sh; do bash -n "$f"; done
 git diff --check
 cargo test -p yggdrasil-node --test smoke
 cargo test -p yggdrasil-dmq-node --lib configuration::tests:: -- --test-threads=16
-python3 scripts/check-parity-matrix.py
-python3 scripts/check-strict-mirror.py --fail-on-violation
-python3 scripts/check-fixture-manifest.py
-python3 scripts/check-reference-artifacts.py
+python3 dev/test/check-parity-matrix.py
+python3 dev/test/check-strict-mirror.py --fail-on-violation
+python3 dev/test/check-fixture-manifest.py
+python3 dev/test/check-reference-artifacts.py
 ```
 
 Results: all exit 0. Node smoke tests report `9 passed / 0 failed`; DMQ
@@ -268,7 +268,7 @@ RUN_SECONDS=60 \
 YGG_BIN=target/release/yggdrasil-node \
 DB_DIR=/tmp/ygg-preprod-relay-helper-audit-db \
 LOG_DIR=/tmp/ygg-preprod-relay-helper-audit \
-scripts/run_preprod_real_pool_producer.sh
+dev/scripts/run_preprod_real_pool_producer.sh
 
 RELAY_ONLY=1 \
 RUN_SECONDS=60 \
@@ -277,7 +277,7 @@ YGG_BIN=target/release/yggdrasil-node \
 DB_DIR=/tmp/ygg-mainnet-relay-helper-audit-db \
 LOG_DIR=/tmp/ygg-mainnet-relay-helper-audit \
 METRICS_PORT=19103 \
-scripts/run_mainnet_real_pool_producer.sh
+dev/scripts/run_mainnet_real_pool_producer.sh
 ```
 
 Results: both exit 0. The helper scripts now pass `--non-producing-node`
@@ -317,7 +317,7 @@ PORT=13001 \
 Initial attempt without `RUN_ROOT` placed the Haskell node socket under the
 workspace-mounted `.reference-haskell-cardano-node/install/run/preview/socket/`
 tree and exited with `Network.Socket.bind: unsupported operation (Not
-supported)`. The generated launcher template in `scripts/setup-reference.sh`
+supported)`. The generated launcher template in `dev/reference/setup-reference.sh`
 now supports `RUN_ROOT` so local reference sockets and ChainDBs can be placed on
 a native Unix-socket-capable filesystem without changing the default install
 layout.
@@ -356,7 +356,7 @@ COMPARE_INTERVAL_S=999999 \
 START_DEADLINE_S=120 \
 REQUIRE_WORKERS=1 \
 REQUIRE_PROGRESS=1 \
-scripts/parallel_blockfetch_soak.sh
+dev/evidence/parallel_blockfetch_soak.sh
 ```
 
 Result: exit 1. The node started, connected to preview, synced blocks, and
@@ -415,7 +415,7 @@ EXPECT_WORKERS=2 \
 REQUIRE_WORKERS=1 \
 REQUIRE_PROGRESS=1 \
 YGG_BIN=target/release/yggdrasil-node \
-scripts/parallel_blockfetch_soak.sh
+dev/evidence/parallel_blockfetch_soak.sh
 ```
 
 Result: exit 1. The node progressed and stayed healthy, but worker activation
@@ -443,8 +443,8 @@ though earlier historical rounds recorded multi-peer activation evidence.
 Focused verification after this guard:
 
 ```sh
-bash -n scripts/parallel_blockfetch_soak.sh \
-  scripts/run_preview_real_pool_producer.sh
+bash -n dev/evidence/parallel_blockfetch_soak.sh \
+  dev/scripts/run_preview_real_pool_producer.sh
 cargo fmt --all -- --check
 cargo test -p yggdrasil-node --test smoke
 git diff --check
@@ -461,10 +461,10 @@ Current broad gate refresh after the BlockFetch sign-off guard, recorded at
 cargo check-all
 cargo lint
 cargo test-all
-python3 scripts/check-parity-matrix.py
-python3 scripts/check-strict-mirror.py --fail-on-violation
-python3 scripts/check-fixture-manifest.py
-python3 scripts/check-reference-artifacts.py
+python3 dev/test/check-parity-matrix.py
+python3 dev/test/check-strict-mirror.py --fail-on-violation
+python3 dev/test/check-fixture-manifest.py
+python3 dev/test/check-reference-artifacts.py
 git diff --check
 ```
 
@@ -604,7 +604,7 @@ epoch_1304_eta_utc=2026-05-21T00:00:05Z
 ```
 
 Cleanup follow-up added
-`scripts/preview_pool_activation_status.sh` as the
+`dev/scripts/preview_pool_activation_status.sh` as the
 readiness gate for this exact state. With `POOL_ID` and optional `CRED_DIR`, it
 queries Koios preview `pool_updates` plus `tip`, prints active-epoch status and
 the credential environment, and exits `3` when `REQUIRE_ACTIVE=1` but the pool
@@ -618,7 +618,7 @@ exit_code_with_REQUIRE_ACTIVE_1=3
 ```
 
 A follow-up operator helper was added at
-`scripts/register_preview_generated_pool.sh` for the
+`dev/scripts/register_preview_generated_pool.sh` for the
 next handoff. Once the generated `PAYMENT_ADDRESS` is funded and a synced
 preview node socket is available, it queries the address UTxO, builds a balanced
 Conway transaction with certificate order stake registration → pool
@@ -635,10 +635,10 @@ Koios endpoint with `KOIOS_SUBMIT=1`.
 Focused verification for that helper at `2026-05-19T05:44:18Z`:
 
 ```sh
-bash -n scripts/register_preview_generated_pool.sh \
-  scripts/run_preview_real_pool_producer.sh \
-  scripts/parallel_blockfetch_soak.sh
-NETWORK_MAGIC=1 scripts/register_preview_generated_pool.sh
+bash -n dev/scripts/register_preview_generated_pool.sh \
+  dev/scripts/run_preview_real_pool_producer.sh \
+  dev/evidence/parallel_blockfetch_soak.sh
+NETWORK_MAGIC=1 dev/scripts/register_preview_generated_pool.sh
 cargo fmt --all -- --check
 cargo test -p yggdrasil-node --test smoke
 git diff --check
@@ -653,9 +653,9 @@ recorded at `2026-05-19T06:10:17Z`:
 
 ```sh
 cargo fmt --all -- --check
-bash -n scripts/register_preview_generated_pool.sh
-bash -n scripts/run_preview_real_pool_producer.sh
-bash -n scripts/parallel_blockfetch_soak.sh
+bash -n dev/scripts/register_preview_generated_pool.sh
+bash -n dev/scripts/run_preview_real_pool_producer.sh
+bash -n dev/evidence/parallel_blockfetch_soak.sh
 cargo test -p yggdrasil-node --test smoke
 git diff --check
 ```
@@ -666,13 +666,13 @@ Results: all exit 0. The full node smoke suite now reports
 Focused verification after adding the activation-status helper:
 
 ```sh
-bash -n scripts/preview_pool_activation_status.sh
+bash -n dev/scripts/preview_pool_activation_status.sh
 POOL_ID=pool1rv9445xped56v36hneedxq96rg3l7hx490zg66pqkk7hcrtl26q \
   CRED_DIR=/tmp/ygg-preview-generated-bp-20260519T052515Z \
-  scripts/preview_pool_activation_status.sh
+  dev/scripts/preview_pool_activation_status.sh
 POOL_ID=pool1rv9445xped56v36hneedxq96rg3l7hx490zg66pqkk7hcrtl26q \
   REQUIRE_ACTIVE=1 \
-  scripts/preview_pool_activation_status.sh
+  dev/scripts/preview_pool_activation_status.sh
 ```
 
 Results: syntax check exits 0; status query exits 0 with `status=pending`;
@@ -755,10 +755,10 @@ cargo fmt --all -- --check
 cargo check-all
 cargo lint
 cargo test-all
-python3 scripts/check-parity-matrix.py
-python3 scripts/check-strict-mirror.py --fail-on-violation
-python3 scripts/check-fixture-manifest.py
-python3 scripts/check-reference-artifacts.py
+python3 dev/test/check-parity-matrix.py
+python3 dev/test/check-strict-mirror.py --fail-on-violation
+python3 dev/test/check-fixture-manifest.py
+python3 dev/test/check-reference-artifacts.py
 ```
 
 Results: all commands exit 0. `cargo test-all` finishes with the expected
@@ -779,7 +779,7 @@ target/release/yggdrasil-node validate-config \
 
 CRED_DIR=/tmp/ygg-preview-generated-bp-20260519T052515Z \
 POOL_ID=pool1rv9445xped56v36hneedxq96rg3l7hx490zg66pqkk7hcrtl26q \
-  scripts/preview_pool_activation_status.sh
+  dev/scripts/preview_pool_activation_status.sh
 ```
 
 `validate-config` exits 0 and reports:
@@ -809,7 +809,7 @@ Active-pool sign-off wrapper added at `2026-05-19T07:08:49Z`:
 ```sh
 CRED_DIR=/tmp/ygg-preview-generated-bp-20260519T052515Z \
 POOL_ID=pool1rv9445xped56v36hneedxq96rg3l7hx490zg66pqkk7hcrtl26q \
-  scripts/run_preview_active_pool_signoff.sh
+  dev/scripts/run_preview_active_pool_signoff.sh
 ```
 
 The wrapper performs the epoch-1304 resume sequence in one command:
@@ -849,7 +849,7 @@ RUN_SECONDS=180 \
 YGG_BIN=target/release/yggdrasil-node \
 LOG_DIR=/tmp/ygg-preprod-relay-20260519T072458Z \
 DB_DIR=/tmp/ygg-preprod-relay-20260519T072458Z-db \
-  scripts/run_preprod_real_pool_producer.sh
+  dev/scripts/run_preprod_real_pool_producer.sh
 ```
 
 Result: exit 0. The script observed relay-only mode, connected to a preprod
@@ -881,7 +881,7 @@ YGG_BIN=target/release/yggdrasil-node \
 METRICS_PORT=36583 \
 LOG_DIR=/tmp/ygg-mainnet-relay-20260519T073336Z \
 DB_DIR=/tmp/ygg-mainnet-relay-20260519T073336Z-db \
-  scripts/run_mainnet_real_pool_producer.sh
+  dev/scripts/run_mainnet_real_pool_producer.sh
 ```
 
 Result: exit 1. The run stayed relay-only and connected to a mainnet bootstrap
@@ -922,7 +922,7 @@ YGG_BIN=target/release/yggdrasil-node \
 METRICS_PORT=60695 \
 LOG_DIR=/tmp/ygg-mainnet-relay-fixed-20260519T075411Z \
 DB_DIR=/tmp/ygg-mainnet-relay-fixed-20260519T075411Z-db \
-  scripts/run_mainnet_real_pool_producer.sh
+  dev/scripts/run_mainnet_real_pool_producer.sh
 ```
 
 Result: exit 1. The halfway metric check passed with
@@ -958,7 +958,7 @@ YGG_BIN=target/release/yggdrasil-node \
 METRICS_PORT=38185 \
 LOG_DIR=/tmp/ygg-mainnet-relay-origin-intersect-20260519T081115Z \
 DB_DIR=/tmp/ygg-mainnet-relay-origin-intersect-20260519T081115Z-db \
-  scripts/run_mainnet_real_pool_producer.sh
+  dev/scripts/run_mainnet_real_pool_producer.sh
 ```
 
 Result: exit 0. Both active-peer checks reported
@@ -980,15 +980,15 @@ Final focused validation after the activation-helper and runner hardening:
 
 ```sh
 cargo fmt --all -- --check
-bash -n scripts/run_preview_real_pool_producer.sh \
-  scripts/preview_pool_activation_status.sh \
-  scripts/register_preview_generated_pool.sh \
-  scripts/run_preview_active_pool_signoff.sh \
-  scripts/run_mainnet_real_pool_producer.sh
+bash -n dev/scripts/run_preview_real_pool_producer.sh \
+  dev/scripts/preview_pool_activation_status.sh \
+  dev/scripts/register_preview_generated_pool.sh \
+  dev/scripts/run_preview_active_pool_signoff.sh \
+  dev/scripts/run_mainnet_real_pool_producer.sh
 cargo test -p yggdrasil-node --test smoke
-python3 .claude/scripts/filetree.py accept-current
-python3 .claude/scripts/filetree.py render
-python3 .claude/scripts/filetree.py check
+python3 dev/test/filetree.py accept-current
+python3 dev/test/filetree.py render
+python3 dev/test/filetree.py check
 git diff --check
 ```
 
@@ -1063,7 +1063,7 @@ RUN_SECONDS=90 \
 METRICS_SNAPSHOT_INTERVAL_S=30 \
 EXPECT_FORGE_EVENTS=0 \
 EXPECT_ADOPTED_EVENTS=0 \
-scripts/run_preview_real_pool_producer.sh
+dev/scripts/run_preview_real_pool_producer.sh
 ```
 
 Result: exit 0. Summary:
@@ -1100,8 +1100,8 @@ Focused verification after the generated-key and forge-evidence guard changes:
 
 ```sh
 cargo fmt --all -- --check
-bash -n scripts/run_preview_real_pool_producer.sh \
-  scripts/parallel_blockfetch_soak.sh
+bash -n dev/scripts/run_preview_real_pool_producer.sh \
+  dev/evidence/parallel_blockfetch_soak.sh
 cargo test -p yggdrasil-node --test smoke
 git diff --check
 ```
@@ -1115,10 +1115,10 @@ Post-generated-key broad gate refresh at `2026-05-19T05:33:43Z`:
 cargo check-all
 cargo lint
 cargo test-all
-python3 scripts/check-parity-matrix.py
-python3 scripts/check-strict-mirror.py --fail-on-violation
-python3 scripts/check-fixture-manifest.py
-python3 scripts/check-reference-artifacts.py
+python3 dev/test/check-parity-matrix.py
+python3 dev/test/check-strict-mirror.py --fail-on-violation
+python3 dev/test/check-fixture-manifest.py
+python3 dev/test/check-reference-artifacts.py
 pgrep -af '(^|/)(yggdrasil-node|cardano-node)( |$)' || true
 ```
 
@@ -1135,10 +1135,10 @@ non-secret, preflight-safe checks because the actual preview pool credential
 paths were unavailable.
 
 ```sh
-bash -n scripts/run_preview_real_pool_producer.sh
+bash -n dev/scripts/run_preview_real_pool_producer.sh
 for f in \
-  scripts/run_preprod_real_pool_producer.sh \
-  scripts/run_mainnet_real_pool_producer.sh
+  dev/scripts/run_preprod_real_pool_producer.sh \
+  dev/scripts/run_mainnet_real_pool_producer.sh
 do
   bash -n "$f"
 done
@@ -1196,10 +1196,10 @@ guards were added:
 
 ```sh
 cargo fmt --all -- --check
-python3 scripts/check-parity-matrix.py
-python3 scripts/check-strict-mirror.py --fail-on-violation
-python3 scripts/check-fixture-manifest.py
-python3 scripts/check-reference-artifacts.py
+python3 dev/test/check-parity-matrix.py
+python3 dev/test/check-strict-mirror.py --fail-on-violation
+python3 dev/test/check-fixture-manifest.py
+python3 dev/test/check-reference-artifacts.py
 cargo check-all
 cargo lint
 cargo test-all
@@ -1215,7 +1215,7 @@ Fresh blocker verification after the completion-audit checklist was added:
 ```sh
 YGG_BIN=target/release/yggdrasil-node \
 env -u KES_SKEY_PATH -u VRF_SKEY_PATH -u OPCERT_PATH \
-scripts/run_preview_real_pool_producer.sh
+dev/scripts/run_preview_real_pool_producer.sh
 ```
 
 Result: exit 1 before node startup:
@@ -1251,7 +1251,7 @@ target/release/yggdrasil-node run \
 HASKELL_SOCK=/tmp/cardano-preview.sock \
 TIP_COMPARE_CHECKPOINTS=900,3600,21600 \
 REQUIRE_TIP_COMPARISON=1 \
-scripts/run_preview_real_pool_producer.sh
+dev/scripts/run_preview_real_pool_producer.sh
 ```
 
 Because an active registered/delegated preview producer did not run, this round
@@ -1277,7 +1277,7 @@ are supplied.
 
 | Requirement | Evidence | Status |
 | --- | --- | --- |
-| Reference target is `IntersectMBO/cardano-node 11.0.1`. | `bash scripts/setup-reference.sh --force` exit 0; installed reference reports `cardano-node 11.0.1` and git rev `97036a66bcf8c89f687ae57a048eecc0389977ef`. | Verified |
+| Reference target is `IntersectMBO/cardano-node 11.0.1`. | `bash dev/reference/setup-reference.sh --force` exit 0; installed reference reports `cardano-node 11.0.1` and git rev `97036a66bcf8c89f687ae57a048eecc0389977ef`. | Verified |
 | Release binary is available for operator checks. | `cargo build --release -p yggdrasil-node` exit 0. | Verified |
 | Static Cargo gates pass. | `cargo fmt --all -- --check`, `cargo check-all`, `cargo lint`, and final `cargo test-all` all exit 0; only the expected three tracer-forwarder doctests are ignored. | Verified |
 | Parity-flow validators pass. | `check-parity-matrix.py`, `check-strict-mirror.py --fail-on-violation`, `check-fixture-manifest.py`, and `check-reference-artifacts.py` all exit 0. | Verified |
@@ -1285,7 +1285,7 @@ are supplied.
 | Generated preview harness remains reference/relay material only. | README, manual runbook, block-production chapter, and node AGENTS guidance route producer parity to `run_preview_real_pool_producer.sh`. | Verified by docs review |
 | Generated preview credential paths are available. | Created `/tmp/ygg-preview-generated-bp-20260519T052515Z/{kes.skey,vrf.skey,node.cert}` plus an env helper at `/tmp/ygg-preview-generated-bp-20260519T052515Z/env.sh`. | Verified for generated credentials |
 | Generated preview registration-support material is available. | Created `/tmp/ygg-preview-generated-bp-20260519T052515Z/registration/{payment.skey,stake.skey,payment.addr,stake.addr,stake.reg.cert,stake.deleg.cert,pool.reg.cert}` using preview genesis deposits/cost. No transaction was submitted. | Verified for generated setup only |
-| Generated preview registration transaction helper exists. | `scripts/register_preview_generated_pool.sh` builds/signs the preview-only registration transaction from the generated bundle and requires `SUBMIT=1` before submission. Smoke coverage checks help text, preview-only gating, certificate order, and required witnesses. | Verified as setup helper |
+| Generated preview registration transaction helper exists. | `dev/scripts/register_preview_generated_pool.sh` builds/signs the preview-only registration transaction from the generated bundle and requires `SUBMIT=1` before submission. Smoke coverage checks help text, preview-only gating, certificate order, and required witnesses. | Verified as setup helper |
 | Generated payment address has preview funds. | Koios preview `address_info`/`address_utxos` showed `c99cf846037397f594c51ec0ca92e9f12d56edde188b3c58c3561b801ee70e74#0` with `10000000000` lovelace. | Verified |
 | Generated pool registration/delegation transaction is submitted and confirmed. | Transaction `e7a492ca7c8419d326db92606a8d55aa9db50f317d309b8dce26740a64e1c03a` returned HTTP 202 from Koios submit and is confirmed at block height `4295085`; `pool_updates` shows registration, and `account_updates` shows stake registration/delegation. | Verified |
 | Operator active preview pool credential paths are available. | Generated credential paths are available and now registered/delegated on preview, but the pool is not active until epoch `1304`. | Pending active epoch |

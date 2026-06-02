@@ -44,11 +44,11 @@ command = [
 need_stdout = true
 
 [jobs.parity]
-command = ["python3", "scripts/check-parity-matrix.py"]
+command = ["python3", "dev/test/check-parity-matrix.py"]
 need_stdout = true
 
 [jobs.parity-mirror]
-command = ["python3", "scripts/check-strict-mirror.py", "--fail-on-violation"]
+command = ["python3", "dev/test/check-strict-mirror.py", "--fail-on-violation"]
 need_stdout = true
 
 # `bacon test-crate <name>` re-runs nextest scoped to a single crate.

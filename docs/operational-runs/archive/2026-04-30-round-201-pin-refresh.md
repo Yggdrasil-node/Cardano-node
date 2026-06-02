@@ -7,7 +7,7 @@ Branch: main
 
 Phase E.1 — advance the documentary upstream pins in
 `node/src/upstream_pins.rs` from the 2026-Q2 audit baseline to
-the live HEAD reported by `node/scripts/check_upstream_drift.sh`.
+the live HEAD reported by `node/dev/scripts/check_upstream_drift.sh`.
 
 The 6 pins are documentary (yggdrasil is a pure-Rust port with
 no Cargo `git =` deps).  Each records the upstream commit at
@@ -49,7 +49,7 @@ advanced from … to live HEAD" rustdoc note.
 
 ### Verification
 
-Drift detector (`bash node/scripts/check_upstream_drift.sh`):
+Drift detector (`bash node/dev/scripts/check_upstream_drift.sh`):
 
 ```
 [upstream-drift] timestamp=2026-04-30T10:26:51Z
@@ -117,7 +117,7 @@ can be tracked from a known-good reference point.
   [`/home/vscode/.claude/plans/clever-shimmying-quokka.md`](/home/vscode/.claude/plans/clever-shimmying-quokka.md).
 - Code: [`node/src/upstream_pins.rs`](node/src/upstream_pins.rs).
 - Drift detector:
-  [`node/scripts/check_upstream_drift.sh`](node/scripts/check_upstream_drift.sh).
+  [`node/dev/scripts/check_upstream_drift.sh`](node/dev/scripts/check_upstream_drift.sh).
 - Documentation:
   [`docs/UPSTREAM_PARITY.md`](docs/UPSTREAM_PARITY.md).
 - Previous round:

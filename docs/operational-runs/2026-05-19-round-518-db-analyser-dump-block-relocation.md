@@ -23,7 +23,7 @@ from `src/main.rs`; the `dump_block` target is owned by the
 
 ## Guard Updates
 
-`scripts/check-stale-placement.py` now rejects developer diagnostic binaries
+`dev/test/check-stale-placement.py` now rejects developer diagnostic binaries
 under the node binary crate and requires the db-analyser-owned replacement
 path. The node and db-analyser `AGENTS.md` files now document the ownership
 rule explicitly: forensic ChainDB and immutable-chunk tools belong under
@@ -40,10 +40,10 @@ with the same role.
 - `cargo check-all`
 - `cargo lint`
 - `cargo test-all`
-- `python .claude/scripts/filetree.py check`
-- `python scripts/check-stale-placement.py --self-test`
-- `python scripts/check-stale-placement.py`
-- `python scripts/check-strict-mirror.py --fail-on-violation`
+- `python dev/test/filetree.py check`
+- `python dev/test/check-stale-placement.py --self-test`
+- `python dev/test/check-stale-placement.py`
+- `python dev/test/check-strict-mirror.py --fail-on-violation`
 - `cargo metadata --no-deps --format-version 1`
 
 Metadata evidence after the move:

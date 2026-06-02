@@ -16,7 +16,7 @@ LocalStateQuery wire plan into the shared cardano-cli LSQ owner.
   through `lsq::encode_query` / `lsq::decode_query_result`.
 - Updated the node `cardano-cli query-current-epoch` wrapper to use
   `TokioLsqClient.run_query(..., NtcQuery::CurrentEpoch)` directly.
-- Extended `scripts/check-stale-placement.py` so the current-epoch query
+- Extended `dev/test/check-stale-placement.py` so the current-epoch query
   must remain mapped to the shared LSQ plan.
 - Updated AGENTS guidance to keep simple LSQ tags in `crates/tools/cardano-cli`.
 
@@ -29,10 +29,10 @@ LocalStateQuery wire plan into the shared cardano-cli LSQ owner.
 - `cargo check-all`
 - `cargo lint`
 - `cargo test-all`
-- `python scripts/check-stale-placement.py`
-- `python scripts/check-stale-placement.py --self-test`
-- `python scripts/check-strict-mirror.py --fail-on-violation`
-- `python scripts/check-parity-matrix.py`
-- `python scripts/check-fixture-manifest.py`
-- `python .claude/scripts/filetree.py check`
+- `python dev/test/check-stale-placement.py`
+- `python dev/test/check-stale-placement.py --self-test`
+- `python dev/test/check-strict-mirror.py --fail-on-violation`
+- `python dev/test/check-parity-matrix.py`
+- `python dev/test/check-fixture-manifest.py`
+- `python dev/test/filetree.py check`
 - `git diff --check` (exit 0; Windows CRLF warnings only)

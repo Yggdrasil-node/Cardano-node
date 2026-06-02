@@ -8,11 +8,11 @@ Keep these documents synchronized with the implemented workspace, not with specu
 code, so the workspace strict-mirror file-policy (R274+) does not
 apply directly here. Five validators guard this tree's invariants:
 
-- `python3 scripts/check-parity-matrix.py` (CI gate since R303) —
+- `python3 dev/test/check-parity-matrix.py` (CI gate since R303) —
   validates `parity-matrix.json` schema + every
   `haskell_reference.path` and `rust_surface.path` exists on disk.
   This directory hosts the source-of-truth `parity-matrix.json`.
-- `python3 scripts/check-stale-placement.py` — rejects current-facing
+- `python3 dev/test/check-stale-placement.py` — rejects current-facing
   stale post-reorganization paths and status baselines in living docs,
   including obsolete parity-summary/proof/upstream verification claims,
   stale README/docs-site test baselines, old BlockFetch default-flip
@@ -22,18 +22,18 @@ apply directly here. Five validators guard this tree's invariants:
   root-manifest sister-tool labels, plus stale dmq-node pre-R816
   current-status wording and stale cardano-testnet pre-R823,
   Command-payload, and process-handle type gap wording.
-- `python3 scripts/check-doc-status-headers.py` (CI gate since R824) — keeps central
+- `python3 dev/test/check-doc-status-headers.py` (CI gate since R824) — keeps central
   parity-doc status headers aligned with each other, the latest
   operational-run markdown round, `docs/parity-matrix.json::reference.tag`, and
   the compact `PARITY_DASHBOARD.md` status-count summary. When editing the
-  guard itself, run `python3 scripts/check-doc-status-headers.py --self-test`
+  guard itself, run `python3 dev/test/check-doc-status-headers.py --self-test`
   before the live scan.
-- `python3 scripts/check-fixture-manifest.py` (CI gate since R303) —
+- `python3 dev/test/check-fixture-manifest.py` (CI gate since R303) —
   cross-checks the `cardano-base` SHA pin across
   `crates/node/config/src/upstream_pins.rs::UPSTREAM_CARDANO_BASE_COMMIT`,
   `specs/upstream-test-vectors/cardano-base/<SHA>/`, `SPECS.md`,
   and `UPSTREAM_PARITY.md` (this directory's own pin matrix).
-- `python3 scripts/check-strict-mirror.py --fail-on-violation`
+- `python3 dev/test/check-strict-mirror.py --fail-on-violation`
   (R288) — uses [`strict-mirror-audit.tsv`](strict-mirror-audit.tsv)
   as its allowlist; this directory is the source of truth for the
   audit table.
@@ -53,7 +53,7 @@ immutable once committed.
   `TECH-DEBT.md`, `AUDIT_VERIFICATION_*.md`, `MANUAL_TEST_RUNBOOK.md`,
   `archive/UPSTREAM_RESEARCH.md`, `REAL_PREPROD_POOL_VERIFICATION.md`).
 - `parity-matrix.json` — machine-readable Rust ↔ Haskell parity inventory
-  (validated by `scripts/check-parity-matrix.py`). The `reference.tag`
+  (validated by `dev/test/check-parity-matrix.py`). The `reference.tag`
   tracks the latest IntersectMBO/cardano-node release; bump it whenever
   upstream ships a new tag and re-validate every `haskell_reference.path`
   (paths can move across releases). See `intersectmbo_version_policy.md`
@@ -125,9 +125,8 @@ immutable once committed.
   `README.md`, `archive/PARITY_PLAN.md`, `PARITY_SUMMARY.md`,
   `PARITY_PROOF.md`, `UPSTREAM_PARITY.md`, and
   `MANUAL_TEST_RUNBOOK.md`.
-- Filename convention is `YYYY-MM-DD-round-NNN-<slug>.md`; the
-  `/round-doc` slash command (defined in
-  `.claude/commands/round-doc.md`) authors the skeleton.
+- Filename convention is `YYYY-MM-DD-round-NNN-<slug>.md`; author the
+  skeleton directly from this convention when adding a new run record.
 - If a run record itself has a typo or incorrect fact about that same
   run, correct it narrowly and leave the rest of the record intact.
 
@@ -143,7 +142,7 @@ immutable once committed.
 - Every `haskell_reference[*].path` MUST exist under
   `.reference-haskell-cardano-node/...` at validation time; every
   `rust_surface[*].path` MUST exist in the workspace. The
-  `scripts/check-parity-matrix.py` gate enforces both.
+  `dev/test/check-parity-matrix.py` gate enforces both.
 - Status transitions tied to operator-time gates (e.g. R267 mainnet
   endurance) only flip to `verified_<TAG>` when the gate has been
   signed off, not when the implementation is "ready".

@@ -83,9 +83,9 @@ Reference commits in this session correcting earlier stale AGENTS.md notes: `db3
 | E (multi-peer BlockFetch wiring) | done | `55b66d1` | `effective_block_fetch_concurrency(max_knob, n_peers)` + `partition_fetch_range_across_peers()` + `BlockFetchAssignment` primitives in `node/src/sync.rs`, `VerifiedSyncServiceConfig.max_concurrent_block_fetch_peers` field sourced from `NodeConfigFile`, runtime sync session reads the knob via `config.effective_block_fetch_concurrency(1)`. +10 tests. **Runtime dispatcher rewrite landed end-to-end in the same audit cycle** — see the E-Dispatch / E-Tentative / E-Phase6-Seam / E-Inline / E-Workers / E-Production-Spawn / E-Migration / E-Wire / E-Promote rows below for the full multi-session orchestration trail. |
 | F+G+H (upstream pinning) | done | `7c3a04e` | 6 SHA constants in `node/src/upstream_pins.rs`, drift detector, `docs/UPSTREAM_PARITY.md` table |
 | GD (genesis density tracking) | done | `682dfa8` | New `crates/consensus/src/genesis_density.rs`: `DensityWindow` sliding-window header-density estimator, `DEFAULT_SLOT_WINDOW = 6480` (`3 × securityParam`), `DEFAULT_LOW_DENSITY_THRESHOLD = 0.6`, deterministic (slot-only, no wallclock), O(1) amortised slide. +15 tests. **Network-side governor consumption landed end-to-end in the same audit cycle** — see the GD-RT / GD-Governor / GD-Final rows below for the ChainSync `observe_header(slot)` hook + density-biased demotion + runtime data flow. |
-| L (mainnet rehearsal script) | done | `8e1dbbd` | `node/scripts/run_mainnet_real_pool_producer.sh` |
-| M (hash-comparison harness) | done | `8e1dbbd` | `node/scripts/compare_tip_to_haskell.sh` |
-| N (restart-resilience automation) | done | `8e1dbbd` | `node/scripts/restart_resilience.sh` |
+| L (mainnet rehearsal script) | done | `8e1dbbd` | `node/dev/scripts/run_mainnet_real_pool_producer.sh` |
+| M (hash-comparison harness) | done | `8e1dbbd` | `node/dev/evidence/compare_tip_to_haskell.sh` |
+| N (restart-resilience automation) | done | `8e1dbbd` | `node/dev/scripts/restart_resilience.sh` |
 | O (manual-test runbook) | done | `0f2c7d1` | `docs/MANUAL_TEST_RUNBOOK.md` |
 
 ## Status: Yggdrasil 1.0 — every confirmed-active slice is closed

@@ -111,7 +111,7 @@ Shipped components:
   semantics under concurrent activity.
 - Conformance test against the vendored
   `.reference-haskell-cardano-node/install/bin/cardano-tracer`
-  binary — needs `scripts/setup-reference.sh` without
+  binary — needs `dev/reference/setup-reference.sh` without
   `--sources-only` so the install tarball materialises.
 
 **Desired end state.** Verified_11_0_1 promotion of the new

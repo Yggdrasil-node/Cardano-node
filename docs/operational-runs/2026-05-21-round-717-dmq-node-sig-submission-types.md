@@ -61,7 +61,7 @@ skeleton of plain type definitions (round-extraction territory); the
 ## Validation
 
 - `cargo fmt --all -- --check` — green.
-- `python3 scripts/check-strict-mirror.py --fail-on-violation` —
+- `python3 dev/test/check-strict-mirror.py --fail-on-violation` —
   0 violations (the audit TSV was rebuilt via `audit-strict-mirror.py`,
   picking up the 2 new files plus pre-existing tx-generator row drift).
 - `cargo check-all` — green.

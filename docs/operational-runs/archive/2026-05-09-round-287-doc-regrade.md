@@ -131,7 +131,7 @@ fail-build flip) close out the strict-1:1-file-mirror arc.
 
 ## Next round
 
-R288 — flip `scripts/check-strict-mirror.py` from warn-only to
+R288 — flip `dev/test/check-strict-mirror.py` from warn-only to
 fail-build. Per the plan, this is the closure of Phase E and the
 strict-1:1-file-mirror policy goes from "informational warning" to
 "required CI gate".

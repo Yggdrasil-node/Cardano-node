@@ -32,7 +32,7 @@
 
 # CI and release infrastructure
 /.github/              @FractionEstate
-/scripts/              @FractionEstate
+/dev/                  @FractionEstate
 
 # Vendored data — must not be hand-edited; flag any change for review.
 /specs/upstream-test-vectors/      @FractionEstate

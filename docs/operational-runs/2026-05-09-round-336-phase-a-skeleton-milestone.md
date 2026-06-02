@@ -17,7 +17,7 @@ permalink: /operational-runs/2026-05-09-round-336-phase-a-skeleton-milestone/
 After R335 + the bulk-skeleton commit, **all 12 sister tools have a
 deployable Rust binary** with byte-equivalent `--help` / `--version`
 output captured from upstream. The 12 binaries can be invoked via
-`node/scripts/run-tools.sh <tool>` and produce drop-in CLI surface
+`node/dev/scripts/run-tools.sh <tool>` and produce drop-in CLI surface
 matching upstream `.reference-haskell-cardano-node/install/bin/<tool>`.
 
 Concrete subcommand dispatch is implemented for **bech32** (Phase A.1
@@ -103,7 +103,7 @@ The remaining work is per-tool implementation rounds:
 ## Closure criterion (R336)
 
 - All 12 sister tools have deployable Rust binaries via
-  `node/scripts/run-tools.sh <tool>`.
+  `node/dev/scripts/run-tools.sh <tool>`.
 - All 12 binaries' `--help` / `--version` output is byte-
   equivalent to upstream.
 - 1 of 12 (bech32) is `verified_11_0_1`; 11 are `partial` with

@@ -12,7 +12,7 @@ Every production `.rs` here either mirrors a single canonical upstream
 sibling collisions) OR carries a `## Naming parity` docstring stanza
 ending in `**Strict mirror:** none.` plus the upstream symbol(s)/
 file(s) the helper surfaces. CI gate:
-`python3 scripts/check-strict-mirror.py --fail-on-violation`.
+`python3 dev/test/check-strict-mirror.py --fail-on-violation`.
 
 ## Upstream source
 
@@ -644,8 +644,8 @@ approved synthesis area from the sister-tools plan.
 cargo build --release -p yggdrasil-tx-generator
 
 # Run via the universal launcher (recommended).
-scripts/run-tools.sh tx-generator --help
-scripts/run-tools.sh tx-generator --version
+dev/scripts/run-tools.sh tx-generator --help
+dev/scripts/run-tools.sh tx-generator --version
 
 # Or invoke the binary directly:
 target/release/tx-generator --help
@@ -939,7 +939,7 @@ To verify the yggdrasil binary still tracks upstream byte-for-byte:
 
 ```bash
 # 1. Refresh vendored upstream tree (only when bumping the upstream version).
-bash scripts/setup-reference.sh
+bash dev/reference/setup-reference.sh
 
 # 2. Run cargo test for the crate.
 cargo test -p yggdrasil-tx-generator

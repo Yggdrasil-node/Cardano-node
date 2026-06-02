@@ -112,7 +112,7 @@ cargo test-all                   # 4 851 passed, 0 failed (unchanged)
 ### References
 
 - R269 a–h closures: `2026-05-06-round-269{,b,c,d,e,f,g,h}-state-*.md`
-- Plan: `~/.claude/plans/dapper-giggling-haven.md`
+- Plan: `docs/COMPLETION_ROADMAP.md`
 - Upstream DRepState:
   `.reference-haskell-cardano-node/deps/cardano-ledger/eras/conway/impl/src/Cardano/Ledger/Conway/Governance.hs`
 - Upstream `drepExpiry` rule:

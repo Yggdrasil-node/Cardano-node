@@ -89,10 +89,10 @@ $ cargo clippy --workspace --all-targets --all-features -- -D warnings
 $ cargo test --workspace --all-features
 passed: 4856  failed: 0
 
-$ python3 scripts/check-strict-mirror.py --fail-on-violation
+$ python3 dev/test/check-strict-mirror.py --fail-on-violation
 strict-mirror: 0 violations (clean)
 
-$ python3 scripts/audit-strict-mirror.py
+$ python3 dev/test/audit-strict-mirror.py
 audit complete: 448 rust files; candidate_match=392, no_candidate_match=56
 auto-grading bucket counts:
   (a): 246
@@ -152,7 +152,7 @@ All six are met.
 - **R328 — Audit + parity infrastructure expansion**: parity-matrix
   entries for the 12 new tools; `node/src/upstream_pins.rs` SHA pins
   for bech32 / kes-agent / dmq-node; drift detector extension.
-- **R329 — Run-tools launcher** (`node/scripts/run-tools.sh`) +
+- **R329 — Run-tools launcher** (`node/dev/scripts/run-tools.sh`) +
   `node/configuration/preprod/checkpoints.json`.
 - **R330 — Pure-Rust ecosystem dependency audit** — survey
   `bech32`, `axum`, `tracing-appender` against the workspace's

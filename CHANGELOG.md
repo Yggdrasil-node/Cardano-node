@@ -37,7 +37,7 @@ basename-heuristic reliance.
 ### Added
 
 - **R274 — strict-mirror audit infrastructure.** Refreshes vendored
-  install to `cardano-node 11.0.1`. Adds `scripts/audit-strict-mirror.py`
+  install to `cardano-node 11.0.1`. Adds `dev/test/audit-strict-mirror.py`
   (walks production `.rs` files, derives candidate upstream basenames
   via snake_case<->PascalCase, applies crate-to-repo affinity filter
   for ambiguous matches), `docs/upstream-haskell-files.txt` (4,676-path
@@ -45,8 +45,8 @@ basename-heuristic reliance.
   verdict table; every Rust file graded `(a) DIRECT_MIRROR` or
   `(c) NO_MIRROR_NEEDS_DOCSTRING`).
 - **R275 — strict-mirror drift-guard (warn-only).** Adds
-  `scripts/check-strict-mirror.py` as a CI gate counterpart to the
-  authoring-time skill at `.claude/skills/round-extraction/SKILL.md`.
+  `dev/test/check-strict-mirror.py` as a CI gate counterpart to the
+  authoring-time policy in root `AGENTS.md`.
   Flags any new file lacking either an upstream `.hs` mirror or a
   `## Naming parity` docstring stanza.
 - **R288 — drift-guard promoted to fail-build.** After R281 closed
@@ -81,7 +81,7 @@ basename-heuristic reliance.
   9 `git mv` renames in `consensus/opcert/`, `plutus/types/`,
   `plutus/cost_model/`, `plutus/flat/` aligning sub-file basenames
   with upstream (`OCert.hs`, `Builtins.hs`, `Internal.hs` etc.). The
-  authoring-time skill at `.claude/skills/round-extraction/SKILL.md`
+  authoring-time policy in root `AGENTS.md`
   is hardened with explicit filename-mirror rules.
 - **R276–R281 — Phase B sub-module docstring sweep.** Adds
   `## Naming parity` blocks to 161 sub-module files across
@@ -104,7 +104,7 @@ basename-heuristic reliance.
 - **Phase D + R288 — living-doc parity-language sweep + drift-guard
   fail-build.** Adds strict-1:1-policy citations to every per-crate
   AGENTS.md (13 files); registers `check-strict-mirror.py` as the
-  fifth named verification gate in CLAUDE.md and root AGENTS.md.
+  named verification gate in root `AGENTS.md`.
 
 ### Removed
 
@@ -134,18 +134,18 @@ basename-heuristic reliance.
   at `parity-matrix.json` + `strict-mirror-audit.tsv` +
   `upstream-haskell-files.txt`, and a new Usage Rule capturing the
   R274+ strict 1:1 file-mirror policy.
-- **R302 — CLAUDE.md gate-count consistency.** Lines 12 + 127
+- **R302 — verification gate-count consistency.** Root guidance lines
   updated from "four verification gates" to "five verification
   gates" to match the post-R288 fail-build flip and the existing
   "All five are the required verification expectations" wording in
   the Commands section (line 96).
 - **R303 — two new CI parity validators.** Adds
-  `scripts/check-fixture-manifest.py` (cross-checks the
+  `dev/test/check-fixture-manifest.py` (cross-checks the
   `cardano-base` SHA pin across `crates/node/config/src/upstream_pins.rs::
   UPSTREAM_CARDANO_BASE_COMMIT`, `specs/upstream-test-vectors/
   cardano-base/<SHA>/`, `docs/SPECS.md`, `docs/UPSTREAM_PARITY.md`;
   verifies 2 required corpora present) and
-  `scripts/check-reference-artifacts.py` (validates
+  `dev/test/check-reference-artifacts.py` (validates
   `.reference-haskell-cardano-node/install/`: `cardano-node
   --version` matches policy tag, 9 binaries present, 3 networks ×
   8 config files). The fixture-manifest validator wired to CI;
@@ -166,7 +166,7 @@ basename-heuristic reliance.
   recap, current status (R289–R295 bootstrap, R296+R297 migration
   kickoff), the then-active migration roadmap, integration with the
   `node` binary. Registers the new AGENTS.md in `crates/AGENTS.md` and
-  `CLAUDE.md`.
+  root `AGENTS.md`.
 - **R307 — PARITY_SUMMARY.md round-count + test-badge refresh.**
   Bumps round count from 251 to 306+; updates README test badge
   4.7K+ → 4.8K+ to reflect post-R273 baseline.
@@ -175,7 +175,7 @@ basename-heuristic reliance.
   refreshed; test-count line refreshed (4.7K+ → 4,855); five-gate
   snapshot added; R273-rename + R274–R307 arc summary blockquote
   added at the top of the body. New `scripts/AGENTS.md` registered
-  in `CLAUDE.md`. Tail repair: `cargo fmt` auto-fix on 3 files
+  in root `AGENTS.md`. Tail repair: `cargo fmt` auto-fix on 3 files
   with pre-R308 rustfmt drift.
 - **R309 — AGENTS.md Current Phase R273-R308 arc closure.**
   Appends single arc-closure sentence to `AGENTS.md`'s Current
@@ -195,7 +195,7 @@ basename-heuristic reliance.
   collision.
 - **R311 — strict-mirror index-vs-tree drift check.** Closes the
   failure-detection gap that R310 exposed.
-  `scripts/check-strict-mirror.py` previously walked only the local
+  `dev/test/check-strict-mirror.py` previously walked only the local
   filesystem; an over-broad `.gitignore` pattern that silently
   swallowed production `.rs` files (R310's failure mode) was
   invisible to the gate, manifesting only as an opaque `cargo fmt`
@@ -211,7 +211,7 @@ basename-heuristic reliance.
 - **R313 — synthesis-file census.** Read-only census of the 215
   production `.rs` files that carry no 1:1 upstream mirror under
   `.reference-haskell-cardano-node/`. Re-runs
-  `scripts/audit-strict-mirror.py` (TSV byte-identical to committed
+  `dev/test/audit-strict-mirror.py` (TSV byte-identical to committed
   allowlist), groups the synthesis bucket by subsystem, sample-
   verifies docstring stanzas. Headline: 230 `(a) DIRECT_MIRROR` +
   215 `(c) NO_MIRROR_NEEDS_DOCSTRING` = 445 graded files; zero
@@ -783,7 +783,7 @@ basename-heuristic reliance.
   with the full R475-R481 implementation evidence bullet +
   refreshed `remaining_work` (ledger-state apply-loop arc +
   streaming iterator + byte-equivalent stdout soak).
-  `scripts/check-parity-matrix.py` extends `ALLOWED_MILESTONES`
+  `dev/test/check-parity-matrix.py` extends `ALLOWED_MILESTONES`
   to cover R480-R499 (`_arc_range(480, 499)`).
   **Arc total: +83 tests across 7 rounds; workspace tests 6,084
   → 6,166.** All 5 verification gates clean. See
@@ -1246,7 +1246,7 @@ basename-heuristic reliance.
   integration tests landed in `rotator.rs`. Workspace tests:
   6,025 → 6,029 (+4). All 5 verification gates clean.
 - **R460 — R459 advisor-flag closure.** (1)
-  `scripts/check-parity-matrix.py` `ALLOWED_MILESTONES` extends
+  `dev/test/check-parity-matrix.py` `ALLOWED_MILESTONES` extends
   via `_arc_range(460, 479)` to admit post-R459 follow-on arcs.
   (2) `acceptors::server::tests::server_round_trips_both_sub_protocols_concurrently`
   is a focused integration smoke that exercises
@@ -1292,12 +1292,12 @@ basename-heuristic reliance.
   top-level sister-tool crate references returned zero hits across the node
   crates, workspace AGENTS files, scripts, docs, and specs — all production
   code + living docs reference the post-R447 `crates/tools/<tool>/` layout.
-  Historical operational-runs docs intentionally preserved per CLAUDE.md's
+  Historical operational-runs docs intentionally preserved per the living-doc policy
   historical-evidence rule.
-- **R449 — post-R447 living-doc path cleanup (CLAUDE.md +
+- **R449 — post-R447 living-doc path cleanup (root guidance +
   DEPENDENCIES.md).** Updates the two non-historical documentation
   surfaces that still referenced pre-R447 `crates/<tool>/` paths:
-  - **CLAUDE.md**: AGENTS.md index table row for cardano-cli
+  - **Root guidance**: AGENTS.md index table row for cardano-cli
     now points at `crates/tools/cardano-cli/AGENTS.md` and appends
     the "(R447: relocated under `crates/tools/`)" annotation.
   - **docs/DEPENDENCIES.md**: 2 forward-looking references updated
@@ -1307,7 +1307,7 @@ basename-heuristic reliance.
   Historical docs (PARITY_SUMMARY.md, PARITY_PROOF.md,
   UPSTREAM_PARITY.md, top-level AGENTS.md's session-closure
   narratives, dated `docs/operational-runs/*` files) intentionally
-  preserve their pre-R447 path references per CLAUDE.md's
+  preserve their pre-R447 path references per the living-doc policy
   historical-evidence rule ("Treat dated files under
   `docs/operational-runs/` as historical evidence...rather than
   rewriting old run records").
@@ -1375,12 +1375,12 @@ basename-heuristic reliance.
     grouping (R447 restructure)" block explaining the 6 core +
     `tools/` split; LOC-count helper bash block updated to iterate
     `crates/{core...}/` + `crates/tools/*/`.
-  - `scripts/check-strict-mirror.py` — single comment-only path
+  - `dev/test/check-strict-mirror.py` — single comment-only path
     reference updated.
   Note: the strict-mirror gate's `git ls-files -- "crates/*.rs"`
   pathspec recurses correctly through `crates/tools/<tool>/src/`
   without modification — pathspec `*` in git ls-files is recursive,
-  unlike shell glob. `scripts/audit-strict-mirror.py`'s `RUST_ROOTS`
+  unlike shell glob. `dev/test/audit-strict-mirror.py`'s `RUST_ROOTS`
   already used `ROOT / "crates"` which walks all subdirs.
   Functional impact: zero. Workspace tests unchanged at 5,962
   passing (every test that ran before R447 still runs + passes
@@ -1389,8 +1389,8 @@ basename-heuristic reliance.
   - `cargo check-all`
   - `cargo test-all` (5,962 passing, 0 failing)
   - `cargo lint`
-  - `python3 scripts/check-strict-mirror.py --fail-on-violation`
-  - Plus `python3 scripts/check-parity-matrix.py` (20 entries
+  - `python3 dev/test/check-strict-mirror.py --fail-on-violation`
+  - Plus `python3 dev/test/check-parity-matrix.py` (20 entries
     validated against reference tag 11.0.1).
   Organizational benefit: `crates/` is now visually compact —
   scanning the directory listing surfaces the 6 core runtime
@@ -1649,7 +1649,7 @@ basename-heuristic reliance.
   Advances `next_milestone` from R438 → R439. Workspace test
   count unchanged at 5,931 (R438 is a pure documentation round;
   no test surface change).
-  Verification: `python3 scripts/check-parity-matrix.py` clean —
+  Verification: `python3 dev/test/check-parity-matrix.py` clean —
   20 entries validated against `.reference-haskell-cardano-node/`
   (reference tag 11.0.1).
 - **R437 — cardano-tracer: TraceObject CBOR codec (synthesis
@@ -5387,7 +5387,7 @@ basename-heuristic reliance.
   remaining_work refreshed with the per-module roadmap (Parsers →
   HasAnalysis → Analysis → CSV → Run + integration + closeout).
 - **R350 — db-truncater: comparison harness for operator soak vs upstream.**
-  Ships scripts/compare_db_truncater_to_upstream.sh — 200-line
+  Ships dev/evidence/compare_db_truncater_to_upstream.sh — 200-line
   bash script for verification of yggdrasil-db-truncater against the
   upstream Haskell binary across the canonical surface. Three stages:
   (1) byte-equivalent --help / --version (already pinned by R335
@@ -5471,10 +5471,10 @@ basename-heuristic reliance.
   unchanged at 257 (a) + 215 (c) = 472 graded files (R338-R345
   populated already-tracked stub files rather than adding new ones).
   Notes: cardano-submit-api closeout to verified_11_0_1 gated on
-  operator running scripts/compare_submit_api_to_upstream.sh
+  operator running dev/evidence/compare_submit_api_to_upstream.sh
   and reporting an empty diff.
 - **R345 — cardano-submit-api comparison harness: operator-runnable soak vs upstream.**
-  Ships scripts/compare_submit_api_to_upstream.sh — 175-line bash
+  Ships dev/evidence/compare_submit_api_to_upstream.sh — 175-line bash
   script that POSTs canonical inputs (empty body, malformed CBOR) to
   both upstream and yggdrasil binaries and diffs HTTP status + response
   body, then scrapes /metrics from both and diffs the # HELP / # TYPE
@@ -5663,7 +5663,7 @@ basename-heuristic reliance.
   arc: vendored bech32 + kes-agent + dmq-node sources (R326b);
   created 12 sister-tool skeleton crates (R327); extended parity-
   matrix +12 entries + upstream_pins +3 SHAs + drift detector
-  cross-org URL support (R328); landed `scripts/run-tools.sh`
+  cross-org URL support (R328); landed `dev/scripts/run-tools.sh`
   12-binary dispatcher (R329); added `bech32 v0.11` workspace dep
   (R330). Phase A.1 (R331-R334) shipped the **first sister tool with
   full deployment-ready 100% parity**: `bech32` is now drop-in
@@ -5759,7 +5759,7 @@ through Dijkstra.  Workspace tests: **4.7K+ passing, 0 failing**.
   IntersectMBO pins are in sync with live upstream heads; R245 updates
   `cardano-ledger` through the BBODY/GOV drift.
 - **R240 — reproducible parallel BlockFetch soak harness.**
-  `node/scripts/parallel_blockfetch_soak.sh` captures the §6.5
+  `node/dev/evidence/parallel_blockfetch_soak.sh` captures the §6.5
   multi-peer BlockFetch default-flip evidence path instead of relying
   on hand-assembled operator notes.
 - **R242 — optional upstream `cardano-node-tests` wrapper workflow.**
@@ -6020,7 +6020,7 @@ path active until that closes.
 
 ### Documentation
 
-- **CI-gate prose alignment.**  `CLAUDE.md`, `docs/CONTRIBUTING.md`, and
+- **CI-gate prose alignment.**  Root guidance, `docs/CONTRIBUTING.md`, and
   `docs/archive/code-audit.md` now list all four CI gates
   (`fmt --all -- --check`, `check-all`, `test-all`, `lint`) — previously
   three files claimed only the trio (`check-all` / `test-all` / `lint`)
@@ -6104,7 +6104,7 @@ path active until that closes.
   `9001/9099/9101` (metrics), VSCode extensions
   (`rust-analyzer`, `vadimcn.vscode-lldb`,
   `tamasfe.even-better-toml`), and a `postCreateCommand` that runs
-  `node/scripts/install_haskell_cardano_node.sh` to fetch the
+  `node/dev/reference/install_haskell_cardano_node.sh` to fetch the
   upstream IntersectMBO Haskell `cardano-node` + `cardano-cli`
   binaries (10.7.1+) into `~/.local/bin/`.  This unblocks the §5
   hash-comparison and §6.5b parallel-fetch parity checks in a fresh
@@ -6147,7 +6147,7 @@ path active until that closes.
   `getCurrentChain` rebuilds the in-memory chain fragment from the
   volatile DB on start-up.
 
-  End-to-end verification: `node/scripts/restart_resilience.sh`
+  End-to-end verification: `node/dev/scripts/restart_resilience.sh`
   with `CYCLES=2` against a real preprod peer now reports
   `[ok] all 2 cycles + final recovery completed monotonic tip
   progression`.

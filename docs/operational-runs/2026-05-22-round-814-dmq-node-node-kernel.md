@@ -36,7 +36,7 @@ channels, seeded PRNG) and the carried peer-share policy.
 ## Validation
 
 - `cargo fmt --all -- --check` — green.
-- `python3 scripts/check-strict-mirror.py --fail-on-violation` —
+- `python3 dev/test/check-strict-mirror.py --fail-on-violation` —
   0 violations.
 - `cargo check-all` — green.
 - `cargo lint` — green.

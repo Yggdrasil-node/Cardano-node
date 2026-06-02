@@ -142,7 +142,7 @@ build's resolved dep graph.
 ## What is *not* verified by these checks
 
 - The Rust source code's correctness. The strict-mirror gate
-  (`scripts/check-strict-mirror.py`) and the parity-matrix
+  (`dev/test/check-strict-mirror.py`) and the parity-matrix
   (`docs/parity-matrix.json`, [Compatibility](../COMPATIBILITY.md)) carry
   that contract at development time; release verification confirms
   the binary you have matches the workflow that built it from a

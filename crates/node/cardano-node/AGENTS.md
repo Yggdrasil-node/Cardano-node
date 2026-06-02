@@ -2,8 +2,9 @@
 
 This crate is the active executable crate for the shipped `yggdrasil-node`
 binary. It is not a stale location after the Wave 5 reorganization; it owns the
-thin CLI/runtime shell. Repository-root `configuration/` and `scripts/` own the
-operator assets that are packaged with releases.
+thin CLI/runtime shell. Repository-root `configuration/` owns network
+operator bundles, while `dev/{scripts,evidence,reference,test}/` owns
+operator helpers, evidence harnesses, reference refresh tooling, and validators.
 
 ## Scope
 
@@ -48,7 +49,8 @@ operator assets that are packaged with releases.
   storage recovery, peer-snapshot, and forge-feature diagnostics around that
   shared report.
 - Keep operator scripts in sync with `docs/MANUAL_TEST_RUNBOOK.md` and the
-  metrics exposed by `yggdrasil-node-tracer`; scripts live in root `scripts/`.
+  metrics exposed by `yggdrasil-node-tracer`; operator helpers live under
+  `dev/scripts/` and evidence harnesses under `dev/evidence/`.
 - Keep root `configuration/` presets byte/source traceable to the official
   reference bundle under `.reference-haskell-cardano-node/install/share/<network>/`.
 - Keep `--network` preset resolution usable from both source checkouts and
@@ -69,7 +71,7 @@ operator assets that are packaged with releases.
 - No `src/bin/` diagnostic helpers are expected here; the `dump_block`
   forensic helper lives under `crates/tools/db-analyser`.
 - Active operator assets: release/repro workflows and Docker copy root
-  `configuration/` and root `scripts/`, matching upstream's repository layout.
+  `configuration/` plus the required `dev/` helper subsets.
 
 If a file here looks like pre-extraction runtime logic, verify whether it is
 only a CLI adapter or startup shell. Real reusable runtime code belongs in
@@ -82,17 +84,17 @@ only a CLI adapter or startup shell. Real reusable runtime code belongs in
 
 - `configuration/{mainnet,preprod,preview}/` mirrors the upstream operator
   share bundles.
-- `scripts/parallel_blockfetch_soak.sh` is the canonical runbook section 6.5
+- `dev/evidence/parallel_blockfetch_soak.sh` is the canonical runbook section 6.5
   multi-peer BlockFetch evidence gate.
-- `scripts/run_preview_real_pool_producer.sh`,
+- `dev/scripts/run_preview_real_pool_producer.sh`,
   `run_preview_active_pool_signoff.sh`,
   `register_preview_generated_pool.sh`, and
   `preview_pool_activation_status.sh` are preview producer parity helpers.
-- `scripts/run_preprod_real_pool_producer.sh` and
+- `dev/scripts/run_preprod_real_pool_producer.sh` and
   `run_mainnet_real_pool_producer.sh` are operator rehearsal templates.
-- `scripts/compare_tip_to_haskell.sh`, `compare_submit_api_to_upstream.sh`, and
+- `dev/evidence/compare_tip_to_haskell.sh`, `compare_submit_api_to_upstream.sh`, and
   `compare_db_truncater_to_upstream.sh` are parity comparison harnesses.
-- `scripts/run-tools.sh` launches sister-tool binaries from `crates/tools/`.
+- `dev/scripts/run-tools.sh` launches sister-tool binaries from `crates/tools/`.
 
 ## Official Upstream References
 

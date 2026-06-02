@@ -100,7 +100,7 @@ $ cargo lint
 $ cargo test-all | grep 'test result:' | awk ...
 passing: 6224
 
-$ python3 scripts/check-strict-mirror.py --fail-on-violation
+$ python3 dev/test/check-strict-mirror.py --fail-on-violation
 strict-mirror: 0 violations (clean)
 ```
 

@@ -8,7 +8,7 @@ Rust code, so the workspace strict-mirror file-policy (R274+) does
 not apply directly here. The CI/local validator for this directory
 is:
 
-- `python3 scripts/check-reference-artifacts.py` (local/operator) —
+- `python3 dev/test/check-reference-artifacts.py` (local/operator) —
   validates that each per-network share directory under
   `.reference-haskell-cardano-node/install/share/<network>/`
   carries the canonical operator-config bundle (`config.json`,
@@ -17,7 +17,7 @@ is:
   `tracer-config.json`). The Yggdrasil-side mirrors at
   `configuration/<network>/` are operator-facing copies that
   must keep parity with this canonical bundle.
-- `python3 scripts/check-stale-placement.py` (CI) - asserts these
+- `python3 dev/test/check-stale-placement.py` (CI) - asserts these
   Yggdrasil-side preset bundles remain under root `configuration/`
   after the node-crate reorganization, including `config-legacy.json`,
   `submit-api-config.json`, `checkpoints.json` where present, and

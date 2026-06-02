@@ -73,7 +73,7 @@ TIP_COMPARE_CHECKPOINTS=900,3600,21600 \
 REQUIRE_TIP_COMPARISON=1 \
 EXPECT_FORGE_EVENTS=1 \
 EXPECT_ADOPTED_EVENTS=1 \
-scripts/run_preview_real_pool_producer.sh
+dev/scripts/run_preview_real_pool_producer.sh
 ```
 
 For the generated preview pool used by the parity audit, the active-epoch
@@ -89,7 +89,7 @@ Origin.
 ```sh
 CRED_DIR=/tmp/ygg-preview-generated-bp-... \
 POOL_ID=pool1... \
-scripts/run_preview_active_pool_signoff.sh
+dev/scripts/run_preview_active_pool_signoff.sh
 ```
 
 Pass conditions:
@@ -114,11 +114,11 @@ Use preview when you need the fastest public-network startup/sync loop and do no
 cargo build --release -p yggdrasil-node
 export YGG_BIN="$PWD/target/release/yggdrasil-node"
 
-FORCE=1 scripts/preview_producer_harness.sh generate
-scripts/preview_producer_harness.sh wallet
-scripts/preview_producer_harness.sh certs
-scripts/preview_producer_harness.sh validate
-RUN_SECONDS=60 scripts/preview_producer_harness.sh smoke-relay
+FORCE=1 dev/scripts/preview_producer_harness.sh generate
+dev/scripts/preview_producer_harness.sh wallet
+dev/scripts/preview_producer_harness.sh certs
+dev/scripts/preview_producer_harness.sh validate
+RUN_SECONDS=60 dev/scripts/preview_producer_harness.sh smoke-relay
 ```
 
 Pass conditions:
@@ -200,7 +200,7 @@ and explicit-UTxO offline build.
 ```sh
 CRED_DIR=/tmp/ygg-preview-generated-bp-20260519T052515Z \
 SOCKET_PATH=/tmp/preview/node.socket \
-scripts/register_preview_generated_pool.sh
+dev/scripts/register_preview_generated_pool.sh
 ```
 
 When a synced local socket is unavailable but the funding UTxO is known, use
@@ -213,7 +213,7 @@ TX_IN=<funding-txid#ix> \
 INPUT_LOVELACE=<funding-lovelace> \
 PROTOCOL_PARAMS_FILE=/tmp/ygg-preview-generated-bp-20260519T052515Z/registration/protocol-params-epoch-1302-cli.json \
 KOIOS_SUBMIT=1 \
-scripts/register_preview_generated_pool.sh
+dev/scripts/register_preview_generated_pool.sh
 ```
 
 The helper keeps certificates ordered as stake registration → pool registration
@@ -230,7 +230,7 @@ Check activation readiness before starting the gated producer soak:
 CRED_DIR=/tmp/ygg-preview-generated-bp-20260519T052515Z \
 POOL_ID=pool1rv9445xped56v36hneedxq96rg3l7hx490zg66pqkk7hcrtl26q \
 REQUIRE_ACTIVE=1 \
-scripts/preview_pool_activation_status.sh
+dev/scripts/preview_pool_activation_status.sh
 ```
 
 Exit code `3` means the pool registration is visible but the active epoch has
@@ -250,7 +250,7 @@ The preprod network is a stable, pool-registration-friendly testnet. Use it to v
 RUN_SECONDS=120 \
 EXPECT_FORGE_EVENTS=0 \
 EXPECT_ADOPTED_EVENTS=0 \
-scripts/run_preprod_real_pool_producer.sh
+dev/scripts/run_preprod_real_pool_producer.sh
 ```
 
 The script aborts immediately if `KES_SKEY_PATH` etc. are missing in producer
@@ -260,7 +260,7 @@ mode. For relay-only sync, use `RELAY_ONLY=1`, which passes
 ```sh
 RELAY_ONLY=1 \
 RUN_SECONDS=600 \
-scripts/run_preprod_real_pool_producer.sh
+dev/scripts/run_preprod_real_pool_producer.sh
 ```
 
 Verify the node reaches `bootstrap peer connected` in the log and exposes `yggdrasil_current_slot` on `http://127.0.0.1:9001/metrics`.
@@ -273,7 +273,7 @@ VRF_SKEY_PATH=/secure/preprod/vrf.skey \
 OPCERT_PATH=/secure/preprod/node.cert \
 RUN_SECONDS=600 \
 EXPECT_FORGE_EVENTS=1 \
-scripts/run_preprod_real_pool_producer.sh
+dev/scripts/run_preprod_real_pool_producer.sh
 ```
 
 Pass condition: script exits 0, log contains `Startup.BlockProducer`, `block producer loop started`, and at least one `elected as slot leader` / `forged local block` / `adopted forged block` line.
@@ -289,7 +289,7 @@ Failure to observe forge events on a 10-minute window is normal if the pool has 
 ```sh
 RELAY_ONLY=1 \
 RUN_SECONDS=600 \
-scripts/run_mainnet_real_pool_producer.sh
+dev/scripts/run_mainnet_real_pool_producer.sh
 ```
 
 Pass conditions (asserted by the script):
@@ -312,7 +312,7 @@ VRF_SKEY_PATH=/secure/mainnet/vrf.skey \
 OPCERT_PATH=/secure/mainnet/node.cert \
 RUN_SECONDS=3600 \
 EXPECT_FORGE_EVENTS=0 \
-scripts/run_mainnet_real_pool_producer.sh
+dev/scripts/run_mainnet_real_pool_producer.sh
 ```
 
 `EXPECT_FORGE_EVENTS=0` is appropriate for a one-hour window — mainnet pool slots can be hours apart depending on stake. For a longer rehearsal that should observe a forge, set `EXPECT_FORGE_EVENTS=1` and `RUN_SECONDS` to at least 3× the pool's expected slot interval.
@@ -336,7 +336,7 @@ Both nodes must already be running and synced to roughly the same point.
 YGG_SOCK=/tmp/ygg-mainnet.sock \
 HASKELL_SOCK=/run/cardano-node/socket \
 NETWORK_MAGIC=764824073 \
-scripts/compare_tip_to_haskell.sh
+dev/evidence/compare_tip_to_haskell.sh
 ```
 
 Exit codes:
@@ -351,7 +351,7 @@ query timeout.
 
 ```sh
 watch -n 900 'YGG_SOCK=/tmp/ygg.sock HASKELL_SOCK=/run/cardano.sock \
-  NETWORK_MAGIC=764824073 scripts/compare_tip_to_haskell.sh'
+  NETWORK_MAGIC=764824073 dev/evidence/compare_tip_to_haskell.sh'
 ```
 
 ### 5c. Decision tree on divergence
@@ -374,7 +374,7 @@ Kill/restart cycles validate the WAL + dirty-flag recovery (storage Round 83) ov
 NETWORK=preprod \
 CYCLES=12 \
 INTERVAL_BASE_S=300 \
-scripts/restart_resilience.sh
+dev/scripts/restart_resilience.sh
 ```
 
 Pass condition: 12 cycles complete with monotonic tip progression at each settle window plus a final post-cycle recovery probe. The script asserts `tip[N+1] >= tip[N]` after every restart.
@@ -385,7 +385,7 @@ Pass condition: 12 cycles complete with monotonic tip progression at each settle
 NETWORK=mainnet \
 CYCLES=12 \
 INTERVAL_BASE_S=300 \
-scripts/restart_resilience.sh
+dev/scripts/restart_resilience.sh
 ```
 
 Logs land at `$LOG_ROOT/cycle-NN.log` (default `/tmp/ygg-restart/`). Preserve them for forensic diff if any cycle reports non-monotonic regression (exit code 1).
@@ -404,7 +404,7 @@ MAX_CONCURRENT_BLOCK_FETCH_PEERS=2 \
 RUN_SECONDS=21600 \
 HASKELL_SOCK=/tmp/cardano.sock \
 REQUIRE_TIP_COMPARISON=1 \
-scripts/parallel_blockfetch_soak.sh
+dev/evidence/parallel_blockfetch_soak.sh
 ```
 
 The harness starts `yggdrasil-node`, captures Prometheus snapshots,
@@ -550,10 +550,10 @@ YGG_SOCK=/tmp/ygg-preprod.sock \
 HASKELL_SOCK=/tmp/cardano.sock \
 NETWORK_MAGIC=1 \
 TIP_QUERY_TIMEOUT_SECONDS=60 \
-scripts/compare_tip_to_haskell.sh
+dev/evidence/compare_tip_to_haskell.sh
 
 # Watch loop, every 15 minutes:
-watch -n 900 'YGG_SOCK=/tmp/ygg-preprod.sock HASKELL_SOCK=/tmp/cardano.sock NETWORK_MAGIC=1 TIP_QUERY_TIMEOUT_SECONDS=60 scripts/compare_tip_to_haskell.sh'
+watch -n 900 'YGG_SOCK=/tmp/ygg-preprod.sock HASKELL_SOCK=/tmp/cardano.sock NETWORK_MAGIC=1 TIP_QUERY_TIMEOUT_SECONDS=60 dev/evidence/compare_tip_to_haskell.sh'
 ```
 
 **Pass criterion:** the Yggdrasil tip `{slot, hash}` must match the Haskell tip
@@ -641,7 +641,7 @@ After Gap BO, Gap BP, R178, and all three BlockFetch soaks have produced strict
 fixtures/summaries, stage the final closeout bundle with:
 
 ```sh
-python3 scripts/stage-core-closeout-artifacts.py \
+python3 dev/evidence/stage-core-closeout-artifacts.py \
   --gap-bo-fixture /path/to/gap-bo/fixture.json \
   --gap-bp-fixture /path/to/gap-bp/fixture.json \
   --r178-fixture /path/to/r178/fixture.json \
@@ -654,7 +654,7 @@ The staging helper copies into `target/core-closeout/`, preserves the
 BlockFetch log/metrics/tip-comparison artifacts under each staged BlockFetch
 run directory, rewrites the staged BlockFetch summary paths to those durable
 copies, writes `staging-summary.json`, and returns the same exit code as
-`scripts/check-core-closeout-artifacts.py`.
+`dev/test/check-core-closeout-artifacts.py`.
 
 ---
 
@@ -973,9 +973,9 @@ At the end of a successful rehearsal session, record (e.g. into a session log):
 
 - `archive/AUDIT_VERIFICATION_2026Q2.md` — gap status that this runbook closes
 - `docs/PARITY_SUMMARY.md` lines 303–307 — "Next Steps" defining the rehearsal cadence
-- `scripts/run_preprod_real_pool_producer.sh` — preprod rehearsal template
-- `scripts/run_mainnet_real_pool_producer.sh` — mainnet rehearsal (Slice L)
-- `scripts/compare_tip_to_haskell.sh` — hash-comparison harness (Slice M)
-- `scripts/restart_resilience.sh` — restart-resilience automation (Slice N)
-- `scripts/parallel_blockfetch_soak.sh` — §6.5 multi-peer BlockFetch soak automation
+- `dev/scripts/run_preprod_real_pool_producer.sh` — preprod rehearsal template
+- `dev/scripts/run_mainnet_real_pool_producer.sh` — mainnet rehearsal (Slice L)
+- `dev/evidence/compare_tip_to_haskell.sh` — hash-comparison harness (Slice M)
+- `dev/scripts/restart_resilience.sh` — restart-resilience automation (Slice N)
+- `dev/evidence/parallel_blockfetch_soak.sh` — §6.5 multi-peer BlockFetch soak automation
 - `IntersectMBO/cardano-node-tests` — upstream system/E2E parity harness and process taxonomy: <https://github.com/IntersectMBO/cardano-node-tests>, <https://tests.cardano.intersectmbo.org/>, <https://tests.cardano.intersectmbo.org/process.html>

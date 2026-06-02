@@ -173,13 +173,13 @@ fn parity_all() -> Result<()> {
     let scripts = [
         (
             "strict-mirror",
-            "scripts/check-strict-mirror.py",
+            "dev/test/check-strict-mirror.py",
             &["--fail-on-violation"][..],
         ),
-        ("parity-matrix", "scripts/check-parity-matrix.py", &[][..]),
+        ("parity-matrix", "dev/test/check-parity-matrix.py", &[][..]),
         (
             "fixture-manifest",
-            "scripts/check-fixture-manifest.py",
+            "dev/test/check-fixture-manifest.py",
             &[][..],
         ),
     ];
@@ -201,7 +201,7 @@ fn parity_all() -> Result<()> {
 }
 
 fn validate_strict_mirror(workspace_root: &Path) -> Result<()> {
-    let script = workspace_root.join("scripts/check-strict-mirror.py");
+    let script = workspace_root.join("dev/test/check-strict-mirror.py");
     let status = Command::new("python3")
         .arg(&script)
         .arg("--fail-on-violation")

@@ -28,7 +28,7 @@ same-named sub-directory. `sync.rs` should follow the same convention
 into `node/src/sync/`.
 
 This is a **filename-mirror extraction** per
-[`.claude/skills/round-extraction/SKILL.md`](../../.claude/skills/round-extraction/SKILL.md):
+`docs/AGENTS.md`:
 behavior-preserving carve-up into upstream-aligned sub-modules. The
 file is runtime glue (`**Strict mirror:** none.`) — most sub-files
 will keep the synthesis form but should name the upstream
@@ -93,7 +93,7 @@ existing top-of-file `## Naming parity` docstring).
 
 ## Strict-mirror discipline
 
-Per CLAUDE.md and `.claude/skills/round-extraction/SKILL.md`, every
+Per AGENTS.md and `docs/AGENTS.md`, every
 new `.rs` file must carry either:
 
 1. A real upstream `.hs` mirror (snake_case basename match), OR
@@ -108,7 +108,7 @@ mirrors after R504/R503 land — `multi_era_decode.rs` ↔
 `Ouroboros.Consensus.Protocol.{TPraos,Praos}.Translate` — but those
 upstream files are larger than our extracts, so synthesis-form is the
 honest classification. The strict-mirror drift-guard
-(`scripts/check-strict-mirror.py --fail-on-violation`) must stay green
+(`dev/test/check-strict-mirror.py --fail-on-violation`) must stay green
 on every round commit.
 
 ## Risk register
@@ -119,11 +119,11 @@ on every round commit.
 | `pub(crate)` ↔ `pub` visibility flux when functions cross module boundaries | Adopt the R273 convention: keep `pub(crate)` for everything that doesn't need `pub`; let the compiler tell us which symbols need crate-wide re-export via `sync.rs` `pub use`. |
 | `mod tests` tied to internals via `#[cfg(test)]` `pub(crate)` reach-in | R510 closeout moves tests to per-leaf files; if any test exercises a private helper, expose via `#[cfg(test)] pub(crate)` (already standard) rather than restructure the helper. |
 | R505 / R508 too large at ~1.2 kLOC each — single-round commits may exceed reviewer attention budget | Reserve R505a/R505b and R508a/R508b as soft-allocated slots; split if the natural seam appears during extraction. |
-| Operational-runs documentation overhead (13 docs minimum) | Skill recipe is already encoded; each round-doc uses the template from `.claude/skills/round-doc/SKILL.md`. |
+| Operational-runs documentation overhead (13 docs minimum) | Skill recipe is already encoded; each round-doc uses the template from `docs/AGENTS.md`. |
 
 ## Authorization rhythm
 
-Per `.claude/skills/continuous-agent-loop/SKILL.md`, each round
+Per `tasks/todo.md`, each round
 proceeds only on explicit operator `proceed` after the prior round's
 four gates pass and operational-runs doc lands. No round runs
 preemptively. End-of-arc is R510; expected duration is one
@@ -135,7 +135,7 @@ short-session per round given the file's clean phase-banner structure.
   top-of-file docstring).
 - 13 leaves under `node/src/sync/` each carry a `## Naming parity`
   stanza.
-- `scripts/check-strict-mirror.py --fail-on-violation` reports 0
+- `dev/test/check-strict-mirror.py --fail-on-violation` reports 0
   violations.
 - All four cargo gates green: `cargo fmt --all -- --check`, `cargo
   check-all`, `cargo lint`, `cargo test-all`.

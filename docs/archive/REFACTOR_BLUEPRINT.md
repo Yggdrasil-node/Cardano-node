@@ -48,7 +48,7 @@ each future R-round splits along upstream seams, not arbitrary ones.
 |---|---|---|
 | `cardano-node` | `/home/daniel/Cardano-node/.reference-haskell-cardano-node/cardano-node/` | Full source vendored; use for runtime/CLI/configuration mapping |
 | `cardano-cli` | `/home/daniel/Cardano-node/.reference-haskell-cardano-node/cardano-tracer/`, sibling dirs | partial |
-| `cardano-ledger` | not vendored | Use `node/scripts/check_upstream_drift.sh` audit baseline; consult `IntersectMBO/cardano-ledger` directly for per-rule module names |
+| `cardano-ledger` | not vendored | Use `node/dev/scripts/check_upstream_drift.sh` audit baseline; consult `IntersectMBO/cardano-ledger` directly for per-rule module names |
 | `ouroboros-consensus` | not vendored | Same — audit baseline at the documentary pin |
 | `ouroboros-network` | not vendored | Same |
 | `plutus` | not vendored | Same |
@@ -283,7 +283,7 @@ sweep landed across the R269–R281 R-arc:
 | **G (`crates/ledger/src/epoch_boundary.rs`)** | R272 | epoch_boundary.rs split into per-rule sub-files; R272 also covers Pre-Conway era rules. |
 | **C (`crates/ledger/src/state.rs`)** | R269 a–w + R276 sweep | state.rs from 12,704 → ~6,147 lines (24 sibling sub-modules under `state/` + `state/eras/`). All 24 state sub-modules carry `## Naming parity` docstrings (R276). |
 | **R273 — subsystem submodule splits** | R273 a–i + R273-rename | praos/, opcert/, plutus/types/, plutus/cost_model/, plutus/flat/ each split + renamed strict-mirror in R273-rename + R281. |
-| **R274–R281 — strict-mirror naming-parity sweep** | R274..R281 | Every production `.rs` file across the workspace either mirrors a single upstream `.hs` file by snake_case basename (52 files) or carries a `## Naming parity` docstring stanza explicitly declaring its synthesis story (157 files). The CI drift-guard (`scripts/check-strict-mirror.py`) enforces this going forward. |
+| **R274–R281 — strict-mirror naming-parity sweep** | R274..R281 | Every production `.rs` file across the workspace either mirrors a single upstream `.hs` file by snake_case basename (52 files) or carries a `## Naming parity` docstring stanza explicitly declaring its synthesis story (157 files). The CI drift-guard (`dev/test/check-strict-mirror.py`) enforces this going forward. |
 
 Per-file verdicts are in [`docs/strict-mirror-audit.tsv`](strict-mirror-audit.tsv).
 Per-round operational records are in [`docs/operational-runs/`](operational-runs/).

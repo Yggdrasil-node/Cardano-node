@@ -23,7 +23,7 @@ macOS and Windows builds are not currently published. Build from source on those
 ## Quick install (one-liner)
 
 ```bash
-$ curl -fsSL https://raw.githubusercontent.com/yggdrasil-node/Cardano-node/main/scripts/install_from_release.sh \
+$ curl -fsSL https://raw.githubusercontent.com/yggdrasil-node/Cardano-node/main/dev/scripts/install_from_release.sh \
     | bash
 ```
 

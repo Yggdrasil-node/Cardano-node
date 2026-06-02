@@ -4,7 +4,7 @@
 **Area:** workspace layout / stale post-reorganization placement guard
 **Upstream reference:** upstream keeps operator configuration and scripts at
 repository scope, while node runtime integration stays under the node package
-tree. Yggdrasil mirrors that split with root `configuration/`, root `scripts/`,
+tree. Yggdrasil mirrors that split with root `configuration/`, dev-owned `dev/{scripts,evidence,reference,test}/`,
 and the executable shell at `crates/node/cardano-node`.
 
 ## Summary
@@ -22,13 +22,11 @@ workspace directory owner.
   own reusable node subsystems.
 - `crates/tools/<tool>` owns sister-tool ports.
 - `configuration/` owns mainnet, preprod, and preview operator presets.
-- `scripts/` owns operator helpers, parity harnesses, and reference setup.
-- `.claude/skills/cardano-haskell-node/` is the active Cardano reference skill
-  location.
+- `dev/{scripts,evidence,reference,test}/` owns operator helpers, parity harnesses, reference setup, and local validators.
 
 ## Guard coverage
 
-`scripts/check-stale-placement.py` now validates these current surfaces:
+`dev/test/check-stale-placement.py` now validates these current surfaces:
 
 - live current-facing text paths from tracked and unignored files;
 - resolved Cargo metadata for workspace members, package manifests, and target
@@ -43,14 +41,13 @@ workspace directory owner.
   `scripts/`;
 - required current placement files for the replacement layout: the
   `crates/node/cardano-node` binary-crate shell, canonical root operator
-  preset bundles, root sister-tool launcher, root reference/operator helper
-  scripts, and active Cardano Haskell reference skill;
-- Git executable mode for every tracked root `scripts/*.sh`, preserving direct
+  preset bundles, dev sister-tool launcher plus dev reference/operator helper scripts;
+- Git executable mode for every tracked `dev/{scripts,evidence,reference}/*.sh`, preserving direct
   operator invocation after the scripts moved out of the node crate;
 - release, reproducibility, and Docker packaging snippets that stage or copy
-  root `configuration/` and root `scripts/` from their accepted locations;
+  root `configuration/` and dev tooling from their accepted locations;
 - release-installer checks that require and install the bundled root
-  `configuration/` and `scripts/` trees under `<prefix>/share/yggdrasil/`;
+  `configuration/` and `dev/` trees under `<prefix>/share/yggdrasil/`;
 - nested Git metadata inside the vendored Haskell reference snapshot;
 - the committed Git ignore rule and `git check-ignore` result for the
   `.reference-haskell-cardano-node/` local-only corpus;
@@ -84,31 +81,31 @@ A follow-up filesystem pass confirmed:
 - local Git identity is configured as `Fraction.estate <noreply@fraction.estate>`,
   using Fraction Estate attribution for local commits.
 - ownership and ignore surfaces are aligned with the cleaned layout:
-  `.github/CODEOWNERS` owns `/crates/node/`, `/crates/tools/`, `/scripts/`,
+  `.github/CODEOWNERS` owns `/crates/node/`, `/crates/tools/`, `/dev/`,
   and `/configuration/`, while `.gitignore` keeps the metadata-free Haskell
   reference snapshot and build outputs local-only without hiding the rejected
   stale source directories.
-- generated navigation in `.claude/filetree/` records the active
-  `crates/node/cardano-node` binary-crate shell and the root operator artifact
+- generated navigation in `dev/filetree/` records the active
+  `crates/node/cardano-node` binary-crate shell and the operator artifact
   directories.
 - required current placement checks pass for `crates/node/cardano-node`, every
   root `configuration/{mainnet,preprod,preview}/` canonical preset file
   (`config.json`, `config-legacy.json`, `topology.json`,
   `{byron,shelley,alonzo,conway}-genesis.json`, `peer-snapshot.json`,
   `submit-api-config.json`, `tracer-config.json`, and `checkpoints.json` where
-  present), `configuration/poolMetaData.json`, `scripts/run-tools.sh`,
-  `scripts/setup-reference.sh`, `scripts/install_haskell_cardano_node.sh`,
-  `scripts/compare_tip_to_haskell.sh`, `scripts/parallel_blockfetch_soak.sh`,
-  `scripts/preview_producer_harness.sh`, `scripts/yggdrasil-node.service`, and
-  `.claude/skills/cardano-haskell-node/SKILL.md`.
-- Git-index mode checks pass for root `scripts/*.sh`: shell helpers are
-  tracked as `100755`, while `scripts/yggdrasil-node.service` remains a
+  present), `configuration/poolMetaData.json`, `dev/scripts/run-tools.sh`,
+  `dev/reference/setup-reference.sh`, `dev/reference/install_haskell_cardano_node.sh`,
+  `dev/evidence/compare_tip_to_haskell.sh`, `dev/evidence/parallel_blockfetch_soak.sh`,
+  `dev/scripts/preview_producer_harness.sh`, `dev/scripts/yggdrasil-node.service`, and
+  the dev reference/evidence helper set.
+- Git-index mode checks pass for `dev/{scripts,evidence,reference}/*.sh`: shell helpers are
+  tracked as `100755`, while `dev/scripts/yggdrasil-node.service` remains a
   non-executable unit template.
-- release/repro workflows stage root `configuration/` and root `scripts/`, and
-  the Dockerfile copies root `configuration/` plus its root helper scripts from
-  `scripts/`.
-- `scripts/install_from_release.sh` now requires the archive's
-  `configuration/` and `scripts/` trees and installs them to
+- release/repro workflows stage root `configuration/` and `dev/`, and
+  the Dockerfile copies root `configuration/` plus helper scripts from
+  `dev/scripts/`.
+- `dev/scripts/install_from_release.sh` now requires the archive's
+  `configuration/` and `dev/` trees and installs them to
   `<prefix>/share/yggdrasil/`, so the quick-install path preserves the moved
   operator artifacts instead of installing only the binary.
 - `yggdrasil-node --network <preset>` now resolves config-relative genesis,
@@ -140,35 +137,30 @@ binary name. The installation-manual link target used by the installer exists.
 A live node-crate source pass checked `crates/node/cardano-node`,
 `crates/node/config`, `crates/node/runtime`, and `crates/node/sync` for old
 operator-artifact assumptions. The active binary shell resolves preset configs
-through `../../../configuration`, smoke tests resolve root scripts through
-`../../../scripts`, and the config/plutus parity fixtures resolve the root
+through `../../../configuration`, smoke tests resolve dev scripts through
+`../../../dev/scripts`, and the config/plutus parity fixtures resolve the root
 `configuration/` tree from their current crate locations. The only remaining
-`node/configuration` or `node/scripts` hits are historical run records, logs,
+`node/configuration`, `node/scripts`, or old root `scripts/` hits are historical run records, logs,
 or the stale-placement guard's own rejection vectors.
 
 A metadata and packaging pass checked `Cargo.toml`, `Cargo.lock`, CI workflow
 YAML, release packaging, reproducibility packaging, Docker, `justfile`,
 current living docs, scripts, configuration, crates, specs, and supply-chain
-metadata. Current release surfaces stage root `configuration/` and root
-`scripts/`, while CycloneDX SBOM lookup resolves from
+metadata. Current release surfaces stage root `configuration/` and `dev/`, while CycloneDX SBOM lookup resolves from
 `crates/node/cardano-node/yggdrasil-node.cdx.json`. No current-facing metadata
 surface points back at the retired node-local operator artifact paths or the
 old top-level sister-tool crate layout.
 
-An agent/skill pass checked `.claude/skills/` and `.claude/AGENTS.md` after
-retiring the old ambiguous Cardano operator skill directory. The active
-upstream-Haskell operator skill is `.claude/skills/cardano-haskell-node/`, and
-its docs-sync helper is now called out with the full skill-local path
-`.claude/skills/cardano-haskell-node/scripts/sync_docs.sh` so it is not confused
-with root operator scripts under `scripts/`.
+A Codex workspace pass checked that retired AI-harness files are no longer
+required by current guidance. Live reference, evidence, validator, and operator
+helpers now live under `dev/{reference,evidence,test,scripts}/` so they are not
+confused with runtime source or packaging artifacts.
 
 A helper-configuration pass checked `.cargo/config.toml`,
-`.config/nextest.toml`, `.devcontainer/post-create.sh`, `.github/`, root
+`.config/nextest.toml`, `.devcontainer/post-create.sh`, `.github/`, dev
 helper scripts, `justfile`, Docker surfaces, root README guidance, and root
 agent instructions. Cargo aliases and nextest configuration do not reference
-retired placement paths. The devcontainer bootstrap invokes the root
-`scripts/install_haskell_cardano_node.sh` helper, matching the accepted root
-operator-script placement. The only broad-search hits in those surfaces are
+retired placement paths. The devcontainer bootstrap invokes the `dev/reference/install_haskell_cardano_node.sh` helper, matching the accepted dev reference-helper placement. The only broad-search hits in those surfaces are
 upstream reference links, current release artifact paths, or the stale-placement
 guard's own rejection vectors.
 
@@ -181,13 +173,13 @@ guard's own rejection vectors.
 - `cargo check-all`
 - `cargo lint`
 - `cargo test-all`
-- `python scripts\check-stale-placement.py --self-test`
-- `python scripts\check-stale-placement.py`
-- `python -m py_compile scripts\check-stale-placement.py`
-- `python .claude\scripts\filetree.py check`
-- `python scripts\check-parity-matrix.py`
-- `python scripts\check-strict-mirror.py --fail-on-violation`
-- `python scripts\check-fixture-manifest.py`
+- `python3 dev/test/check-stale-placement.py --self-test`
+- `python3 dev/test/check-stale-placement.py`
+- `python3 -m py_compile dev/test/check-stale-placement.py`
+- `python3 dev/test/filetree.py check`
+- `python3 dev/test/check-parity-matrix.py`
+- `python3 dev/test/check-strict-mirror.py --fail-on-violation`
+- `python3 dev/test/check-fixture-manifest.py`
 - `git diff --check` exited 0 with only Windows LF-to-CRLF warnings.
 
 ## Remaining scope

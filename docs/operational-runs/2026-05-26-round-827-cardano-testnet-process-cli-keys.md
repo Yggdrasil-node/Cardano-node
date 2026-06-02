@@ -57,15 +57,15 @@ runtime harness backlog.
   returned `7225`.
 - Green: `cargo test-all` passed with no failures and the expected 3
   ignored `yggdrasil_node_tracer` doctests.
-- Green: `python scripts/check-stale-placement.py --self-test`.
-- Green: `python scripts/check-stale-placement.py`.
-- Green: `python scripts/check-doc-status-headers.py --self-test`.
-- Green: `python scripts/check-doc-status-headers.py`.
-- Green: `python scripts/check-parity-matrix.py` validated 22 entries
+- Green: `python dev/test/check-stale-placement.py --self-test`.
+- Green: `python dev/test/check-stale-placement.py`.
+- Green: `python dev/test/check-doc-status-headers.py --self-test`.
+- Green: `python dev/test/check-doc-status-headers.py`.
+- Green: `python dev/test/check-parity-matrix.py` validated 22 entries
   against the 11.0.1 reference tag.
-- Green: `python scripts/check-strict-mirror.py --fail-on-violation`.
-- Green: `python -m py_compile scripts/check-stale-placement.py scripts/check-doc-status-headers.py scripts/check-parity-matrix.py .claude/scripts/filetree.py`.
-- Green: `python .claude/scripts/filetree.py check`.
+- Green: `python dev/test/check-strict-mirror.py --fail-on-violation`.
+- Green: `python -m py_compile dev/test/check-stale-placement.py dev/test/check-doc-status-headers.py dev/test/check-parity-matrix.py dev/test/filetree.py`.
+- Green: `python dev/test/filetree.py check`.
 
 ## Remaining risk
 

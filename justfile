@@ -51,17 +51,17 @@ audit:
 
 # ─── Parity invariants (Python validators) ────────────────────────────
 parity-check:
-    python3 scripts/check-parity-matrix.py
+    python3 dev/test/check-parity-matrix.py
 
 parity-fixtures:
-    python3 scripts/check-fixture-manifest.py
+    python3 dev/test/check-fixture-manifest.py
 
 parity-mirror:
-    python3 scripts/check-strict-mirror.py --fail-on-violation
+    python3 dev/test/check-strict-mirror.py --fail-on-violation
 
 placement-check:
-    python3 scripts/check-stale-placement.py --self-test
-    python3 scripts/check-stale-placement.py
+    python3 dev/test/check-stale-placement.py --self-test
+    python3 dev/test/check-stale-placement.py
 
 parity-all: parity-check parity-fixtures parity-mirror placement-check
 
@@ -74,17 +74,17 @@ parity-add CRATE FILE:
 # Sources-only is what CI uses (~14s); --force rebuilds the full
 # ~1.3GB install tree locally for forensic byte-equivalence work.
 upstream-fetch:
-    bash scripts/setup-reference.sh --sources-only
+    bash dev/reference/setup-reference.sh --sources-only
 
 upstream-full:
-    bash scripts/setup-reference.sh --force
+    bash dev/reference/setup-reference.sh --force
 
 # ─── Operational rehearsals (long-running) ────────────────────────────
 preview-producer:
-    bash scripts/preview_producer_harness.sh
+    bash dev/scripts/preview_producer_harness.sh
 
 mainnet-relay-rehearsal:
-    bash scripts/parallel_blockfetch_soak.sh
+    bash dev/evidence/parallel_blockfetch_soak.sh
 
 # ─── Sister-tool recipes (Wave 8 PR 24) ───────────────────────────────
 #
@@ -93,7 +93,7 @@ mainnet-relay-rehearsal:
 # recipe. The recipes call `cargo` / `bash` against fully-qualified
 # crate names so they remain stable even after Wave 5 sub-crate
 # reorganization. Comparison harnesses live under
-# `scripts/` after Wave 4 PR 6.
+# `dev/evidence/` or `dev/scripts/` after the helper-layout cleanup.
 
 # cardano-cli — the Yggdrasil-side cardano-cli port
 cardano-cli-build:
@@ -123,7 +123,7 @@ cardano-submit-api-test:
     cargo nextest run --profile default -p yggdrasil-cardano-submit-api
 
 cardano-submit-api-parity:
-    bash scripts/compare_submit_api_to_upstream.sh
+    bash dev/evidence/compare_submit_api_to_upstream.sh
 
 # cardano-tracer — trace-forwarder aggregator
 cardano-tracer-build:
@@ -150,7 +150,7 @@ db-truncater-test:
     cargo nextest run --profile default -p yggdrasil-db-truncater
 
 db-truncater-parity:
-    bash scripts/compare_db_truncater_to_upstream.sh
+    bash dev/evidence/compare_db_truncater_to_upstream.sh
 
 # db-analyser — ChainDB forensic analyser
 db-analyser-build:
@@ -197,7 +197,7 @@ dmq-node-test:
 # Tip-compare against a running upstream cardano-node — runs from the
 # yggdrasil-node binary against the operator-configured Unix socket.
 tip-compare:
-    bash scripts/compare_tip_to_haskell.sh
+    bash dev/evidence/compare_tip_to_haskell.sh
 
 # Build every sister tool in one shot. Useful for verifying the
 # `crates/tools/` tree hasn't drifted out of sync with the workspace.

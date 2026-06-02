@@ -171,7 +171,7 @@ deliberate scope decision before another R-round starts.
 ### References
 
 - R269 a–k closures: `2026-05-06-round-269{,b,c,d,e,f,g,h,i,j}-state-*.md`
-- Plan: `~/.claude/plans/dapper-giggling-haven.md`
+- Plan: `docs/COMPLETION_ROADMAP.md`
 - Upstream PraosState:
   `.reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus/src/Ouroboros/Consensus/Protocol/Praos/PraosState.hs`
 - Upstream esAccountState:

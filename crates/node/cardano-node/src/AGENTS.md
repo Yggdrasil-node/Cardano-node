@@ -10,7 +10,7 @@ Every production `.rs` here either mirrors a single canonical upstream `.hs`
 file by snake_case basename (with directory-prefix fallback for sibling
 collisions) OR carries a `## Naming parity` docstring stanza ending in
 `**Strict mirror:** none.` plus the upstream symbol(s)/file(s) the helper
-surfaces. CI gate: `python3 scripts/check-strict-mirror.py`. Allowlist
+surfaces. CI gate: `python3 dev/test/check-strict-mirror.py`. Allowlist
 source-of-truth: [`docs/strict-mirror-audit.tsv`](../../../../docs/strict-mirror-audit.tsv).
 
 ## Scope

@@ -55,17 +55,17 @@ runtime, or transaction runtime orchestration work.
 - Formatting: `cargo fmt --all -- --check` exited 0 after applying rustfmt to
   the R837 test/import layout.
 - Focused validators:
-  `python scripts/check-stale-placement.py --self-test`,
-  `python scripts/check-stale-placement.py`,
-  `python scripts/check-doc-status-headers.py --self-test`,
-  `python scripts/check-doc-status-headers.py`,
-  `python scripts/check-parity-matrix.py`,
-  `python scripts/check-strict-mirror.py --fail-on-violation`, and
-  `python -m py_compile scripts/check-stale-placement.py
-  scripts/check-doc-status-headers.py scripts/check-parity-matrix.py
-  .claude/scripts/filetree.py` exited 0.
-- Filetree metadata was accepted with `python .claude/scripts/filetree.py
-  accept-current`; `python .claude/scripts/filetree.py check` reported all
+  `python dev/test/check-stale-placement.py --self-test`,
+  `python dev/test/check-stale-placement.py`,
+  `python dev/test/check-doc-status-headers.py --self-test`,
+  `python dev/test/check-doc-status-headers.py`,
+  `python dev/test/check-parity-matrix.py`,
+  `python dev/test/check-strict-mirror.py --fail-on-violation`, and
+  `python -m py_compile dev/test/check-stale-placement.py
+  dev/test/check-doc-status-headers.py dev/test/check-parity-matrix.py
+  dev/test/filetree.py` exited 0.
+- Filetree metadata was accepted with `python dev/test/filetree.py
+  accept-current`; `python dev/test/filetree.py check` reported all
   non-exempt entries match accepted metadata.
 - Broad Rust gates: `cargo check-all`, `cargo lint`, and `cargo test-all`
   exited 0.

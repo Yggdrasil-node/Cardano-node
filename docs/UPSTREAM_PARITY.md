@@ -26,7 +26,7 @@ This document tracks concrete parity alignment against official IntersectMBO rep
 > **Current status note (2026-05-26).** The R517-R529 cleanup closed stale
 > post-reorganization placement debt: the node binary crate lives at
 > `crates/node/cardano-node/`, operator configuration at root
-> `configuration/`, operator/reference scripts at root `scripts/`, and
+> root `configuration/`, operator/reference helpers under `dev/`, and
 > sister tools at `crates/tools/`. The `cardano-cli` C-arc Rust
 > implementation is closed from the workspace side (40 standalone commands
 > / 27 LSQ queries), while upstream-binary operator evidence remains tracked
@@ -39,7 +39,7 @@ This document tracks concrete parity alignment against official IntersectMBO rep
 > **R273-rename + R274-R311 strict 1:1 file-mirror arc + R313-R320
 > docstring-classification cleanup** (closed 2026-05-09). The vendored
 > upstream tree was refreshed to policy tag `11.0.1` and a strict 1:1
-> file-mirror CI drift-guard (`scripts/check-strict-mirror.py`, warn-only
+> file-mirror CI drift-guard (`dev/test/check-strict-mirror.py`, warn-only
 > at R275 -> fail-build at R288) landed. Every production `.rs` declares one
 > of exactly two canonical docstring forms: `**Strict mirror:**
 > <upstream/path.hs>` or `**Strict mirror:** none.`; current per-file status
@@ -59,14 +59,14 @@ This document tracks concrete parity alignment against official IntersectMBO rep
   `cargo test-all` all pass; `cargo test-all` reports 7,251 passing, 0
   failing, 3 ignored (7,254 listed tests total).
 - R839 parity-flow validators are clean against the current workspace layout
-  and the `11.0.1` reference tag: `python3 scripts/check-stale-placement.py`,
-  `python3 scripts/check-parity-matrix.py`,
-  `python3 scripts/check-doc-status-headers.py`,
-  `python3 scripts/check-fixture-manifest.py`,
-  `python3 scripts/check-strict-mirror.py --fail-on-violation`, and
-  `python3 .claude/scripts/filetree.py check`.
+  and the `11.0.1` reference tag: `python3 dev/test/check-stale-placement.py`,
+  `python3 dev/test/check-parity-matrix.py`,
+  `python3 dev/test/check-doc-status-headers.py`,
+  `python3 dev/test/check-fixture-manifest.py`,
+  `python3 dev/test/check-strict-mirror.py --fail-on-violation`, and
+  `python3 dev/test/filetree.py check`.
 - Local/operator-only reference artifact verification remains separate:
-  `python3 scripts/check-reference-artifacts.py` validates the vendored
+  `python3 dev/test/check-reference-artifacts.py` validates the vendored
   `.reference-haskell-cardano-node/install/` tree when that 1.3 GB local
   artifact is present.
 
@@ -86,7 +86,7 @@ This document tracks concrete parity alignment against official IntersectMBO rep
 - **Preview Origin-prefix BlockFetch parity** (R247): a verified sync batch that starts at `Point::Origin` but collects multiple ChainSync roll-forward headers now uses the first announced concrete header as the BlockFetch lower bound. This preserves the slot-0 preview prefix instead of fetching only the final announced header; a clean replay verified slots `0`, `60`, `300`, and `320` are present and advanced to slot `101100` without the prior missing-UTxO failure.
 - **Preview TPraos overlay VRF parity** (R248): Shelley-family TPraos active overlay slots now classify the epoch overlay schedule and apply the upstream genesis-delegate branch: verify the selected genesis delegate cold key, the delegate VRF key, and both TPraos VRF proofs, then skip the pool stake leader-threshold check. Reserved non-active overlay slots fail closed. A live preview resume passed the former active-overlay blocker at slot `106220`, crossed the prior `730728`/`840719` Plutus stops, and advanced to Babbage slot `868687` with no `VRF verification failed`, `MalformedReferenceScripts`, `ValidationTagMismatch`, ledger decode error, or panic.
 - **R249 cumulative refresh** (2026-05-05): drift detector now reports all 6 documentary pins in-sync against live `master`/`main` HEAD (cardano-base, cardano-ledger, ouroboros-consensus, ouroboros-network, plutus, cardano-node). Per-repo audit confirmed the upstream changes since R245/R243/R239/R216/R201 are forward-looking only (Peras voting committees, Dijkstra `MemoBytes` `BlockBody`, post-Conway plutus `CInteger`/`CByteString` and cost models D/E, `StAnnTx` Haskell-internal threading, internal `submitTxToMempool` API change, cardano-testnet CLI restructure, experimental-hardfork PV12 bump) — no active-era CBOR codec, validation rule, transition-system semantic, or wire-protocol change. Companion fix: `local_server::tests::effective_era_index_pv_table_matches_upstream` and `era_floor_env_var_promotes_reported_era` now share a module-scope `ENV_LOCK` so the parallel test runner cannot leak `YGG_LSQ_ERA_FLOOR` between them and corrupt the PV→era_index table assertions.
-- **`cardano-cli 10.16` LSQ implementation coverage** (R164–R240): all 11 always-available cardano-cli queries (`tip`, `protocol-parameters`, `era-history`, `slot-number`, `utxo --whole-utxo`/`--address`/`--tx-in`, `tx-mempool info`/`next-tx`/`tx-exists`, `submit-tx`) decode end-to-end against yggdrasil's NtC socket on preview, preprod, and mainnet. With opt-in `YGG_LSQ_ERA_FLOOR=6` the era-gated queries plus every Conway-era cardano-cli subcommand decode end-to-end, including `conway query gov-state` (R188/R193/R204). Tail-end Conway dispatcher tag 36 `GetPoolDistr2` serves live `PoolDistr` data from the `set` stake snapshot with optional pool filtering (R237); `GetStakeDistribution`/`GetStakeDistribution2`, `GetSPOStakeDistr`, and `LedgerPeerSnapshotV2` likewise use live stake snapshot data when available. R238 makes `protocol-state` use the exact ChainDepState sidecar for the acquired point/tip, R239 closes the coordinated `cardano-base` fixture refresh, R240 adds reproducible §6.5 BlockFetch soak automation, and R245 refreshes the latest `cardano-ledger` documentary pin. Treat this as broad Rust-side LSQ coverage, not final R178 closure: Conway HFC LSQ envelope parity still requires a live `scripts/compare-conway-lsq.py --require-haskell --require-byte-equal --write-fixture <fixture.json>` run against the installed upstream 11.0.1 reference socket before the wire claim is closed.
+- **`cardano-cli 10.16` LSQ implementation coverage** (R164–R240): all 11 always-available cardano-cli queries (`tip`, `protocol-parameters`, `era-history`, `slot-number`, `utxo --whole-utxo`/`--address`/`--tx-in`, `tx-mempool info`/`next-tx`/`tx-exists`, `submit-tx`) decode end-to-end against yggdrasil's NtC socket on preview, preprod, and mainnet. With opt-in `YGG_LSQ_ERA_FLOOR=6` the era-gated queries plus every Conway-era cardano-cli subcommand decode end-to-end, including `conway query gov-state` (R188/R193/R204). Tail-end Conway dispatcher tag 36 `GetPoolDistr2` serves live `PoolDistr` data from the `set` stake snapshot with optional pool filtering (R237); `GetStakeDistribution`/`GetStakeDistribution2`, `GetSPOStakeDistr`, and `LedgerPeerSnapshotV2` likewise use live stake snapshot data when available. R238 makes `protocol-state` use the exact ChainDepState sidecar for the acquired point/tip, R239 closes the coordinated `cardano-base` fixture refresh, R240 adds reproducible §6.5 BlockFetch soak automation, and R245 refreshes the latest `cardano-ledger` documentary pin. Treat this as broad Rust-side LSQ coverage, not final R178 closure: Conway HFC LSQ envelope parity still requires a live `dev/evidence/compare-conway-lsq.py --require-haskell --require-byte-equal --write-fixture <fixture.json>` run against the installed upstream 11.0.1 reference socket before the wire claim is closed.
 
 ## Subsystem Status
 
@@ -110,8 +110,8 @@ This document tracks concrete parity alignment against official IntersectMBO rep
 - **Closed consensus parity gap (R251, Gap BQ)**: preview VKey witness signature verification at slot `~1525024` on tx `44ccae438c4e1350271e772a96b4f974ee3a48c6458d7c2499a200abbdb55948`. With `YGG_SKIP_PHASE2=1` the R249 preview sync advanced past Gap BP through 17 epoch boundaries and reached slot `~1525024`, then failed with `VKey witness signature verification failed for hash 45d70e54f3b5e9c5a2b0cd417028197bd6f5fa5378c2f5eba896678d` from IOG bootstrap peer `99.80.240.19:3001`. **Initial hypothesis (libsodium-vs-`verify_strict` strictness divergence) was disproven** by direct byte-level inspection: signature R/S canonical, vkey not small-order, AND independent verification with OpenSSL Ed25519 (Python `cryptography`) ALSO rejected the signature against Yggdrasil's computed message — proving the bug was a wrong `tx_body_hash`, not a verifier-strictness issue. The security guardrail correctly stopped the agent-judgment Ed25519 weakening that would have masked the real bug. **Root cause** (R251 byte-level forensic via `crates/tools/db-analyser/src/bin/dump_block.rs` walking the reference Haskell ChainDB chunk 353): Yggdrasil's `crates/ledger/src/cbor.rs::extract_block_tx_byte_spans` used strict `dec.array()` for the outer block, bodies array, and witness-set array. Real preview Babbage blocks (e.g. block at chunk-353 offset `~114079`) encode the bodies-array itself with CBOR indefinite-length (`0x9f ... 0xff`, RFC 8949 §3.2.1). When extraction failed, the apply-path macro `crates/node/sync/src/lib.rs::alonzo_family_block_to_block_with_spans` fell back to `tx_body.to_cbor_bytes()` re-serialization (always definite-length), producing a `tx_body_hash` that differed from the on-wire (indefinite) hash the signer signed. **Fix** (R251): switched all three `array()` calls to `array_begin()` plus a new `collect_indefinite_or_definite_spans` helper that walks both definite and indefinite-length encodings, preserving byte spans exactly. 2 regression tests pin the fix: `extract_block_tx_byte_spans_handles_indefinite_bodies_array` and `extract_block_tx_byte_spans_handles_indefinite_witnesses_array`. **Verification**: 25-min preview soak resumed from saved checkpoint at slot 1,488,359 and advanced cleanly to slot **1,557,718** — past the previous Gap BQ failure point with 32K-slot margin, zero witness verification errors, 17 epoch boundaries crossed. Forensic artifacts preserved at `docs/operational-runs/2026-05-05-round-249-preview-vkey-witness-fail-{slot-1525024.log,tx-44ccae43-bytes.txt}` (capture log + bytes) and `…-classify-signature.py` (canonicality classifier).
 - **Operator-facing perf gap (R249/R250 sidefinding)**: in the side-by-side preview soaks, Haskell `cardano-node 10.7.1` syncs at **5,296 slot/s** vs. Yggdrasil at **1,653 slot/s** — Haskell is currently **3.2× faster** on a fresh sync from genesis. The dominant contributor is peer-snapshot configuration: `configuration/preview/peer-snapshot.json` shipped a 321-byte placeholder with one fake pool, while the upstream Haskell preview share ships a 28 KB snapshot with **131 unique relay addresses across ~50 ledger pools**. Combined with a runtime-side bug where Yggdrasil treated peer-snapshot peers as if gated behind `useLedgerAfterSlot=102_729_600` (Haskell uses snapshot peers immediately at startup as `bigLedgerPeers`, gate only applies to live-ledger-derived peers), Yggdrasil was effectively single-peer until slot `102M+`, while Haskell has multi-peer fetch from genesis. Closing this gap was config + a small runtime fix: replace the placeholder `peer-snapshot.json` with the upstream content, and split the snapshot-vs-live-ledger gating in `crates/node/runtime/src/sync_session.rs`. Target: **2× faster than Haskell** = 6.4× current Yggdrasil throughput.
 - **R250 partial close (2026-05-05)**: peer-snapshot adoption + split-gate landed. Replaced placeholder `peer-snapshot.json` for preview/preprod/mainnet with the upstream Haskell-share content (preview 28 KB / 175 pools, preprod 15 KB, mainnet 152 KB / many more pools). Bumped `useLedgerAfterSlot` to upstream-aligned values (preview 107222465, preprod 118022427, mainnet 182044807) and `MinNodeVersion` 10.6.2 → 10.7.0 in all three `config.json`. Split snapshot-vs-live-ledger gating: new `crates/network/src/ledger_peers_provider.rs::always_eligible_snapshot_peers` plus `crates/node/config/src/lib.rs::NodeConfigFile::always_eligible_snapshot_fallbacks` wrapper, called alongside the existing gated `eligible_ledger_peer_candidates` from both startup (`crates/node/cardano-node/src/ledger_peers.rs::configured_fallback_peers`) and reconnect (`crates/node/runtime/src/sync_session.rs`) paths. Snapshot peers now eligible immediately at startup (verified live: trace `evaluated ledger-derived startup fallbacks` shows `snapshotEligibleCount=174 liveLedgerEligibleCount=0 decision=AwaitingLatestSlot { after_slot: 107222465 }`). 2 regression tests pin the new behavior: `snapshot_peers_eligible_before_use_ledger_after_slot` and `live_ledger_peers_remain_gated_when_snapshot_eligible`. **Measured perf delta**: Yggdrasil 1,653 → 2,321 slot/s (40% throughput improvement) across a 5-min preview soak from genesis. Current Rust wiring now registers direct bootstrap BlockFetch handles into the shared worker pool when `max_concurrent_block_fetch_peers > 1`; the remaining requirement is operator evidence from §6.5 two-peer/knob=4 soaks with Haskell tip comparison.
-- Active validation focus remains Gap BO and Gap BP. For BO, re-replay the preserved log, narrow the failing block, compare the overlay classification + active-delegate selection + VRF input/seed/key against upstream `Cardano.Protocol.TPraos.Rules.Overlay.classifyOverlaySlot` and `pbftVrfChecks` for the exact slot, then run `scripts/compare-gap-bo-tpraos-vrf.py --require-haskell --require-equal --target-slot 429460 --write-fixture <fixture.json>` against the Rust and Haskell evidence logs so the passing target-slot evidence becomes a replayable regression fixture. For BP, capture Rust and upstream Haskell `ScriptContext`, CEK accumulated-step flush, and per-builtin cost traces for the failing preview V2 transaction, then run `scripts/compare-gap-bp-traces.py --require-haskell --require-equal --expected-trace-id <tx_hash>:<script_hash>:<version> --write-fixture <fixture.json>` before changing CEK or context construction. Once both close, run clean preview replay through the R248 overlay fix, then complete systematic mainnet endurance rehearsal plus runbook §6.5 sign-off using `scripts/parallel_blockfetch_soak.sh`; the shipped `max_concurrent_block_fetch_peers` default is already `2`, while operators can still set `1` explicitly for single-peer replay/audit behaviour.
-- Final core closeout artifact review uses `scripts/check-core-closeout-artifacts.py` against `target/core-closeout/` after the Gap BO, Gap BP, R178, and BlockFetch live comparison artifacts have been collected; the gate is expected to fail until those final live fixtures and soak summaries exist.
+- Active validation focus remains Gap BO and Gap BP. For BO, re-replay the preserved log, narrow the failing block, compare the overlay classification + active-delegate selection + VRF input/seed/key against upstream `Cardano.Protocol.TPraos.Rules.Overlay.classifyOverlaySlot` and `pbftVrfChecks` for the exact slot, then run `dev/evidence/compare-gap-bo-tpraos-vrf.py --require-haskell --require-equal --target-slot 429460 --write-fixture <fixture.json>` against the Rust and Haskell evidence logs so the passing target-slot evidence becomes a replayable regression fixture. For BP, capture Rust and upstream Haskell `ScriptContext`, CEK accumulated-step flush, and per-builtin cost traces for the failing preview V2 transaction, then run `dev/evidence/compare-gap-bp-traces.py --require-haskell --require-equal --expected-trace-id <tx_hash>:<script_hash>:<version> --write-fixture <fixture.json>` before changing CEK or context construction. Once both close, run clean preview replay through the R248 overlay fix, then complete systematic mainnet endurance rehearsal plus runbook §6.5 sign-off using `dev/evidence/parallel_blockfetch_soak.sh`; the shipped `max_concurrent_block_fetch_peers` default is already `2`, while operators can still set `1` explicitly for single-peer replay/audit behaviour.
+- Final core closeout artifact review uses `dev/test/check-core-closeout-artifacts.py` against `target/core-closeout/` after the Gap BO, Gap BP, R178, and BlockFetch live comparison artifacts have been collected; the gate is expected to fail until those final live fixtures and soak summaries exist.
 - Fixture and Plutus maintenance focus: keep the R239 `cardano-base` vector cadence current when upstream advances again, and keep the R246 Plutus parity assumptions under replay/drift watch as new preview/preprod scripts appear.
 
 ### Current Gap BP Evidence Focus
@@ -124,13 +124,13 @@ are deeper `ScriptContext` field encoding, redeemer/datum/input ordering, or
 CEK environment lookup behavior for the captured script. Rust now has opt-in
 `YGG_DUMP_SCRIPT_CONTEXT[_FILE]`, `YGG_DUMP_CEK_FLUSHES[_FILE]`, and
 `YGG_DUMP_BUILTIN_COSTS[_FILE]` traces plus
-`scripts/compare-gap-bp-traces.py` to run the ScriptContext, CEK flush, and
+`dev/evidence/compare-gap-bp-traces.py` to run the ScriptContext, CEK flush, and
 builtin-cost comparisons together once the upstream Haskell replay dump is
 captured.
 
 For BP, capture the upstream Haskell ScriptContext, CEK flush, and builtin-cost
 traces for the preview V2 transaction, then run
-`scripts/compare-gap-bp-traces.py --require-haskell --require-equal --expected-trace-id <tx_hash>:<script_hash>:<version>`
+`dev/evidence/compare-gap-bp-traces.py --require-haskell --require-equal --expected-trace-id <tx_hash>:<script_hash>:<version>`
 against the Rust artifacts before changing CEK or context construction.
 
 ## Upstream Anchors
@@ -147,7 +147,7 @@ against the Rust artifacts before changing CEK or context construction.
 
 ## Pinned commits (audit baseline 2026-Q2)
 
-Yggdrasil is a pure-Rust port; there are no Cargo `git =` dependencies, so pinning is documentary. Each SHA below records the exact upstream commit at which the corresponding repository was last systematically audited against. The companion drift detector at `scripts/check_upstream_drift.sh` produces a JSON report comparing each pin to the live HEAD of the matching `main`/`master` branch.
+Yggdrasil is a pure-Rust port; there are no Cargo `git =` dependencies, so pinning is documentary. Each SHA below records the exact upstream commit at which the corresponding repository was last systematically audited against. The companion drift detector at `dev/scripts/check_upstream_drift.sh` produces a JSON report comparing each pin to the live HEAD of the matching `main`/`master` branch.
 
 | Repository | Pinned commit | Source |
 |---|---|---|
@@ -164,13 +164,13 @@ Yggdrasil is a pure-Rust port; there are no Cargo `git =` dependencies, so pinni
 - The set of pinned repositories is exactly the 6 listed above; adding/removing requires updating both `UPSTREAM_PINS` in source and this table.
 - The `cardano-base` pin must match the vendored test-vector directory name in `specs/upstream-test-vectors/cardano-base/<sha>/`.
 
-**To advance a pin**: edit `crates/node/config/src/upstream_pins.rs`, run the full audit cadence (`cargo check-all`, `cargo test-all`, `cargo lint`, drift-guard tests, fixture cross-checks) against the new SHA, run `scripts/check_upstream_drift.sh` to confirm, then update this table with the rationale.
+**To advance a pin**: edit `crates/node/config/src/upstream_pins.rs`, run the full audit cadence (`cargo check-all`, `cargo test-all`, `cargo lint`, drift-guard tests, fixture cross-checks) against the new SHA, run `dev/scripts/check_upstream_drift.sh` to confirm, then update this table with the rationale.
 
 **Drift is expected and informational**. The audit baseline is allowed to lag upstream — the drift report exists so the lag is visible, not so it triggers a build failure. `check_upstream_drift.sh` exits 0 on drift by default; pass `--fail-on-drift` for CI gating if/when desired.
 
 ### Drift snapshot — 2026-05-01 (post-R245 cardano-ledger BBODY/GOV refresh)
 
-`scripts/check_upstream_drift.sh` against live `git ls-remote HEAD`:
+`dev/scripts/check_upstream_drift.sh` against live `git ls-remote HEAD`:
 
 | Repository | Pinned (audit baseline) | Live HEAD (2026-05-01) | Status |
 |---|---|---|---|
@@ -185,7 +185,7 @@ R201 (2026-04-30) advanced 4 of the 5 drifted documentary pins to live HEAD. R21
 
 ### Drift snapshot — 2026-05-05 (post-R249 cumulative pin refresh)
 
-`scripts/check_upstream_drift.sh` against live `git ls-remote HEAD`:
+`dev/scripts/check_upstream_drift.sh` against live `git ls-remote HEAD`:
 
 | Repository | Pinned (audit baseline) | Live HEAD (2026-05-05) | Status |
 |---|---|---|---|

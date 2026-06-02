@@ -113,4 +113,4 @@ preserved as historical record.
 - R218 evidence: [`2026-04-30-round-218-mainnet-multipeer-fetch-rate.md`](2026-04-30-round-218-mainnet-multipeer-fetch-rate.md)
 - Upstream cap: `Ouroboros.Network.BlockFetch.Decision::bfcMaxConcurrencyBulkSync = 2`
 - Runtime wiring: `node/src/runtime.rs::handle_cm_actions` (line ~1784)
-- Soak harness: `node/scripts/parallel_blockfetch_soak.sh`
+- Soak harness: `node/dev/evidence/parallel_blockfetch_soak.sh`

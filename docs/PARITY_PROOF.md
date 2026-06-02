@@ -25,7 +25,7 @@ with `cargo fmt --all -- --check`, `cargo check-all`, `cargo lint`, and
 > docstring-classification cleanup** (closed 2026-05-09). The
 > vendored upstream tree was refreshed to policy tag `11.0.1`. A
 > strict 1:1 file-mirror CI drift-guard
-> (`scripts/check-strict-mirror.py`) landed warn-only at R275 and was
+> (`dev/test/check-strict-mirror.py`) landed warn-only at R275 and was
 > promoted to fail-build at R288; the per-file allowlist lives in
 > [`docs/strict-mirror-audit.tsv`](strict-mirror-audit.tsv) (post-R324
 > final: 246 `(a) DIRECT_MIRROR` + 202 `(c) NO_MIRROR_NEEDS_DOCSTRING`
@@ -557,7 +557,7 @@ lockstep:
 | `plutus` | `4cd40a14e364…` (R216 advance) | **in-sync** |
 | `cardano-node` | `799325937a45…` | **in-sync** |
 
-Drift detector (`bash scripts/check_upstream_drift.sh`) reports
+Drift detector (`bash dev/scripts/check_upstream_drift.sh`) reports
 `drifted=0 unreachable=0 total=6`. Three drift-guard tests pass
 (format, cardinality, vendored-directory match). R201 → R216 → R239 → R243 → R245
 demonstrates the audit baseline is actively maintained against
@@ -623,7 +623,7 @@ graduates this empirical evidence into the shipped default while
 preserving operator override (`MaxConcurrentBlockFetchPeers = 1` for
 strict single-peer audit/replay parity).
 
-R240 (`scripts/parallel_blockfetch_soak.sh`) remains the
+R240 (`dev/evidence/parallel_blockfetch_soak.sh`) remains the
 operator-facing soak harness for stress-testing knob > 2 or running
 endurance verification: starts the node with the requested
 concurrency knob, captures Prometheus snapshots, asserts worker
@@ -666,7 +666,7 @@ curl -s http://127.0.0.1:12400/metrics | grep apply_batch
 # Expected: 10 bucket lines + _sum + _count
 
 # Drift detector
-bash scripts/check_upstream_drift.sh
+bash dev/scripts/check_upstream_drift.sh
 # Expected: drifted=0 unreachable=0 total=6
 
 # Workspace gates

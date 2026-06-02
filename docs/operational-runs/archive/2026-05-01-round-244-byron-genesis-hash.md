@@ -69,7 +69,7 @@ cargo fmt --all -- --check
 cargo check-all
 cargo test-all
 cargo lint
-node/scripts/check_upstream_drift.sh
+node/dev/scripts/check_upstream_drift.sh
 git diff --check
 ```
 

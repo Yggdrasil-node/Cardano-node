@@ -16,7 +16,7 @@ files have no 1:1 mirror under `.reference-haskell-cardano-node/`.
 ## Summary
 
 R313 is a **read-only census** — no code, no Rust changes. Re-runs
-the strict-mirror audit (`scripts/audit-strict-mirror.py`),
+the strict-mirror audit (`dev/test/audit-strict-mirror.py`),
 cross-checks every production `.rs` against the vendored upstream
 Haskell tree, and groups the synthesis bucket by subsystem so the
 state is auditable at a glance.
@@ -27,13 +27,13 @@ explicit synthesis with `## Naming parity` docstring stanzas ending
 in `**Strict mirror:** none.` plus the upstream symbol(s)/file(s)
 the helper surfaces (`(c) NO_MIRROR_NEEDS_DOCSTRING`). Zero
 `(b) RENAME_NEEDED`, zero `(d) NAME_CLASH_REGRADE`. The drift-guard
-(`scripts/check-strict-mirror.py --fail-on-violation`) reports 0
+(`dev/test/check-strict-mirror.py --fail-on-violation`) reports 0
 violations; the R311 index-vs-tree drift check also clean.
 
 ## Audit re-run
 
 ```text
-$ python3 scripts/audit-strict-mirror.py
+$ python3 dev/test/audit-strict-mirror.py
 audit complete: 445 rust files; candidate_match=387, no_candidate_match=58
 auto-grading bucket counts:
   (a): 230
@@ -135,14 +135,14 @@ crates/network/src/peer_registry.rs        <- ouroboros-network/.../V2/Registry.
 ## Verification
 
 ```text
-$ python3 scripts/check-strict-mirror.py --fail-on-violation
+$ python3 dev/test/check-strict-mirror.py --fail-on-violation
 strict-mirror: 0 violations (clean)
 
-$ python3 scripts/check-parity-matrix.py
+$ python3 dev/test/check-parity-matrix.py
 parity matrix clean: 8 entries validated against
     .reference-haskell-cardano-node (reference tag 11.0.1)
 
-$ python3 scripts/check-fixture-manifest.py
+$ python3 dev/test/check-fixture-manifest.py
 fixture manifest clean: SHA 7a8a991945d401d89e27f53b3d3bb464a354ad4c
     consistent across pin source, fixture tree, and docs;
     2 corpora validated.

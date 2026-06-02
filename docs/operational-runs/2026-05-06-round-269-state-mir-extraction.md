@@ -96,7 +96,7 @@ gate) so that any introduced regression is bounded to one slice.
 
 ### References
 
-- Plan: `~/.claude/plans/dapper-giggling-haven.md`
+- Plan: `docs/COMPLETION_ROADMAP.md`
 - Approved per-round authorization model
 - Upstream MIR rule:
   `.reference-haskell-cardano-node/deps/cardano-ledger/eras/shelley/impl/src/Cardano/Ledger/Shelley/Rules/Mir.hs`

@@ -6,7 +6,7 @@ Scope: documentary upstream pin refresh, no ledger/runtime behavior change
 
 ### Summary
 
-`node/scripts/check_upstream_drift.sh` found one new drift after the
+`node/dev/scripts/check_upstream_drift.sh` found one new drift after the
 R239 fixture refresh:
 
 ```text
@@ -41,7 +41,7 @@ Commands run during this slice:
 cargo check-all
 cargo test-all
 cargo lint
-node/scripts/check_upstream_drift.sh
+node/dev/scripts/check_upstream_drift.sh
 ```
 
 Drift result after the pin advance:

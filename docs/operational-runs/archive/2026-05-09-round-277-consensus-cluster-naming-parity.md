@@ -46,7 +46,7 @@ relationship grade as `(a) DIRECT_MIRROR` rather than NEEDS-REVIEW.
 
 ## Audit grader strengthening
 
-`scripts/audit-strict-mirror.py` now distinguishes four `## Naming
+`dev/test/audit-strict-mirror.py` now distinguishes four `## Naming
 parity` block variants instead of two:
 
 | `**Strict mirror:**` line | `has_naming_parity_block` returns | Auto-grade |
@@ -86,9 +86,9 @@ cargo fmt --all -- --check          clean
 cargo check-all                     clean (Finished `dev` profile in 6.02s)
 cargo lint                          clean (Finished `dev` profile in 14.17s)
 cargo test-all                      4855 passed; 0 failed (baseline preserved)
-python3 scripts/check-strict-mirror.py
+python3 dev/test/check-strict-mirror.py
                                     strict-mirror: 0 violations (clean)
-python3 scripts/check-parity-matrix.py
+python3 dev/test/check-parity-matrix.py
                                     parity matrix clean: 8 entries validated
 ```
 
@@ -100,7 +100,7 @@ crates/consensus/src/nonce.rs                  +13 lines (parity block)
 crates/consensus/src/opcert.rs                 +14 lines (parity block + rename note)
 docs/strict-mirror-audit.tsv                   rebuilt
 docs/operational-runs/2026-05-09-round-277-... (new)
-scripts/audit-strict-mirror.py                 +24 lines (4-variant block recognition)
+dev/test/audit-strict-mirror.py                 +24 lines (4-variant block recognition)
 ```
 
 ## Stop point — Phase B progress

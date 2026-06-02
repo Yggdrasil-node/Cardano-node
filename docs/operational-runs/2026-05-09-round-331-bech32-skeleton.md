@@ -56,7 +56,7 @@ is created; the strict-mirror policy supports this absence per the
 | `crates/bech32/src/main.rs` | Strict-mirror docstring updated (R331 progress note + R332/R333 forward references). Body unchanged (delegates to `yggdrasil_bech32::run()`). |
 | `crates/bech32/Cargo.toml` | Added `bech32 = { workspace = true }` dep. Comment block expanded to document the file-mirror layout. |
 | `docs/parity-matrix.json` | `sister-tool.bech32` entry advanced: status `absent → partial`; next_milestone `R331 → R332`; new `implemented_evidence` list. |
-| `scripts/check-parity-matrix.py` | `ALLOWED_MILESTONES` extended with all per-mini-arc rounds (R326–R459) via a `_arc_range` helper, allowing parity-matrix entries to advance through their mini-arcs without repeated allowlist edits. |
+| `dev/test/check-parity-matrix.py` | `ALLOWED_MILESTONES` extended with all per-mini-arc rounds (R326–R459) via a `_arc_range` helper, allowing parity-matrix entries to advance through their mini-arcs without repeated allowlist edits. |
 | `docs/strict-mirror-audit.tsv` | Regenerated; total entries 448 → 449 (+1 for `crates/bech32/src/internal.rs`, graded `(a) DIRECT_MIRROR`). |
 | `docs/operational-runs/2026-05-09-round-331-bech32-skeleton.md` | This round-doc. |
 
@@ -66,7 +66,7 @@ is created; the strict-mirror policy supports this absence per the
 $ cargo fmt --all -- --check
 (silent — clean)
 
-$ python3 scripts/check-strict-mirror.py --fail-on-violation
+$ python3 dev/test/check-strict-mirror.py --fail-on-violation
 strict-mirror: 0 violations (clean)
 
 $ cargo check --workspace --all-targets
@@ -78,13 +78,13 @@ $ cargo clippy --workspace --all-targets --all-features -- -D warnings
 $ cargo test --workspace --all-features
 passed: 4856  failed: 0
 
-$ python3 scripts/audit-strict-mirror.py
+$ python3 dev/test/audit-strict-mirror.py
 audit complete: 449 rust files; candidate_match=393, no_candidate_match=56
 auto-grading bucket counts:
   (a): 247
   (c): 202
 
-$ python3 scripts/check-parity-matrix.py
+$ python3 dev/test/check-parity-matrix.py
 parity matrix clean: 20 entries validated against
     .reference-haskell-cardano-node (reference tag 11.0.1)
 ```
@@ -117,6 +117,6 @@ All five are met.
   with real implementations using the `bech32` crate; round-trip
   test against upstream test vectors (vendored at
   `.reference-haskell-cardano-node/deps/bech32/bech32/test/`);
-  wire `node/scripts/run-tools.sh bech32` end-to-end.
+  wire `node/dev/scripts/run-tools.sh bech32` end-to-end.
 - **R334 — Closeout**: CHANGELOG entry; AGENTS.md operational
   guide refresh; parity-matrix transition `partial → verified_11_0_1`.

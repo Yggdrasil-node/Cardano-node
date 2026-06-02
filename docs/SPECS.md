@@ -33,16 +33,16 @@ and feature level. Update them in lockstep with code changes:
 - [`docs/parity-matrix.json`](parity-matrix.json) — feature-level
   Rust ↔ Haskell parity inventory; `reference.tag` tracks the
   current IntersectMBO/cardano-node release. Validated by
-  `python3 scripts/check-parity-matrix.py`.
+  `python3 dev/test/check-parity-matrix.py`.
 - [`docs/strict-mirror-audit.tsv`](strict-mirror-audit.tsv) —
   per-file Yggdrasil `.rs` ↔ upstream `.hs` verdict table from R274.
   Every production `.rs` is graded `(a) DIRECT_MIRROR` or
   `(c) NO_MIRROR_NEEDS_DOCSTRING (verified)`. CI gate:
-  `python3 scripts/check-strict-mirror.py --fail-on-violation`.
+  `python3 dev/test/check-strict-mirror.py --fail-on-violation`.
 - [`docs/upstream-haskell-files.txt`](upstream-haskell-files.txt) —
   flat-file index of every upstream `.hs` under
   `.reference-haskell-cardano-node/`, rebuilt by
-  `bash scripts/setup-reference.sh`.
+  `bash dev/reference/setup-reference.sh`.
 
 For end-to-end "what works today" evidence see
 [`docs/PARITY_PROOF.md`](PARITY_PROOF.md); for upstream-pin drift
@@ -57,9 +57,9 @@ status see [`docs/UPSTREAM_PARITY.md`](UPSTREAM_PARITY.md).
 - Strict 1:1 file-mirror policy (R274+): every new `.rs` under
   `crates/<crate>/src/` and `crates/node/*/src/` either snake-case-mirrors a
   single upstream `.hs` filename or carries a `## Naming parity`
-  docstring stanza. Authoring-time guidance lives in
-  [`.claude/skills/round-extraction/SKILL.md`](../.claude/skills/round-extraction/SKILL.md);
-  the CI counterpart is `python3 scripts/check-strict-mirror.py`.
+  docstring stanza. Authoring-time guidance lives in root
+  [`AGENTS.md`](../AGENTS.md); the CI counterpart is
+  `python3 dev/test/check-strict-mirror.py`.
 
 ## Vendored Upstream Test Vectors
 - Vendored cryptographic vectors live under `specs/upstream-test-vectors/` with pinned upstream commit provenance.

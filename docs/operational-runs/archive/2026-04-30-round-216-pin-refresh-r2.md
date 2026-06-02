@@ -9,7 +9,7 @@ deferred separately)
 ### Goal
 
 Advance `ouroboros-consensus` and `plutus` documentary pins to
-their current live HEAD per `node/scripts/check_upstream_drift.sh`.
+their current live HEAD per `node/dev/scripts/check_upstream_drift.sh`.
 R201 (~16 rounds ago) refreshed these pins; both have drifted
 again as upstream continues to merge changes.  This round is the
 documentary-pin-only refresh; the `cardano-base` advance remains
@@ -75,7 +75,7 @@ constant update + corpus re-run).
 cargo fmt --all -- --check       # clean
 cargo lint                       # clean
 cargo test-all                   # 4 745 passed / 0 failed / 1 ignored
-node/scripts/check_upstream_drift.sh   # 5 in-sync, 1 drift = cardano-base
+node/dev/scripts/check_upstream_drift.sh   # 5 in-sync, 1 drift = cardano-base
 ```
 
 `upstream_pins::tests::upstream_pins_are_40_lowercase_hex`,
@@ -124,7 +124,7 @@ accounting), Phase E.2 (24h+ mainnet rehearsal).
 - Pinning detail: [`docs/UPSTREAM_PARITY.md`](../UPSTREAM_PARITY.md)
   (pinned-commits section + drift snapshot).
 - Previous round: [R215](2026-04-30-round-215-multinetwork-post-r214-regression.md).
-- Drift detector: [`node/scripts/check_upstream_drift.sh`](../../node/scripts/check_upstream_drift.sh).
+- Drift detector: [`node/dev/scripts/check_upstream_drift.sh`](../../node/dev/scripts/check_upstream_drift.sh).
 - Upstream references:
   - <https://github.com/IntersectMBO/ouroboros-consensus/commit/b047aca4a731d3282b1dab012d3669e9395328cc>
   - <https://github.com/IntersectMBO/plutus/commit/4cd40a14e36431019414fad519c1a6d426a55509>

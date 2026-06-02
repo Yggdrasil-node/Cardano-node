@@ -16,7 +16,7 @@ Both layers must be in place before the policy is durable.
 
 | Path | Purpose |
 |---|---|
-| `scripts/check-strict-mirror.py` | warn-only drift-guard. Re-uses `audit-strict-mirror.py`'s logic; reads `docs/strict-mirror-audit.tsv` as the allowlist; flags any net-new file lacking both an upstream `.hs` mirror and a `## Naming parity` docstring stanza. |
+| `dev/test/check-strict-mirror.py` | warn-only drift-guard. Re-uses `audit-strict-mirror.py`'s logic; reads `docs/strict-mirror-audit.tsv` as the allowlist; flags any net-new file lacking both an upstream `.hs` mirror and a `## Naming parity` docstring stanza. |
 | `.github/workflows/ci.yml` | adds the gate after the four cargo gates with `continue-on-error: true` (warn-only). R288 will flip to fail-build via `--fail-on-violation`. |
 | `CLAUDE.md` Commands section | documents the new gate and the surfaces the policy depends on (`docs/strict-mirror-audit.tsv`, `docs/upstream-haskell-files.txt`, `.claude/skills/round-extraction/SKILL.md`). |
 | `docs/operational-runs/2026-05-09-round-275-strict-mirror-drift-guard.md` | this doc. |
@@ -46,7 +46,7 @@ warn-only mode exit 0; in fail-build mode (post-R288) exit 1.
 ## Smoke test
 
 ```bash
-$ python3 scripts/check-strict-mirror.py
+$ python3 dev/test/check-strict-mirror.py
 strict-mirror: 0 violations (clean)
 $ echo $?
 0
@@ -55,20 +55,20 @@ $ cat > crates/ledger/src/state/yggdrasil_invented_smoke.rs <<EOF
 //! Synthesis without docstring stanza - drift-guard smoke test.
 pub fn dummy() {}
 EOF
-$ python3 scripts/check-strict-mirror.py
+$ python3 dev/test/check-strict-mirror.py
 strict-mirror: 1 new file(s) violate the policy ...
 ::warning file=crates/ledger/src/state/yggdrasil_invented_smoke.rs::(NEEDS-REVIEW) ...
 $ echo $?
 0   # warn-only
 
-$ python3 scripts/check-strict-mirror.py --fail-on-violation
+$ python3 dev/test/check-strict-mirror.py --fail-on-violation
 strict-mirror: 1 new file(s) violate the policy ...
 ::warning file=...
 $ echo $?
 1   # fail-build mode
 
 $ rm crates/ledger/src/state/yggdrasil_invented_smoke.rs
-$ python3 scripts/check-strict-mirror.py
+$ python3 dev/test/check-strict-mirror.py
 strict-mirror: 0 violations (clean)
 ```
 
@@ -91,14 +91,14 @@ The plan called for a `cargo parity-strict-mirror` workspace alias.
 Cargo aliases can only invoke other cargo subcommands; arbitrary shell
 commands aren't supported. Rather than ship a Rust shim binary just to
 expose the python script, the gate is documented as
-`python3 scripts/check-strict-mirror.py` directly — same idiom as the
-existing `python3 scripts/check-parity-matrix.py` parity-flow gate.
+`python3 dev/test/check-strict-mirror.py` directly — same idiom as the
+existing `python3 dev/test/check-parity-matrix.py` parity-flow gate.
 The `cargo parity-strict-mirror` reference in the plan is updated
 in the round-doc to reflect this.
 
 ## Stale parity-matrix paths surfaced and fixed
 
-While verifying the gates, `python3 scripts/check-parity-matrix.py`
+While verifying the gates, `python3 dev/test/check-parity-matrix.py`
 flagged seven stale `path` entries left over from R273-rename — paths
 in `docs/parity-matrix.json` that pointed at files renamed two rounds
 ago:
@@ -127,9 +127,9 @@ cargo fmt --all -- --check          clean
 cargo check-all                     clean (Finished `dev` profile in 0.31s)
 cargo lint                          clean
 cargo test-all                      4855 passed; 0 failed
-python3 scripts/check-strict-mirror.py
+python3 dev/test/check-strict-mirror.py
                                     strict-mirror: 0 violations (clean); exit 0
-python3 scripts/check-parity-matrix.py
+python3 dev/test/check-parity-matrix.py
                                     parity matrix clean: 8 entries validated
 ```
 
@@ -141,17 +141,17 @@ python3 scripts/check-parity-matrix.py
 CLAUDE.md                                                +5 lines (Commands section + parity-flow surfaces)
 docs/parity-matrix.json                                  7 path entries updated
 docs/operational-runs/2026-05-09-round-275-...           (new file)
-scripts/check-strict-mirror.py                           (new file, ~110 lines)
+dev/test/check-strict-mirror.py                           (new file, ~110 lines)
 ```
 
 ## Stop point — Phase A complete
 
 R275 closes Phase A. Phase A's deliverables are now:
-- `bash scripts/setup-reference.sh --force` brings vendored install to 11.0.1 (R274 step 0).
-- `scripts/audit-strict-mirror.py` produces the audit TSV (R274).
+- `bash dev/reference/setup-reference.sh --force` brings vendored install to 11.0.1 (R274 step 0).
+- `dev/test/audit-strict-mirror.py` produces the audit TSV (R274).
 - `docs/strict-mirror-audit.tsv` graded with auto-verdicts (R274).
 - `docs/upstream-haskell-files.txt` flat-file index (R274).
-- `scripts/check-strict-mirror.py` drift-guard, warn-only (R275).
+- `dev/test/check-strict-mirror.py` drift-guard, warn-only (R275).
 - CI `.github/workflows/ci.yml` carries the new gate (R275).
 - `CLAUDE.md` Commands section + parity-flow surfaces updated (R275).
 - `.claude/skills/round-extraction/SKILL.md` strengthened (R273-rename

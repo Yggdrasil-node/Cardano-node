@@ -17,7 +17,7 @@ Three modules:
   config / topology / database / socket paths. No I/O.
 - `upstream_pins`: `UPSTREAM_*_COMMIT` constants pinned at the
   policy tag (`docs/parity-matrix.json::reference.tag`, currently
-  `11.0.1`). Verified by `scripts/check-fixture-manifest.py`.
+  `11.0.1`). Verified by `dev/test/check-fixture-manifest.py`.
 
 ## Rules — Non-Negotiable
 

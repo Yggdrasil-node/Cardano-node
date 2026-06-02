@@ -157,6 +157,6 @@ cargo test-all                   # 4 851 passed, 0 failed (unchanged)
 ### References
 
 - R269 a–l closures: `2026-05-06-round-269{,b,…,l}-state-*.md`
-- Plan: `~/.claude/plans/dapper-giggling-haven.md`
+- Plan: `docs/COMPLETION_ROADMAP.md`
 - Upstream LSQ Query view:
   `.reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus-cardano/src/Ouroboros/Consensus/Shelley/Ledger/Query.hs`

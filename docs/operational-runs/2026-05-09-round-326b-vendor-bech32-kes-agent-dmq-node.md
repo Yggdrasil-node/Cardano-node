@@ -47,14 +47,14 @@ upstream binaries.
 
 | Path | Change |
 |---|---|
-| `scripts/setup-reference.sh` | Extended the per-repo loop from a 6-entry hardcoded `IntersectMBO/$repo.git` form to a 9-entry per-repo `dirname\|url` table that supports cross-org URLs. The 3 new entries (bech32, kes-agent, dmq-node) clone alongside the existing 6 (cardano-base, cardano-cli, cardano-ledger, ouroboros-consensus, ouroboros-network, plutus). |
+| `dev/reference/setup-reference.sh` | Extended the per-repo loop from a 6-entry hardcoded `IntersectMBO/$repo.git` form to a 9-entry per-repo `dirname\|url` table that supports cross-org URLs. The 3 new entries (bech32, kes-agent, dmq-node) clone alongside the existing 6 (cardano-base, cardano-cli, cardano-ledger, ouroboros-consensus, ouroboros-network, plutus). |
 | `docs/upstream-haskell-files.txt` | Refreshed: 4,676 → 4,804 entries (+128 from the 3 new repos). |
 | `docs/operational-runs/2026-05-09-round-326b-vendor-bech32-kes-agent-dmq-node.md` | This round-doc. |
 
 ## Verification
 
 ```text
-$ bash scripts/setup-reference.sh
+$ bash dev/reference/setup-reference.sh
 ==> materialising IntersectMBO/cardano-node 11.0.1 source
 ==> cloning upstream library sources into deps/
     deps/cardano-base already present, refreshing tags
@@ -77,19 +77,19 @@ cardano-node 11.0.1 - linux-x86_64 - ghc-9.6
 $ wc -l docs/upstream-haskell-files.txt
 4804 docs/upstream-haskell-files.txt
 
-$ python3 scripts/check-strict-mirror.py --fail-on-violation
+$ python3 dev/test/check-strict-mirror.py --fail-on-violation
 strict-mirror: 0 violations (clean)
 
-$ python3 scripts/check-parity-matrix.py
+$ python3 dev/test/check-parity-matrix.py
 parity matrix clean: 8 entries validated against
     .reference-haskell-cardano-node (reference tag 11.0.1)
 
-$ python3 scripts/check-fixture-manifest.py
+$ python3 dev/test/check-fixture-manifest.py
 fixture manifest clean: SHA 7a8a991945d401d89e27f53b3d3bb464a354ad4c
     consistent across pin source, fixture tree, and docs;
     2 corpora validated.
 
-$ python3 scripts/check-reference-artifacts.py
+$ python3 dev/test/check-reference-artifacts.py
 reference artifacts clean: cardano-node 11.0.1 install +
     9 binaries + 3 network share dirs validated.
 ```
@@ -133,7 +133,7 @@ The prep block continues:
 - **R328 — Audit + parity infrastructure expansion** (parity-matrix
   entries; upstream_pins.rs SHA pins for the 3 new repos; drift detector
   extension).
-- **R329 — Run-tools launcher** (`node/scripts/run-tools.sh`) +
+- **R329 — Run-tools launcher** (`node/dev/scripts/run-tools.sh`) +
   `node/configuration/preprod/checkpoints.json`.
 - **R330 — Pure-Rust ecosystem dependency audit** (bech32, axum,
   tracing-appender).

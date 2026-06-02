@@ -7,7 +7,7 @@ Scope: operator automation and living-doc correction, no consensus/runtime behav
 ### Summary
 
 R240 makes the remaining runbook §6.5 multi-peer BlockFetch sign-off
-repeatable. The new `node/scripts/parallel_blockfetch_soak.sh` harness:
+repeatable. The new `node/dev/evidence/parallel_blockfetch_soak.sh` harness:
 
 - starts `yggdrasil-node run` with `--max-concurrent-block-fetch-peers`;
 - accepts `CONFIG` / `TOPOLOGY` overrides for real operator topologies;
@@ -37,7 +37,7 @@ implemented behavior:
 - Runbook §6.5 now points to `parallel_blockfetch_soak.sh` as the
   preferred harness.
 - Runbook §6.5b now documents the actual env-var interface for
-  `node/scripts/compare_tip_to_haskell.sh`.
+  `node/dev/evidence/compare_tip_to_haskell.sh`.
 - Runbook §8 no longer claims `cardano-cli conway query gov-state` is an
   open gap; R188/R193/R204 closed tag 24 `ConwayGovState` shape parity.
 - Release docs include `parallel_blockfetch_soak.sh` in the bundled script
@@ -48,8 +48,8 @@ implemented behavior:
 Commands run during this slice:
 
 ```sh
-bash -n node/scripts/parallel_blockfetch_soak.sh
-node/scripts/parallel_blockfetch_soak.sh --help
+bash -n node/dev/evidence/parallel_blockfetch_soak.sh
+node/dev/evidence/parallel_blockfetch_soak.sh --help
 cargo test -p yggdrasil-node parallel_blockfetch_soak_script
 cargo fmt --all -- --check
 cargo check-all
