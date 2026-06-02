@@ -94,6 +94,28 @@
     - [x] Record and require BlockFetch Haskell tip-comparison log paths in `summary.json`.
     - [ ] Run preprod Section 6.5 two-peer and knob=4 Haskell tip-comparison soaks.
     - [ ] Run mainnet Section 6.5 knob=2 24h Haskell tip-comparison soak.
+- [ ] Sister-tool strict naming parity follow-up arcs.
+  - [x] Port the next pure `cardano-testnet` `Testnet/Defaults.hs`
+    topology defaults slice.
+    - [x] Add typed `defaultMainnetTopology` /
+      `defaultP2PTopology` builders using the existing network
+      topology model.
+    - [x] Pin the upstream local/public root, ledger-peer, bootstrap,
+      valency, trust, advertise, and peer-snapshot defaults with
+      focused tests.
+    - [x] Update `cardano-testnet` status guidance and filetree
+      metadata.
+    - [x] Run focused crate tests and the required workspace/parity
+      guards before review.
+  - [x] Align generated topology JSON with upstream optional-field
+    omission semantics.
+    - [x] Omit disabled `bootstrapPeers` and absent `peerSnapshotFile`
+      during `TopologyConfig` serialization.
+    - [x] Pin the serialization shape at the network model layer.
+    - [x] Pin the `cardano-testnet` default topology builders against
+      the same emitted JSON shape.
+    - [x] Run focused network/cardano-testnet tests and required
+      workspace/parity guards.
 
 ## Review
 
@@ -218,11 +240,42 @@
 - Core fixture artifact-validation hardening: `scripts/check-core-evidence-harnesses.py` now deletes known self-test artifacts before running and fails unless fresh Gap BO, Gap BP, R178, and BlockFetch artifacts pass strict schema/content checks.
 - Core fixture artifact-validation guards passed under WSL: `python3 -m py_compile scripts/check-core-evidence-harnesses.py scripts/compare-gap-bp-traces.py scripts/compare-conway-lsq.py`, `python3 scripts/check-core-evidence-harnesses.py`, and direct JSON assertions for all four artifact checks in `target/core-evidence-harnesses/summary.json`.
 - Core fixture artifact-validation full gates passed under WSL: `python3 scripts/check-doc-status-headers.py`, `python3 scripts/check-stale-placement.py`, `python3 scripts/check-strict-mirror.py`, `cargo fmt --all -- --check`, `cargo check-all`, `cargo lint`, `cargo lint-no-default`, and `cargo test-all`.
+- cardano-testnet Defaults topology slice: added typed `defaultMainnetTopology`
+  / `defaultP2PTopology` builders over `yggdrasil_network::TopologyConfig`,
+  pinned upstream local/public root groups, advertise/trust flags, hot/warm
+  valencies, ledger-peer/bootstrap policy, and peer-snapshot defaults, and
+  updated cardano-testnet status guidance.
+- cardano-testnet topology slice guards passed: `cargo fmt --all -- --check`,
+  `cargo test -p yggdrasil-cardano-testnet`, `cargo check-all`, `cargo lint`,
+  `cargo lint-no-default`, `cargo test-all`, `python3 scripts/check-strict-mirror.py
+  --fail-on-violation`, `python3 scripts/check-stale-placement.py`, `python3
+  scripts/check-doc-status-headers.py`, `python3 scripts/check-parity-matrix.py`,
+  `python3 scripts/check-fixture-manifest.py`, `python3
+  scripts/check-reference-artifacts.py`, `python3 .claude/scripts/filetree.py
+  check`, and `git diff --check`.
 - Core fixture artifact-validation security recheck passed under WSL: `cargo deny check advisories bans licenses sources` exited clean with only known duplicate/unused-license warnings, and `cargo tree -i aws-lc-sys`, `aws-lc-rs`, `native-tls`, and `openssl-sys` each reported no matching package IDs.
 - Core preflight environment hardening: `scripts/check-core-evidence-harnesses.py` now rejects native Windows execution and points operators to `wsl -e bash -lc "python3 scripts/check-core-evidence-harnesses.py"` so local parity helpers cannot accidentally run through Windows-hosted Bash.
 - Core preflight environment guards passed: WSL `python3 -m py_compile scripts/check-core-evidence-harnesses.py` and `python3 scripts/check-core-evidence-harnesses.py` pass, while native Windows `python scripts\check-core-evidence-harnesses.py` exits before running shell helpers with the WSL/Linux requirement.
 - Core preflight environment full gates passed under WSL: `python3 scripts/check-doc-status-headers.py`, `python3 scripts/check-stale-placement.py`, `python3 scripts/check-strict-mirror.py`, `cargo fmt --all -- --check`, `cargo check-all`, `cargo lint`, `cargo lint-no-default`, and `cargo test-all`.
 - Core preflight environment security recheck passed under WSL: `cargo deny check advisories bans licenses sources` exited clean with only known duplicate/unused-license warnings, and `cargo tree -i aws-lc-sys`, `aws-lc-rs`, `native-tls`, and `openssl-sys` each reported no matching package IDs.
+- Network topology serialization parity slice: `TopologyConfig` now omits
+  disabled `bootstrapPeers` and absent `peerSnapshotFile` during JSON
+  serialization, matching upstream `networkTopologyToJSON` /
+  `UseBootstrapPeers` omission behavior; `cardano-testnet` default topology
+  builders are pinned against the same emitted JSON shape.
+- Network topology serialization guards passed: `cargo fmt --all -- --check`,
+  focused `cargo test -p yggdrasil-network topology_config_serializes`,
+  focused `cargo test -p yggdrasil-cardano-testnet
+  default_topologies_serialize_with_upstream_optional_field_omissions`,
+  `cargo check-all`, `cargo lint`, `cargo lint-no-default`, `cargo test-all`,
+  `python3 scripts/check-strict-mirror.py --fail-on-violation`, `python3
+  scripts/check-stale-placement.py`, `python3 scripts/check-doc-status-headers.py`,
+  `python3 scripts/check-parity-matrix.py`, `python3
+  scripts/check-fixture-manifest.py`, `python3 scripts/check-reference-artifacts.py`,
+  `python3 .claude/scripts/filetree.py accept-current && python3
+  .claude/scripts/filetree.py check`, and `git diff --check`.
+- Optional dependency-policy recheck could not run in this shell because
+  `cargo deny` is not installed on the active Cargo toolchain.
 - Core closeout artifact gate: added `scripts/check-core-closeout-artifacts.py` to validate the final live Gap BO/BP/R178 fixtures and BlockFetch preprod/mainnet soak summaries under `target/core-closeout/`; the normal gate currently fails as expected because those live artifacts have not been collected yet.
 - Core closeout artifact gate guards passed under WSL: `python3 -m py_compile scripts/check-core-closeout-artifacts.py`, `python3 scripts/check-core-closeout-artifacts.py --self-test`, and a controlled normal-mode run proving missing live artifacts are reported as failures.
 - Core closeout artifact gate full checks passed under WSL: `python3 scripts/check-core-evidence-harnesses.py`, `python3 scripts/check-doc-status-headers.py`, `python3 scripts/check-stale-placement.py`, `python3 scripts/check-strict-mirror.py`, `cargo fmt --all -- --check`, `cargo check-all`, `cargo lint`, `cargo lint-no-default`, and `cargo test-all`.

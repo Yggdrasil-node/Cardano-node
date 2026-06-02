@@ -19,10 +19,12 @@
 //! Property/Assert stake-pool query wrapper; R838 ports the pure
 //! Property/Run user-env, ignore-helper, and runtime-message projection; R839
 //! ports the pure `testnetProperty` workspace/action plan, keepalive fact, and
-//! failed-start branch. The remaining explicit deferral is node/KES spawning
-//! and supervision, era genesis, transaction runtime/query orchestration, SPO
-//! runtime workflows, DRep runtime workflows, and the remaining
-//! Process/Property harness bodies.
+//! failed-start branch; the current slice ports `Testnet/Defaults.hs` pure
+//! node-configuration defaults, default key/path helpers, and default P2P
+//! topology builders. The remaining explicit deferral is node/KES spawning and
+//! supervision, era genesis beyond pure config defaults, transaction
+//! runtime/query orchestration, SPO runtime workflows, DRep runtime workflows,
+//! and the remaining Process/Property harness bodies.
 //!
 //! Mirrors the precedent set by R424-R429 cardano-tracer +
 //! R439-R444 sister-tool deferral sweeps.
@@ -81,7 +83,7 @@ pub struct EraDispatchStatus {
 pub fn era_dispatch_status() -> EraDispatchStatus {
     EraDispatchStatus {
         status: "deferred",
-        depends_on: "the R772-R823 cardano-testnet implementation arc has shipped the era-free Testnet/Start/Types, path/default/component constants, and Parsers/Cardano option-composition surface. R825 typed Command payloads now thread CardanoTestnetCliOptions / CardanoTestnetCreateEnvOptions through parse_args/run and dispatch the version subcommand. R826 ports the Testnet/Types.hs process-handle runtime carriers (TestnetRuntime / TestnetNode / TestnetKesAgent), node socket helpers, and LocalNodeConnectInfo projection. R827 ports the pure Testnet/Process/Cli/Keys.hs cardano-cli key command builders. R828 ports the Testnet/Process/Cli/Transaction.hs sign/submit/txid builders. R829 ports the Testnet/Process/Cli/DRep.hs pure key/cert/vote builders. R830 ports the Testnet/Process/Cli/SPO.hs pure certificate/vote builders. R831 ports the Testnet/Process/Cli/Transaction.hs pure spend-output txbody builders. R832 ports the Testnet/Process/Run.hs flexible process execution wrappers. R833 ports the Testnet/Process/RunIO.hs plan-json binary-resolution and process-planning helpers. R834 ports the remaining RunIO execution/liftIO helpers. R835 ports the pure Testnet/Property/Util.hs retry/workspace naming, DISABLE_RETRIES, Linux predicate, and Aeson object lookup helpers. R836 ports the pure Testnet/Property/Assert.hs JSON-lines, relevant-slot extraction, deadline, stake-pool count, and era-equality assertion helpers. R837 ports the CLI-backed Testnet/Property/Assert.hs assertExpectedSposInLedgerState stake-pool query wrapper with injectable cardano-cli execution. R838 ports the pure Testnet/Property/Run.hs UserProvidedEnv, OS-ignore disposition helpers, and running-testnet operator message rendering. R839 ports the pure Testnet/Property/Run.hs testnetProperty workspace/action plan, keepalive delay, intentional-failure fact, and failed-start rendering. Remaining work is node/KES spawning and supervision, era-genesis, transaction runtime/query orchestration, SPO runtime workflows, DRep runtime workflows, and the remaining Process/Property harness execution for cardano/create-env; Hedgehog Process/Property modules stay a Rust-idiomatic tokio::process + proptest carve-out.",
+        depends_on: "the R772-R823 cardano-testnet implementation arc has shipped the era-free Testnet/Start/Types, path/default/component constants, and Parsers/Cardano option-composition surface. R825 typed Command payloads now thread CardanoTestnetCliOptions / CardanoTestnetCreateEnvOptions through parse_args/run and dispatch the version subcommand. R826 ports the Testnet/Types.hs process-handle runtime carriers (TestnetRuntime / TestnetNode / TestnetKesAgent), node socket helpers, and LocalNodeConnectInfo projection. R827 ports the pure Testnet/Process/Cli/Keys.hs cardano-cli key command builders. R828 ports the Testnet/Process/Cli/Transaction.hs sign/submit/txid builders. R829 ports the Testnet/Process/Cli/DRep.hs pure key/cert/vote builders. R830 ports the Testnet/Process/Cli/SPO.hs pure certificate/vote builders. R831 ports the Testnet/Process/Cli/Transaction.hs pure spend-output txbody builders. R832 ports the Testnet/Process/Run.hs flexible process execution wrappers. R833 ports the Testnet/Process/RunIO.hs plan-json binary-resolution and process-planning helpers. R834 ports the remaining RunIO execution/liftIO helpers. R835 ports the pure Testnet/Property/Util.hs retry/workspace naming, DISABLE_RETRIES, Linux predicate, and Aeson object lookup helpers. R836 ports the pure Testnet/Property/Assert.hs JSON-lines, relevant-slot extraction, deadline, stake-pool count, and era-equality assertion helpers. R837 ports the CLI-backed Testnet/Property/Assert.hs assertExpectedSposInLedgerState stake-pool query wrapper with injectable cardano-cli execution. R838 ports the pure Testnet/Property/Run.hs UserProvidedEnv, OS-ignore disposition helpers, and running-testnet operator message rendering. R839 ports the pure Testnet/Property/Run.hs testnetProperty workspace/action plan, keepalive delay, intentional-failure fact, and failed-start rendering. Recent slices port Testnet/Defaults.hs pure node-configuration defaults, default key/path helpers, and default P2P topology builders: defaultGenesisFilepath, defaultYamlConfig, defaultYamlHardforkViaConfig, defaultSpoKeys, DRep / committee key paths, delegator stake keys, defaultUtxoKeys, defaultMainnetTopology, and defaultP2PTopology. Remaining work is node/KES spawning and supervision, era-genesis records beyond config defaults, transaction runtime/query orchestration, SPO runtime workflows, DRep runtime workflows, and the remaining Process/Property harness execution for cardano/create-env; Hedgehog Process/Property modules stay a Rust-idiomatic tokio::process + proptest carve-out.",
         deferred_round: "R840+",
         upstream_reference: ".reference-haskell-cardano-node/cardano-testnet/src/Parsers/{Run,Cardano}.hs + Testnet/{Defaults, Filepath, Orphans, Runtime, Types}.hs + Testnet/Start/{Types, Byron, Cardano}.hs + Testnet/Components/{Query, Configuration}.hs + Testnet/Process/Cli/*.hs + Testnet/Property/*.hs",
     }
@@ -124,6 +126,11 @@ mod tests {
         assert!(s.depends_on.contains("R837 ports"));
         assert!(s.depends_on.contains("R838 ports"));
         assert!(s.depends_on.contains("R839 ports"));
+        assert!(s.depends_on.contains("defaultYamlHardforkViaConfig"));
+        assert!(s.depends_on.contains("defaultSpoKeys"));
+        assert!(s.depends_on.contains("defaultUtxoKeys"));
+        assert!(s.depends_on.contains("defaultMainnetTopology"));
+        assert!(s.depends_on.contains("defaultP2PTopology"));
         assert!(s.depends_on.contains("node/KES spawning and supervision"));
         assert_eq!(s.deferred_round, "R840+");
         assert!(s.depends_on.contains("Hedgehog"));

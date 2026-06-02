@@ -150,6 +150,16 @@ impl UseBootstrapPeers {
     pub fn is_enabled(&self) -> bool {
         matches!(self, Self::UseBootstrapPeers(_))
     }
+
+    /// Returns `true` when topology JSON should omit the
+    /// `bootstrapPeers` field.
+    ///
+    /// Upstream's `UseBootstrapPeers` `ToJSON` instance marks
+    /// `DontUseBootstrapPeers` as omitted when encoded through
+    /// `networkTopologyToJSON`.
+    pub fn is_disabled(&self) -> bool {
+        matches!(self, Self::DontUseBootstrapPeers)
+    }
 }
 
 impl Serialize for UseBootstrapPeers {
@@ -211,7 +221,7 @@ impl<'de> Deserialize<'de> for UseBootstrapPeers {
 #[serde(rename_all = "camelCase")]
 pub struct TopologyConfig {
     /// Configured bootstrap peers, if enabled.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "UseBootstrapPeers::is_disabled")]
     pub bootstrap_peers: UseBootstrapPeers,
     /// Configured local root peer groups.
     #[serde(default)]
@@ -223,7 +233,11 @@ pub struct TopologyConfig {
     #[serde(default, rename = "useLedgerAfterSlot")]
     pub use_ledger_peers: UseLedgerPeers,
     /// Optional peer snapshot file.
-    #[serde(default)]
+    #[serde(
+        default,
+        rename = "peerSnapshotFile",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub peer_snapshot_file: Option<String>,
 }
 
@@ -633,6 +647,53 @@ mod tests {
             parsed.peer_snapshot_file.as_deref(),
             Some("peer-snapshot.json")
         );
+    }
+
+    #[test]
+    fn topology_config_serializes_upstream_optional_field_omissions() {
+        let topology = TopologyConfig {
+            bootstrap_peers: UseBootstrapPeers::DontUseBootstrapPeers,
+            local_roots: vec![],
+            public_roots: vec![],
+            use_ledger_peers: UseLedgerPeers::DontUseLedgerPeers,
+            peer_snapshot_file: None,
+        };
+
+        let value = serde_json::to_value(&topology).expect("serialize topology");
+        let object = value.as_object().expect("topology object");
+        assert!(!object.contains_key("bootstrapPeers"));
+        assert!(!object.contains_key("peerSnapshotFile"));
+        assert_eq!(value["localRoots"], serde_json::json!([]));
+        assert_eq!(value["publicRoots"], serde_json::json!([]));
+        assert_eq!(value["useLedgerAfterSlot"], serde_json::json!(-1));
+
+        let reparsed: TopologyConfig = serde_json::from_value(value).expect("reparse topology");
+        assert_eq!(reparsed, topology);
+    }
+
+    #[test]
+    fn topology_config_serializes_enabled_bootstrap_and_snapshot_fields() {
+        let topology = TopologyConfig {
+            bootstrap_peers: UseBootstrapPeers::UseBootstrapPeers(vec![PeerAccessPoint {
+                address: "127.0.0.10".to_owned(),
+                port: 3001,
+            }]),
+            local_roots: vec![],
+            public_roots: vec![],
+            use_ledger_peers: UseLedgerPeers::UseLedgerPeers(AfterSlot::Always),
+            peer_snapshot_file: Some("peer-snapshot.json".to_owned()),
+        };
+
+        let value = serde_json::to_value(&topology).expect("serialize topology");
+        assert_eq!(
+            value["bootstrapPeers"],
+            serde_json::json!([{"address":"127.0.0.10","port":3001}])
+        );
+        assert_eq!(
+            value["peerSnapshotFile"],
+            serde_json::json!("peer-snapshot.json")
+        );
+        assert_eq!(value["useLedgerAfterSlot"], serde_json::json!(0));
     }
 
     /// Shipped network presets must parse with the exact field shape used by

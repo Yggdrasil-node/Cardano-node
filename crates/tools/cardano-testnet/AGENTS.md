@@ -4,6 +4,10 @@
 surface, Parsers/Cardano option-composition layer, typed `Command`
 payload wiring, `version` subcommand dispatch,
 `Testnet/Types.hs` process-handle runtime record carriers, the
+`Testnet/Defaults.hs` pure node-configuration defaults and default key/path
+helpers (`defaultYamlConfig`, `defaultYamlHardforkViaConfig`,
+`defaultGenesisFilepath`, `defaultSpoKeys`, DRep / committee key paths,
+delegator stake keys, UTxO key pairs, and default P2P topology builders), the
 pure `Testnet/Process/Cli/Keys.hs` command builders plus the
 `Testnet/Process/Cli/Transaction.hs` pure sign/submit/txid and
 spend-output txbody builders, `Testnet/Process/Cli/DRep.hs` pure key/cert/vote builders plus the pure
@@ -82,7 +86,18 @@ Hedgehog Process/Property carve-out (`tokio::process` + `proptest`).
   platform-native `Path::join` output so Windows Cargo gates still
   match the upstream-shaped path fixtures.
 - ✅ `defaults.rs` — `Testnet/Defaults.hs` era-free scripts
-  (`simple_script`, the Plutus test scripts).
+  (`simple_script`, the Plutus test scripts) plus the pure
+  node-configuration defaults and default key/path helpers:
+  `defaultGenesisFilepath`, `defaultYamlConfig`,
+  `defaultYamlHardforkViaConfig`, `defaultSpoKeys`, DRep / committee
+  key paths, delegator stake keys, UTxO key pairs, and the
+  `defaultMainnetTopology` / `defaultP2PTopology` records, with
+  upstream protocol-version, cumulative hardfork-at-epoch, tracer,
+  base config keys, root-peer groups, valencies, trust flags,
+  advertise flags, bootstrap policy, ledger-peer policy, and
+  peer-snapshot defaults. Topology serialization omits disabled
+  `bootstrapPeers` and absent `peerSnapshotFile` fields, matching
+  upstream `networkTopologyToJSON`.
 - ✅ `components/` — `TestnetWaitPeriod` (`Query.hs`) and the
   `Configuration.hs` constants.
 - ✅ `process/cli/keys.rs` — pure command builders for
@@ -153,7 +168,7 @@ Hedgehog Process/Property carve-out (`tokio::process` + `proptest`).
 
 | Carve-out                            | Status helper                       | Deferral rationale (one-liner)                                            |
 |--------------------------------------|-------------------------------------|---------------------------------------------------------------------------|
-| Runtime / era-genesis dispatch       | `status::era_dispatch_status()`     | R772-R823 shipped the era-free type records and Parsers/Cardano option composition; R825 threaded typed records into `Command::Cardano` / `Command::CreateEnv` and wired `version`; R826 added `Testnet/Types.hs` runtime record carriers and socket/connect-info helpers; R827 added pure `Testnet/Process/Cli/Keys.hs` cardano-cli command builders; R828 added `Testnet/Process/Cli/Transaction.hs` sign/submit/txid builders; R829 added `Testnet/Process/Cli/DRep.hs` pure key/cert/vote builders; R830 added `Testnet/Process/Cli/SPO.hs` pure certificate/vote builders; R831 added `Testnet/Process/Cli/Transaction.hs` pure spend-output txbody builders with preselected tx inputs and pre-resolved script addresses; R832 added `Testnet/Process/Run.hs` flexible process config, executable resolution, process plans, execution, JSON stdout, and child-start helpers; R833 added `Testnet/Process/RunIO.hs` plan-json discovery, `binDist`/`binFlex`, and procFlex process-plan helpers; R834 added RunIO `mkExecConfig`, execFlex/execCli/KES-agent-control execution wrappers, and `liftIOAnnotated` error wrapping; R835 added the pure `Testnet/Property/Util.hs` retry/workspace naming, `DISABLE_RETRIES`, Linux predicate, and JSON object lookup helpers; R836 added pure `Testnet/Property/Assert.hs` JSON-lines, relevant-slot extraction, deadline, stake-pool count, and era-equality assertion helpers; R837 added the CLI-backed `assertExpectedSposInLedgerState` stake-pool query wrapper; R838 added the pure `Testnet/Property/Run.hs` UserProvidedEnv, OS-ignore disposition helpers, and running-testnet operator message rendering; R839 added the pure `testnetProperty` workspace/action plan, keepalive delay, intentional-failure fact, and failed-start rendering. Pending: build node/KES spawning and supervision, era-genesis, SPO runtime registration/check workflows, DRep runtime workflows, transaction runtime UTxO/script-address orchestration, and the remaining Process/Property harness execution for `cardano` and `create-env`. Hedgehog Process/Property modules remain an approved Rust-idiomatic carve-out using `tokio::process` + `proptest`. |
+| Runtime / era-genesis dispatch       | `status::era_dispatch_status()`     | R772-R823 shipped the era-free type records and Parsers/Cardano option composition; R825 threaded typed records into `Command::Cardano` / `Command::CreateEnv` and wired `version`; R826 added `Testnet/Types.hs` runtime record carriers and socket/connect-info helpers; R827 added pure `Testnet/Process/Cli/Keys.hs` cardano-cli command builders; R828 added `Testnet/Process/Cli/Transaction.hs` sign/submit/txid builders; R829 added `Testnet/Process/Cli/DRep.hs` pure key/cert/vote builders; R830 added `Testnet/Process/Cli/SPO.hs` pure certificate/vote builders; R831 added `Testnet/Process/Cli/Transaction.hs` pure spend-output txbody builders with preselected tx inputs and pre-resolved script addresses; R832 added `Testnet/Process/Run.hs` flexible process config, executable resolution, process plans, execution, JSON stdout, and child-start helpers; R833 added `Testnet/Process/RunIO.hs` plan-json discovery, `binDist`/`binFlex`, and procFlex process-plan helpers; R834 added RunIO `mkExecConfig`, execFlex/execCli/KES-agent-control execution wrappers, and `liftIOAnnotated` error wrapping; R835 added the pure `Testnet/Property/Util.hs` retry/workspace naming, `DISABLE_RETRIES`, Linux predicate, and JSON object lookup helpers; R836 added pure `Testnet/Property/Assert.hs` JSON-lines, relevant-slot extraction, deadline, stake-pool count, and era-equality assertion helpers; R837 added the CLI-backed `assertExpectedSposInLedgerState` stake-pool query wrapper; R838 added the pure `Testnet/Property/Run.hs` UserProvidedEnv, OS-ignore disposition helpers, and running-testnet operator message rendering; R839 added the pure `testnetProperty` workspace/action plan, keepalive delay, intentional-failure fact, and failed-start rendering; recent slices added `Testnet/Defaults.hs` pure node-configuration defaults, default key/path helpers, and default P2P topology builders. Pending: build node/KES spawning and supervision, era-genesis records beyond config defaults, SPO runtime registration/check workflows, DRep runtime workflows, transaction runtime UTxO/script-address orchestration, and the remaining Process/Property harness execution for `cardano` and `create-env`. Hedgehog Process/Property modules remain an approved Rust-idiomatic carve-out using `tokio::process` + `proptest`. |
 
 ## Build + run
 
@@ -224,6 +239,12 @@ This crate's full implementation remains an A4 sister-tool build-out:
 - ✅ `Testnet/Property/Run.hs` pure `UserProvidedEnv`, OS-ignore helpers,
   `testnetProperty` planning, failed-start rendering, and running-testnet
   operator message rendering are present (R838-R839).
+- ✅ `Testnet/Defaults.hs` pure node-configuration defaults
+  (`defaultGenesisFilepath`, `defaultYamlConfig`, and
+  `defaultYamlHardforkViaConfig`) are present, including upstream
+  protocol-version major selection, cumulative test-hardfork-at-epoch
+  switches, tracer switches, base node config keys, and the
+  `defaultMainnetTopology` / `defaultP2PTopology` root-peer records.
 - 🟡 Next: port DRep/SPO runtime workflows, transaction runtime
   execution, node spawning, era-genesis, and the remaining Process/Property
   harness execution in strict-mirror-sized slices.

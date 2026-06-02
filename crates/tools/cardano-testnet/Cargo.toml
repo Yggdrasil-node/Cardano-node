@@ -28,5 +28,6 @@ clap = { workspace = true }
 eyre = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+yggdrasil-network.workspace = true
 yggdrasil-telemetry.workspace = true
 thiserror = { workspace = true }
