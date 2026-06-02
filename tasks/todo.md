@@ -24,6 +24,11 @@
     - [ ] Pick one bounded sister-tool arc from the partial parity-matrix entries (`kes-agent`, `kes-agent-control`, `cardano-tracer`, `db-analyser`, `snapshot-converter`, `cardano-testnet`, `tx-generator`, or `dmq-node`).
     - [ ] Read that tool's `AGENTS.md` and the mirrored upstream Haskell files before changing terminology or behavior.
     - [ ] Implement one strict naming-parity slice with focused Rustdocs/tests and update `docs/strict-mirror-audit.tsv` only when the verdict actually changes.
+  - [ ] Advance `cardano-cli hash genesis-file` naming parity.
+    - [x] Read `crates/tools/cardano-cli/AGENTS.md` and upstream `Cardano.CLI.EraIndependent.Hash.{Command,Option,Run}` before changing terminology.
+    - [x] Replace the hash command/run placeholder surface with the upstream-shaped `HashCmds` / `GenesisFile` slice.
+    - [x] Wire the nested `hash genesis-file --genesis FILE` parser and runner through the top-level dispatcher.
+    - [x] Add focused parser/hash tests and run the relevant Rust/parity guards.
   - [ ] Preserve evidence honesty for non-local blockers.
     - [ ] Do not mark Gap BO, Gap BP, R178, or BlockFetch complete without strict Haskell/operator artifacts under `target/core-closeout/`.
     - [ ] Use `dev/evidence/stage-core-closeout-artifacts.py` and `dev/test/check-core-closeout-artifacts.py` when live evidence becomes available.
@@ -153,6 +158,10 @@
     - [ ] Commit and push the executable-mode gate fix to `main`.
 
 ## Review
+
+- `cardano-cli hash genesis-file` parity slice: replaced the hash command/run placeholders with upstream-shaped `HashCmds`, `GenesisFile`, `render_hash_cmds`, and `run_hash_cmds`; wired nested `hash genesis-file --genesis FILE` parsing/dispatch; added deterministic Blake2b-256 genesis-file hashing tests.
+- Smoke-test placement fix: full `cargo test-all` exposed stale root `scripts/` lookups in `crates/node/cardano-node/tests/smoke.rs`; tests now resolve accepted `dev/scripts/` and `dev/evidence/` locations, including Windows Git Bash relative path handling.
+- Verification passed after installing the missing local linker toolchain (`build-essential`): `cargo fmt --all -- --check`, `cargo check -p yggdrasil-cardano-cli --all-targets`, `cargo test -p yggdrasil-cardano-cli hash --lib`, `cargo test -p yggdrasil-cardano-cli --lib`, `cargo test -p yggdrasil-node --test smoke`, `cargo check-all`, `cargo lint`, `cargo test-all`, `python3 dev/test/check-strict-mirror.py`, `python3 dev/test/check-stale-placement.py`, `python3 dev/test/check-doc-status-headers.py`, `python3 dev/test/check-parity-matrix.py`, `python3 dev/test/filetree.py check`, and `git diff --check`.
 
 - Hygiene placement slice: updated live guidance and ownership to reflect the accepted `dev/{scripts,evidence,reference,test}` helper split instead of stale root `scripts/` wording. Touched `dev/AGENTS.md`, `crates/node/cardano-node/AGENTS.md`, `README.md`, `.github/CODEOWNERS`, `justfile`, `docs/PARITY_SUMMARY.md`, `docs/UPSTREAM_PARITY.md`, and the current R517/R824 operational-run notes; historical/archive run records were left as audit history.
 - Hygiene verification passed: targeted stale-placement phrase scan over live docs/tooling returned only valid `dev/scripts/...` paths or historical evidence; `python3 dev/test/check-stale-placement.py --self-test`; `python3 dev/test/check-stale-placement.py`; `python3 dev/test/check-doc-status-headers.py`; `python3 dev/test/check-parity-matrix.py`; `python3 dev/test/check-strict-mirror.py`; `python3 dev/test/filetree.py accept-current`; `python3 dev/test/filetree.py render`; `python3 dev/test/filetree.py check`; `git diff --check`.

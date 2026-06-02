@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at_utc": "2026-06-02T17:07:58Z",
+  "generated_at_utc": "2026-06-02T19:46:12Z",
   "description_policy": "Each entry has one or two concise human-maintained description lines. Run accept-current after reviewing stale entries.",
   "files": [
     {
@@ -3918,10 +3918,10 @@
       "description_lines": [
         "Rust integration or regression tests for smoke behavior."
       ],
-      "content_sha256": "88081569563fbffcc29bc19c63540d9eb13e509fad09909e28f39fafee2b81b7",
-      "git_blob": "b6f2f13df0bd88cdca527b39d4d60ccae947bef2",
-      "source_mtime_ns": 1780366176572788830,
-      "described_at_utc": "2026-06-02T03:28:13Z",
+      "content_sha256": "c7ec353ef6f616677840076e79e3ae80c8db17b1dca449dc0ff7fc73bda46117",
+      "git_blob": "f4b17d9569f4b09f13ba76715bf2c8380eba9c3c",
+      "source_mtime_ns": 1780428565054267309,
+      "described_at_utc": "2026-06-02T19:46:05Z",
       "generated_self_exempt": false
     },
     {
@@ -5507,10 +5507,10 @@
       "description_lines": [
         "Top-level cardano-cli command type. Mirrors upstream `Cardano.CLI.Command` (the entry-point sum type that aggregates Byron / Compatible / per-era / Legacy / EraBased."
       ],
-      "content_sha256": "cc7bfa095fc4ea06c089dcac8fc326538fd8b62946318da3ea63d8dcd34d4945",
-      "git_blob": "628f7a5a9c150efe0dc583a92e3bc0d1dc875087",
-      "source_mtime_ns": 1780366176604253067,
-      "described_at_utc": "2026-06-02T03:28:15Z",
+      "content_sha256": "1980f82131704c6f8a2b8b076edd2d4a04bbd21c336777770f424868dc83cb27",
+      "git_blob": "0aa389411c979bc9cfa9bf20b64803f7263aeb80",
+      "source_mtime_ns": 1780424409386740546,
+      "described_at_utc": "2026-06-02T18:54:34Z",
       "generated_self_exempt": false
     },
     {
@@ -7091,10 +7091,10 @@
       "description_lines": [
         "EraIndependent command."
       ],
-      "content_sha256": "c34902abc7267b485f33095798a41f77f2ee1372925ee633b62a991e3c3ec8cc",
-      "git_blob": "b3cf48aab95e2c89d6ed888f028659d1aabd65e4",
-      "source_mtime_ns": 1780366176616052156,
-      "described_at_utc": "2026-06-02T03:28:16Z",
+      "content_sha256": "76c45f42b84428793627db81ed394443e2f4e6764092fad3312b79d840a6e593",
+      "git_blob": "3a6ce743f7bdbe9f3457146f2562939bd2bb5b8e",
+      "source_mtime_ns": 1780424222759113444,
+      "described_at_utc": "2026-06-02T18:54:34Z",
       "generated_self_exempt": false
     },
     {
@@ -7113,10 +7113,10 @@
       "description_lines": [
         "EraIndependent common."
       ],
-      "content_sha256": "ca253b835a66a4ae0bd7517754ecb05a7b565d6f77385117dfce97b9e8510caf",
-      "git_blob": "0261f5cda3b1ea430b54b35ffc68c8014f5f67ee",
-      "source_mtime_ns": 1780366176616052156,
-      "described_at_utc": "2026-06-02T03:28:16Z",
+      "content_sha256": "fb61b29e722cee448ad0a7255d1e6281a94aeabaf8d1c2fc20801a08816ba445",
+      "git_blob": "82b970627531fc1fa3dbab5a38608c9de670da5c",
+      "source_mtime_ns": 1780424222759113444,
+      "described_at_utc": "2026-06-02T18:54:34Z",
       "generated_self_exempt": false
     },
     {
@@ -7124,10 +7124,10 @@
       "description_lines": [
         "EraIndependent option."
       ],
-      "content_sha256": "0cc41abb568c775af6cbf2e872385977024b9e23f66ee7d51759d459f7f4b576",
-      "git_blob": "d44f6b40b8a80484ef746ae8fc9738c77f5a236a",
-      "source_mtime_ns": 1780366176616052156,
-      "described_at_utc": "2026-06-02T03:28:16Z",
+      "content_sha256": "08ea45daa4732dcb896051c0a0de532f18bc59ebf1c37c02324cc7ba6864b735",
+      "git_blob": "950518f96ffcad3a263e0872f8f898d06665eeef",
+      "source_mtime_ns": 1780424222759113444,
+      "described_at_utc": "2026-06-02T18:54:34Z",
       "generated_self_exempt": false
     },
     {
@@ -7135,10 +7135,10 @@
       "description_lines": [
         "EraIndependent run."
       ],
-      "content_sha256": "d90e169525bd0c69b4595474fe0cbe633664c2652164e5911f0d2be8f66d9aba",
-      "git_blob": "755011cc700df55e7954d15a9700178233bb9ef6",
-      "source_mtime_ns": 1780366176616052156,
-      "described_at_utc": "2026-06-02T03:28:16Z",
+      "content_sha256": "7924e4340e5523fbf17231722cac5ec678875a154b055f97969361c9c5bf6997",
+      "git_blob": "ea65c6ace9e010932bfc46b1a01df910e2141c3c",
+      "source_mtime_ns": 1780424222759113444,
+      "described_at_utc": "2026-06-02T18:54:34Z",
       "generated_self_exempt": false
     },
     {
@@ -7520,10 +7520,10 @@
       "description_lines": [
         "cardano-cli argument parser. Mirrors upstream `Cardano.CLI.Parser` \u2014 the optparse-applicative parser that produces a `ClientCommand` from `argv`. Yggdrasil uses."
       ],
-      "content_sha256": "163b098522508149f123177ed68a646eee1a6c97934e381dfddd4123b6541e55",
-      "git_blob": "324d438ee05ed0f96d8744cab2f57bdbf07ccfa0",
-      "source_mtime_ns": 1780366176619985185,
-      "described_at_utc": "2026-06-02T03:28:17Z",
+      "content_sha256": "12ea922298787a7fc6db86e6258a21f846917a7ed9867220ad09be61c8b026ca",
+      "git_blob": "e45d2059b7b3b9490106078e35ab8ef581c4b796",
+      "source_mtime_ns": 1780424409386740546,
+      "described_at_utc": "2026-06-02T18:54:34Z",
       "generated_self_exempt": false
     },
     {
@@ -7608,10 +7608,10 @@
       "description_lines": [
         "Top-level cardano-cli run dispatcher. Mirrors upstream `Cardano.CLI.Run` \u2014 the dispatcher that routes a parsed `Command` to its per-cluster runner (Byron / Compatible /."
       ],
-      "content_sha256": "51153adb6dc0d1dc91ab7d2be245db67d725f862759f7c77a3d86144b2278f64",
-      "git_blob": "953402b01520176e90334f04c743086898b9446e",
-      "source_mtime_ns": 1780366176619985185,
-      "described_at_utc": "2026-06-02T03:28:17Z",
+      "content_sha256": "ca63c200fb1f099867bac18e949f8002f3ec748bedb8e24ce572c39ef5ddf7aa",
+      "git_blob": "14617e586049e83d542ef84fca674b7a4ee1471c",
+      "source_mtime_ns": 1780424409386740546,
+      "described_at_utc": "2026-06-02T18:54:34Z",
       "generated_self_exempt": false
     },
     {
@@ -10958,10 +10958,10 @@
         "Generated human-readable file inventory rendered from the filetree manifest.",
         "Self-exempt from recursive freshness checks because it is regenerated by the filetree script."
       ],
-      "content_sha256": "2bff3763e911eb7fbe02f858163b1b4f49ea76f50eca2e0779a86c4b05aa5067",
-      "git_blob": "602a1d0d40601dd14c9985343cf76e8d0cdb7bc9",
-      "source_mtime_ns": 1780419185227137522,
-      "described_at_utc": "2026-06-02T17:07:55Z",
+      "content_sha256": "ba7ba5f984734289f0400d98ac4888776978f6ff49c8917c56fbdb0d141c22d9",
+      "git_blob": "b0f9616ff0d61db138bf68d22b8827c6c41d4583",
+      "source_mtime_ns": 1780426997897119003,
+      "described_at_utc": "2026-06-02T19:46:09Z",
       "generated_self_exempt": true
     },
     {
@@ -10970,10 +10970,10 @@
         "Machine-readable source of truth for file descriptions and freshness metadata.",
         "Self-exempt from recursive freshness checks because it stores generated filetree state."
       ],
-      "content_sha256": "b1fb314b36b0cc2f9706a72e21fe532059a0e60b5131b3ce0a2fbf55758c76bc",
-      "git_blob": "bcb876d042fd0c3e698531eb7bcfe9134280438b",
-      "source_mtime_ns": 1780418997520314980,
-      "described_at_utc": "2026-06-02T17:07:55Z",
+      "content_sha256": "7d83d014b6a872b6cf4dc681d02dddc1859f82576c9c01557a48fc1036a3b32d",
+      "git_blob": "c2e3043bbf4c6f9d9327f93d30da8d538d4f2700",
+      "source_mtime_ns": 1780426478543642814,
+      "described_at_utc": "2026-06-02T19:46:09Z",
       "generated_self_exempt": true
     },
     {
@@ -18803,10 +18803,10 @@
       "description_lines": [
         "Core-First Completion TODO: [x] Create task tracking files before code changes."
       ],
-      "content_sha256": "9563d50bf86b10abc0f245c2ddf9f0303fbef786e76e77b634721d4bbf396fe2",
-      "git_blob": "25684a6ba9173c7114e653733ccbf00c8d2efd91",
-      "source_mtime_ns": 1780419904486014190,
-      "described_at_utc": "2026-06-02T17:07:58Z",
+      "content_sha256": "0101adfde4b9012399c3a6044417f63c146f473f4fb13fd23644683f73404ab1",
+      "git_blob": "681bbb5064290c943bd9836184c746bf8e96e9fe",
+      "source_mtime_ns": 1780429439873101706,
+      "described_at_utc": "2026-06-02T19:46:12Z",
       "generated_self_exempt": false
     },
     {

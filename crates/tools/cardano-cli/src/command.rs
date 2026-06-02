@@ -34,6 +34,13 @@ pub enum Command {
     /// Print pure-Rust cardano-cli compatibility version info.
     /// Mirrors upstream `DisplayVersion` arm.
     Version,
+    /// Hash files or data. Mirrors upstream `HashCmds` from
+    /// `Cardano.CLI.EraIndependent.Hash.Command`.
+    Hash {
+        /// Hash subcommand group.
+        #[command(subcommand)]
+        command: crate::era_independent::hash::command::HashCmds,
+    },
     /// Show resolved reference config paths and network magic.
     /// Mirrors upstream's `Cardano.CLI.Helper`-style operator
     /// introspection helpers; Yggdrasil-specific utility.

@@ -1,15 +1,15 @@
-//! EraIndependent option.
+//! EraIndependent hash parser notes.
+//!
+//! Mirrors upstream `Cardano.CLI.EraIndependent.Hash.Option`, where
+//! `pHashCmds` defines the `hash` subparser and `pGenesisHash` parses
+//! `hash genesis-file --genesis FILE`.
 //!
 //! ## Naming parity
 //!
 //! **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraIndependent/Hash/Option.hs`.
-//! R293 lands the file with the API skeleton. Concrete
-//! EraIndependent command implementations port from upstream over
-//! subsequent rounds + R295 integration tests.
+//! Yggdrasil uses `clap` derive rather than optparse-applicative; the
+//! executable parser is therefore the `Subcommand` derive on
+//! [`crate::era_independent::hash::command::HashCmds`] plus the
+//! top-level `Command::Hash` arm.
 
-/// EraIndependent option placeholder.
-///
-/// Mirrors upstream `Cardano.CLI.EraIndependent.Hash.Option` types; the Rust port lands
-/// as concrete subcommand implementations come online.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum OptionPlaceholder {}
+pub use crate::era_independent::hash::command::HashCmds;

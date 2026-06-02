@@ -10,13 +10,22 @@ fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..")
 }
 
+fn dev_script_path(name: &str) -> PathBuf {
+    workspace_root().join("dev/scripts").join(name)
+}
+
+fn evidence_script_path(name: &str) -> PathBuf {
+    workspace_root().join("dev/evidence").join(name)
+}
+
 fn script_command(script: &Path) -> Command {
     #[cfg(windows)]
     {
         let git_bash = Path::new(r"C:\Program Files\Git\bin\bash.exe");
-        let script_name = script
-            .file_name()
-            .expect("script path has a file name")
+        let workspace = workspace_root();
+        let script_rel = script
+            .strip_prefix(&workspace)
+            .unwrap_or(script)
             .to_string_lossy()
             .replace('\\', "/");
         let mut command = if git_bash.exists() {
@@ -24,8 +33,8 @@ fn script_command(script: &Path) -> Command {
         } else {
             Command::new("bash")
         };
-        command.arg(format!("scripts/{script_name}"));
-        command.current_dir(workspace_root());
+        command.arg(script_rel);
+        command.current_dir(workspace);
         command
     }
 
@@ -94,9 +103,7 @@ fn node_binary_default_config() {
 
 #[test]
 fn parallel_blockfetch_soak_script_help_is_available() {
-    let script = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../scripts")
-        .join("parallel_blockfetch_soak.sh");
+    let script = evidence_script_path("parallel_blockfetch_soak.sh");
     let output = script_command(&script)
         .arg("--help")
         .output()
@@ -113,9 +120,7 @@ fn parallel_blockfetch_soak_script_help_is_available() {
 
 #[test]
 fn parallel_blockfetch_soak_script_rejects_legacy_knob() {
-    let script = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../scripts")
-        .join("parallel_blockfetch_soak.sh");
+    let script = evidence_script_path("parallel_blockfetch_soak.sh");
     let output = script_command(&script)
         .env("MAX_CONCURRENT_BLOCK_FETCH_PEERS", "1")
         .output()
@@ -129,9 +134,7 @@ fn parallel_blockfetch_soak_script_rejects_legacy_knob() {
 
 #[test]
 fn parallel_blockfetch_soak_script_requires_haskell_when_tip_comparison_is_required() {
-    let script = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../scripts")
-        .join("parallel_blockfetch_soak.sh");
+    let script = evidence_script_path("parallel_blockfetch_soak.sh");
     let output = script_command(&script)
         .env("YGG_BIN", env!("CARGO_BIN_EXE_yggdrasil-node"))
         .env("REQUIRE_TIP_COMPARISON", "1")
@@ -147,9 +150,7 @@ fn parallel_blockfetch_soak_script_requires_haskell_when_tip_comparison_is_requi
 
 #[test]
 fn parallel_blockfetch_soak_script_guards_required_comparison_window() {
-    let script = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../scripts")
-        .join("parallel_blockfetch_soak.sh");
+    let script = evidence_script_path("parallel_blockfetch_soak.sh");
     let script_text =
         fs::read_to_string(&script).expect("BlockFetch soak script should be readable");
 
@@ -170,9 +171,7 @@ fn parallel_blockfetch_soak_script_guards_required_comparison_window() {
 
 #[test]
 fn preview_real_pool_producer_script_help_is_available() {
-    let script = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../scripts")
-        .join("run_preview_real_pool_producer.sh");
+    let script = dev_script_path("run_preview_real_pool_producer.sh");
     let output = script_command(&script)
         .arg("--help")
         .output()
@@ -194,9 +193,7 @@ fn preview_real_pool_producer_script_help_is_available() {
 
 #[test]
 fn preview_real_pool_producer_script_rejects_missing_credentials() {
-    let script = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../scripts")
-        .join("run_preview_real_pool_producer.sh");
+    let script = dev_script_path("run_preview_real_pool_producer.sh");
     let output = script_command(&script)
         .env("YGG_BIN", env!("CARGO_BIN_EXE_yggdrasil-node"))
         .env_remove("KES_SKEY_PATH")
@@ -213,9 +210,7 @@ fn preview_real_pool_producer_script_rejects_missing_credentials() {
 
 #[test]
 fn preview_real_pool_producer_script_fails_on_tip_comparison_error() {
-    let script = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../scripts")
-        .join("run_preview_real_pool_producer.sh");
+    let script = dev_script_path("run_preview_real_pool_producer.sh");
     let script_text = fs::read_to_string(&script).expect("preview runner should be readable");
 
     assert!(
@@ -227,9 +222,7 @@ fn preview_real_pool_producer_script_fails_on_tip_comparison_error() {
 
 #[test]
 fn preview_real_pool_producer_script_captures_metrics_snapshots() {
-    let script = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../scripts")
-        .join("run_preview_real_pool_producer.sh");
+    let script = dev_script_path("run_preview_real_pool_producer.sh");
     let script_text = fs::read_to_string(&script).expect("preview runner should be readable");
 
     assert!(
@@ -244,9 +237,7 @@ fn preview_real_pool_producer_script_captures_metrics_snapshots() {
 
 #[test]
 fn preview_real_pool_producer_script_validates_runtime_numbers() {
-    let script = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../scripts")
-        .join("run_preview_real_pool_producer.sh");
+    let script = dev_script_path("run_preview_real_pool_producer.sh");
     let script_text = fs::read_to_string(&script).expect("preview runner should be readable");
 
     assert!(
@@ -280,9 +271,7 @@ fn preview_real_pool_producer_script_validates_runtime_numbers() {
 
 #[test]
 fn preview_real_pool_producer_script_asserts_validate_report_role() {
-    let script = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../scripts")
-        .join("run_preview_real_pool_producer.sh");
+    let script = dev_script_path("run_preview_real_pool_producer.sh");
     let script_text = fs::read_to_string(&script).expect("preview runner should be readable");
 
     assert!(
@@ -313,9 +302,7 @@ fn preview_real_pool_producer_script_asserts_validate_report_role() {
 
 #[test]
 fn preview_real_pool_producer_script_requires_all_tip_checkpoints_when_enabled() {
-    let script = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../scripts")
-        .join("run_preview_real_pool_producer.sh");
+    let script = dev_script_path("run_preview_real_pool_producer.sh");
     let script_text = fs::read_to_string(&script).expect("preview runner should be readable");
 
     assert!(
@@ -334,9 +321,7 @@ fn preview_real_pool_producer_script_requires_all_tip_checkpoints_when_enabled()
 
 #[test]
 fn preview_real_pool_producer_script_writes_summary_artifact() {
-    let script = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../scripts")
-        .join("run_preview_real_pool_producer.sh");
+    let script = dev_script_path("run_preview_real_pool_producer.sh");
     let script_text = fs::read_to_string(&script).expect("preview runner should be readable");
 
     assert!(
@@ -363,9 +348,7 @@ fn preview_real_pool_producer_script_writes_summary_artifact() {
 
 #[test]
 fn preview_real_pool_producer_script_requires_distinct_active_pool_evidence() {
-    let script = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../scripts")
-        .join("run_preview_real_pool_producer.sh");
+    let script = dev_script_path("run_preview_real_pool_producer.sh");
     let script_text = fs::read_to_string(&script).expect("preview runner should be readable");
 
     assert!(
@@ -388,9 +371,7 @@ fn preview_real_pool_producer_script_requires_distinct_active_pool_evidence() {
 
 #[test]
 fn preview_generated_pool_registration_script_help_is_available() {
-    let script = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../scripts")
-        .join("register_preview_generated_pool.sh");
+    let script = dev_script_path("register_preview_generated_pool.sh");
     let output = script_command(&script)
         .arg("--help")
         .output()
@@ -412,9 +393,7 @@ fn preview_generated_pool_registration_script_help_is_available() {
 
 #[test]
 fn preview_generated_pool_registration_script_is_preview_only() {
-    let script = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../scripts")
-        .join("register_preview_generated_pool.sh");
+    let script = dev_script_path("register_preview_generated_pool.sh");
     let output = script_command(&script)
         .env("NETWORK_MAGIC", "1")
         .output()
@@ -429,9 +408,7 @@ fn preview_generated_pool_registration_script_is_preview_only() {
 
 #[test]
 fn preview_generated_pool_registration_script_orders_certificates() {
-    let script = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../scripts")
-        .join("register_preview_generated_pool.sh");
+    let script = dev_script_path("register_preview_generated_pool.sh");
     let script_text =
         fs::read_to_string(&script).expect("preview registration script should be readable");
 
@@ -463,9 +440,7 @@ fn preview_generated_pool_registration_script_orders_certificates() {
 
 #[test]
 fn preview_generated_pool_registration_script_supports_offline_koios_submit() {
-    let script = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../scripts")
-        .join("register_preview_generated_pool.sh");
+    let script = dev_script_path("register_preview_generated_pool.sh");
     let script_text =
         fs::read_to_string(&script).expect("preview registration script should be readable");
 
@@ -498,9 +473,7 @@ fn preview_generated_pool_registration_script_supports_offline_koios_submit() {
 
 #[test]
 fn preview_pool_activation_status_script_help_is_available() {
-    let script = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../scripts")
-        .join("preview_pool_activation_status.sh");
+    let script = dev_script_path("preview_pool_activation_status.sh");
     let output = script_command(&script)
         .arg("--help")
         .output()
@@ -517,9 +490,7 @@ fn preview_pool_activation_status_script_help_is_available() {
 
 #[test]
 fn preview_pool_activation_status_script_requires_preview_magic() {
-    let script = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../scripts")
-        .join("preview_pool_activation_status.sh");
+    let script = dev_script_path("preview_pool_activation_status.sh");
     let output = script_command(&script)
         .env("NETWORK_MAGIC", "1")
         .env(
@@ -538,9 +509,7 @@ fn preview_pool_activation_status_script_requires_preview_magic() {
 
 #[test]
 fn preview_pool_activation_status_script_prints_active_epoch_gate() {
-    let script = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../scripts")
-        .join("preview_pool_activation_status.sh");
+    let script = dev_script_path("preview_pool_activation_status.sh");
     let script_text =
         fs::read_to_string(&script).expect("preview pool status script should be readable");
 
@@ -573,9 +542,7 @@ fn preview_pool_activation_status_script_prints_active_epoch_gate() {
 
 #[test]
 fn preview_active_pool_signoff_script_help_is_available() {
-    let script = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../scripts")
-        .join("run_preview_active_pool_signoff.sh");
+    let script = dev_script_path("run_preview_active_pool_signoff.sh");
     let output = script_command(&script)
         .arg("--help")
         .output()
@@ -594,9 +561,7 @@ fn preview_active_pool_signoff_script_help_is_available() {
 
 #[test]
 fn preview_active_pool_signoff_script_orchestrates_required_gates() {
-    let script = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../scripts")
-        .join("run_preview_active_pool_signoff.sh");
+    let script = dev_script_path("run_preview_active_pool_signoff.sh");
     let script_text =
         fs::read_to_string(&script).expect("preview active-pool signoff script should be readable");
 
@@ -647,9 +612,7 @@ fn real_pool_relay_only_scripts_force_non_producing_node() {
         "run_preprod_real_pool_producer.sh",
         "run_mainnet_real_pool_producer.sh",
     ] {
-        let script = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../scripts")
-            .join(script_name);
+        let script = dev_script_path(script_name);
         let script_text = fs::read_to_string(&script).expect("real-pool script should be readable");
 
         assert!(
@@ -665,9 +628,7 @@ fn real_pool_relay_only_scripts_force_non_producing_node() {
 
 #[test]
 fn mainnet_relay_hot_peer_check_counts_big_ledger_peers() {
-    let script = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../scripts")
-        .join("run_mainnet_real_pool_producer.sh");
+    let script = dev_script_path("run_mainnet_real_pool_producer.sh");
     let script_text = fs::read_to_string(&script).expect("mainnet script should be readable");
 
     assert!(
@@ -678,9 +639,7 @@ fn mainnet_relay_hot_peer_check_counts_big_ledger_peers() {
 
 #[test]
 fn upstream_drift_script_uses_config_crate_pin_source() {
-    let script = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../scripts")
-        .join("check_upstream_drift.sh");
+    let script = dev_script_path("check_upstream_drift.sh");
     let script_text = fs::read_to_string(&script).expect("drift script should be readable");
 
     assert!(

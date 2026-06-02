@@ -82,6 +82,30 @@ mod tests {
         assert_eq!(cmd, Command::Version);
     }
 
+    /// `hash genesis-file --genesis …` parses through the nested
+    /// upstream `HashCmds` group.
+    #[test]
+    fn parses_hash_genesis_file() {
+        let cmd = parse_command([
+            "yggdrasil-cardano-cli",
+            "hash",
+            "genesis-file",
+            "--genesis",
+            "/tmp/genesis.json",
+        ])
+        .expect("parse");
+        assert_eq!(
+            cmd,
+            Command::Hash {
+                command: crate::era_independent::hash::command::HashCmds::HashGenesisFile {
+                    genesis_file: crate::era_independent::hash::command::GenesisFile::new(
+                        "/tmp/genesis.json",
+                    ),
+                },
+            }
+        );
+    }
+
     /// `show-upstream-config --network mainnet` parses to the
     /// expected variant with `upstream_config_root: None`.
     #[test]

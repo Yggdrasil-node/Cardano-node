@@ -4,7 +4,7 @@
 > Update descriptions in the manifest, then run `python dev/test/filetree.py accept-current`.
 
 - Schema version: 1
-- Generated at: 2026-06-02T17:11:30Z
+- Generated at: 2026-06-02T19:48:20Z
 - Files described: 1701
 
 ## Workspace
