@@ -41,6 +41,13 @@ pub enum Command {
         #[command(subcommand)]
         command: crate::era_independent::hash::command::HashCmds,
     },
+    /// Payment address commands. Mirrors upstream
+    /// `Cardano.CLI.EraIndependent.Address.Command.AddressCmds`.
+    Address {
+        /// Address subcommand group.
+        #[command(subcommand)]
+        command: crate::era_independent::address::command::AddressCmds,
+    },
     /// Show resolved reference config paths and network magic.
     /// Mirrors upstream's `Cardano.CLI.Helper`-style operator
     /// introspection helpers; Yggdrasil-specific utility.

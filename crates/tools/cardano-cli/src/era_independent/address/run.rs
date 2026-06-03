@@ -14,6 +14,41 @@ use std::path::Path;
 
 use eyre::{Result, WrapErr};
 
+use crate::era_independent::address::command::AddressCmds;
+
+/// Run an [`AddressCmds`] value.
+///
+/// Mirrors upstream `runAddressCmds` from
+/// `Cardano.CLI.EraIndependent.Address.Run`.
+pub fn run_address_cmds(command: AddressCmds) -> Result<()> {
+    match command {
+        AddressCmds::AddressKeyGen {
+            verification_key_file,
+            signing_key_file,
+        } => run_address_key_gen_cmd(&verification_key_file, &signing_key_file),
+        AddressCmds::AddressKeyHash {
+            payment_verification_key_file,
+            out_file,
+        } => run_address_key_hash_cmd_with_output(
+            &payment_verification_key_file,
+            out_file.as_deref(),
+        ),
+        AddressCmds::AddressBuild {
+            payment_verification_key_file,
+            stake_verification_key_file,
+            mainnet,
+            testnet_magic,
+            out_file,
+        } => run_address_build_cmd(
+            &payment_verification_key_file,
+            stake_verification_key_file.as_deref(),
+            mainnet,
+            testnet_magic,
+            out_file.as_deref(),
+        ),
+    }
+}
+
 /// Run `address key-gen` — generate a fresh Ed25519 payment keypair
 /// and write both keys as TextEnvelope JSON files.
 ///
@@ -45,6 +80,29 @@ pub fn run_address_key_gen_cmd(
 /// Both `Payment…` and `Stake…` verification-key envelopes are
 /// accepted: the wire shape is identical (32-byte VK).
 pub fn run_address_key_hash_cmd(payment_verification_key_file: &Path) -> Result<()> {
+    run_address_key_hash_cmd_with_output(payment_verification_key_file, None)
+}
+
+/// Run `address key-hash` with optional file output.
+///
+/// Mirrors upstream `runAddressKeyHashCmd`, including the
+/// `Maybe (File () Out)` output selector.
+pub fn run_address_key_hash_cmd_with_output(
+    payment_verification_key_file: &Path,
+    out_file: Option<&Path>,
+) -> Result<()> {
+    let hash_hex = address_key_hash_hex(payment_verification_key_file)?;
+    match out_file {
+        Some(path) => std::fs::write(path, format!("{hash_hex}\n"))
+            .wrap_err_with(|| format!("failed to write --out-file {}", path.display()))?,
+        None => println!("{hash_hex}"),
+    }
+    Ok(())
+}
+
+/// Compute the lowercase Blake2b-224 verification-key hash printed
+/// by `address key-hash`.
+pub fn address_key_hash_hex(payment_verification_key_file: &Path) -> Result<String> {
     let envelope_bytes = std::fs::read(payment_verification_key_file).wrap_err_with(|| {
         format!(
             "failed to read --payment-verification-key-file {}",
@@ -54,8 +112,7 @@ pub fn run_address_key_hash_cmd(payment_verification_key_file: &Path) -> Result<
     let key_bytes = read_verification_key_text_envelope(&envelope_bytes)?;
     let hash = yggdrasil_crypto::hash_bytes_224(&key_bytes);
     // Upstream prints lowercase hex, no `0x` prefix (28 bytes = 56 chars).
-    println!("{}", hex::encode(hash.0));
-    Ok(())
+    Ok(hex::encode(hash.0))
 }
 
 /// Run `address build` — construct a Shelley payment address and
@@ -462,6 +519,32 @@ mod tests {
         let vk_path = dir.join("p.vkey");
         run_address_key_gen_cmd(&vk_path, &dir.join("p.skey")).expect("key-gen");
         run_address_key_hash_cmd(&vk_path).expect("key-hash must succeed on a valid vkey");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `address key-hash --out-file` writes the same 56-hex-character
+    /// Blake2b-224 hash that the stdout form computes.
+    #[test]
+    fn key_hash_writes_out_file() {
+        let dir = std::env::temp_dir().join(format!(
+            "yggdrasil-cli-kh-out-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let vk_path = dir.join("p.vkey");
+        let out_path = dir.join("hash.txt");
+        run_address_key_gen_cmd(&vk_path, &dir.join("p.skey")).expect("key-gen");
+        let expected = address_key_hash_hex(&vk_path).expect("hash hex");
+
+        run_address_key_hash_cmd_with_output(&vk_path, Some(&out_path))
+            .expect("key-hash --out-file");
+
+        let written = std::fs::read_to_string(&out_path).expect("read out file");
+        assert_eq!(written, format!("{expected}\n"));
+        assert_eq!(expected.len(), 56);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

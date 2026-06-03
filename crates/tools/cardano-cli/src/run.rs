@@ -75,6 +75,10 @@ pub fn run_command_with(command: Command, client: &dyn LsqClient) -> Result<()> 
             // R518: era-independent pure hash subcommands.
             crate::era_independent::hash::run::run_hash_cmds(command)
         }
+        Command::Address { command } => {
+            // R519: upstream-shaped era-independent address group.
+            crate::era_independent::address::run::run_address_cmds(command)
+        }
         Command::ShowUpstreamConfig {
             network,
             upstream_config_root,

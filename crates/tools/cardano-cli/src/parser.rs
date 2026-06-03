@@ -106,6 +106,108 @@ mod tests {
         );
     }
 
+    /// `address key-gen --verification-key-file … --signing-key-file …`
+    /// parses through the nested upstream `AddressCmds` group.
+    #[test]
+    fn parses_address_key_gen_nested() {
+        let cmd = parse_command([
+            "yggdrasil-cardano-cli",
+            "address",
+            "key-gen",
+            "--verification-key-file",
+            "/tmp/p.vkey",
+            "--signing-key-file",
+            "/tmp/p.skey",
+        ])
+        .expect("parse");
+        assert_eq!(
+            cmd,
+            Command::Address {
+                command: crate::era_independent::address::command::AddressCmds::AddressKeyGen {
+                    verification_key_file: PathBuf::from("/tmp/p.vkey"),
+                    signing_key_file: PathBuf::from("/tmp/p.skey"),
+                },
+            }
+        );
+    }
+
+    /// `address key-hash --payment-verification-key-file … --out-file …`
+    /// parses through the nested upstream `AddressCmds` group.
+    #[test]
+    fn parses_address_key_hash_nested() {
+        let cmd = parse_command([
+            "yggdrasil-cardano-cli",
+            "address",
+            "key-hash",
+            "--payment-verification-key-file",
+            "/tmp/p.vkey",
+            "--out-file",
+            "/tmp/hash.txt",
+        ])
+        .expect("parse");
+        assert_eq!(
+            cmd,
+            Command::Address {
+                command: crate::era_independent::address::command::AddressCmds::AddressKeyHash {
+                    payment_verification_key_file: PathBuf::from("/tmp/p.vkey"),
+                    out_file: Some(PathBuf::from("/tmp/hash.txt")),
+                },
+            }
+        );
+    }
+
+    /// `address build … --testnet-magic … --out-file …` parses
+    /// through the nested upstream `AddressCmds` group.
+    #[test]
+    fn parses_address_build_nested() {
+        let cmd = parse_command([
+            "yggdrasil-cardano-cli",
+            "address",
+            "build",
+            "--payment-verification-key-file",
+            "/tmp/p.vkey",
+            "--stake-verification-key-file",
+            "/tmp/s.vkey",
+            "--testnet-magic",
+            "2",
+            "--out-file",
+            "/tmp/addr.txt",
+        ])
+        .expect("parse");
+        assert_eq!(
+            cmd,
+            Command::Address {
+                command: crate::era_independent::address::command::AddressCmds::AddressBuild {
+                    payment_verification_key_file: PathBuf::from("/tmp/p.vkey"),
+                    stake_verification_key_file: Some(PathBuf::from("/tmp/s.vkey")),
+                    mainnet: false,
+                    testnet_magic: Some(2),
+                    out_file: Some(PathBuf::from("/tmp/addr.txt")),
+                },
+            }
+        );
+    }
+
+    /// `address build` rejects `--mainnet` + `--testnet-magic`
+    /// together in the nested upstream command group.
+    #[test]
+    fn address_build_nested_rejects_both_network_flags() {
+        let result = parse_command([
+            "yggdrasil-cardano-cli",
+            "address",
+            "build",
+            "--payment-verification-key-file",
+            "/tmp/p.vkey",
+            "--mainnet",
+            "--testnet-magic",
+            "2",
+        ]);
+        assert!(
+            matches!(result, Err(ParseError::Clap(_))),
+            "conflicting nested --mainnet + --testnet-magic must be a clap error; got {result:?}"
+        );
+    }
+
     /// `show-upstream-config --network mainnet` parses to the
     /// expected variant with `upstream_config_root: None`.
     #[test]
