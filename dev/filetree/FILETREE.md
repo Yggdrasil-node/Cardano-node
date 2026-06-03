@@ -4,8 +4,8 @@
 > Update descriptions in the manifest, then run `python dev/test/filetree.py accept-current`.
 
 - Schema version: 1
-- Generated at: 2026-06-02T19:48:20Z
-- Files described: 1701
+- Generated at: 2026-06-02T23:52:27Z
+- Files described: 1700
 
 ## Workspace
 
@@ -3412,6 +3412,68 @@
   - Shell helper script for run preview real pool producer workflows.
 - `dev/scripts/yggdrasil-node.service`
   - Project file at dev/scripts/yggdrasil-node.service.
+- `dev/specs/AGENTS.md`
+  - Guidance for vendored upstream test vectors and pinned specification artifacts under dev/specs/.: This directory holds vendored upstream test corpora that drive parity tests in the
+- `dev/specs/upstream-test-vectors/AGENTS.md`
+  - The official upstream vector and golden artifacts used for parity validation.: This directory vendors official upstream vector and golden artifacts used for parity validation. Rese
+- `dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/AGENTS.md`
+  - Scope: This directory corresponds to a single pinned upstream commit snapshot.
+- `dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/AGENTS.md`
+  - Scope: This directory contains vendored fixture content from upstream `cardano-crypto-class`.
+- `dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/bls12-381-test-vectors/AGENTS.md`
+  - Scope: This directory groups upstream BLS12-381 vector corpora used for crypto parity validation.
+- `dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/bls12-381-test-vectors/test_vectors/AGENTS.md`
+  - Scope: This directory contains raw upstream BLS12-381 vector files.
+- `dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/bls12-381-test-vectors/test_vectors/bls_sig_aug_test_vectors`
+  - Project file at dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/bls12-381-test-vectors/test_vectors/bls_sig_aug_test_vectors.
+- `dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/bls12-381-test-vectors/test_vectors/ec_operations_test_vectors`
+  - Project file at dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/bls12-381-test-vectors/test_vectors/ec_operations_test_vectors.
+- `dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/bls12-381-test-vectors/test_vectors/h2c_large_dst`
+  - Project file at dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/bls12-381-test-vectors/test_vectors/h2c_large_dst.
+- `dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/bls12-381-test-vectors/test_vectors/pairing_test_vectors`
+  - Project file at dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/bls12-381-test-vectors/test_vectors/pairing_test_vectors.
+- `dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/bls12-381-test-vectors/test_vectors/serde_test_vectors`
+  - Project file at dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/bls12-381-test-vectors/test_vectors/serde_test_vectors.
+- `dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/AGENTS.md`
+  - Scope: This directory contains vendored Praos crypto fixture content from upstream `cardano-crypto-praos`.
+- `dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/AGENTS.md`
+  - Scope: This directory contains raw upstream Praos VRF vector files used by crypto parity tests.
+- `dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver03_generated_1`
+  - Project file at dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver03_generated_1.
+- `dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver03_generated_2`
+  - Project file at dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver03_generated_2.
+- `dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver03_generated_3`
+  - Project file at dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver03_generated_3.
+- `dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver03_generated_4`
+  - Project file at dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver03_generated_4.
+- `dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver03_standard_10`
+  - Project file at dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver03_standard_10.
+- `dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver03_standard_11`
+  - Project file at dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver03_standard_11.
+- `dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver03_standard_12`
+  - Project file at dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver03_standard_12.
+- `dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver13_generated_1`
+  - Project file at dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver13_generated_1.
+- `dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver13_generated_2`
+  - Project file at dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver13_generated_2.
+- `dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver13_generated_3`
+  - Project file at dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver13_generated_3.
+- `dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver13_generated_4`
+  - Project file at dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver13_generated_4.
+- `dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver13_standard_10`
+  - Project file at dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver13_standard_10.
+- `dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver13_standard_11`
+  - Project file at dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver13_standard_11.
+- `dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver13_standard_12`
+  - Project file at dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver13_standard_12.
+- `dev/specs/upstream-test-vectors/cardano-base/AGENTS.md`
+  - Scope: This directory is a vendored mirror root for upstream `cardano-base` fixture content.
+- `dev/supply-chain/README.md`
+  - `dev/supply-chain/` — cargo-vet audit trail: Wave 7 PR 21. Seeds the [cargo-vet](https://mozilla.github.io/cargo-vet/).
+- `dev/supply-chain/audits.toml`
+  - TOML configuration file for audits.
+- `dev/supply-chain/config.toml`
+  - TOML configuration file for config.
 - `dev/test/audit-strict-mirror.py`
   - Project file at dev/test/audit-strict-mirror.py.
 - `dev/test/check-core-closeout-artifacts.py`
@@ -3440,8 +3502,10 @@
 
 ## Codex
 
-- `.codex/config.toml`
-  - TOML configuration file for config.
+- `.codex/tasks/lessons.md`
+  - Lessons: Start by restoring local parity infrastructure before making behavior claims. A green Rust build does not prove upstream parity when the Haskell reference tree is absent.
+- `.codex/tasks/todo.md`
+  - Core-First Completion TODO: [ ] Full-completion continuation plan (2026-06-02).
 
 ## Other
 
@@ -3487,72 +3551,6 @@
   - Project file at .github/workflows/supply-chain-audit.yml.
 - `.github/workflows/upstream-cardano-node-tests.yml`
   - Project file at .github/workflows/upstream-cardano-node-tests.yml.
-- `specs/AGENTS.md`
-  - Guidance for vendored upstream test vectors and pinned specification artifacts under specs/.: This directory holds vendored upstream test corpora that drive parity tests in the wor
-- `specs/upstream-test-vectors/AGENTS.md`
-  - The official upstream vector and golden artifacts used for parity validation.: This directory vendors official upstream vector and golden artifacts used for parity validation. Rese
-- `specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/AGENTS.md`
-  - Scope: This directory corresponds to a single pinned upstream commit snapshot.
-- `specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/AGENTS.md`
-  - Scope: This directory contains vendored fixture content from upstream `cardano-crypto-class`.
-- `specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/bls12-381-test-vectors/AGENTS.md`
-  - Scope: This directory groups upstream BLS12-381 vector corpora used for crypto parity validation.
-- `specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/bls12-381-test-vectors/test_vectors/AGENTS.md`
-  - Scope: This directory contains raw upstream BLS12-381 vector files.
-- `specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/bls12-381-test-vectors/test_vectors/bls_sig_aug_test_vectors`
-  - Project file at specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/bls12-381-test-vectors/test_vectors/bls_sig_aug_test_vectors.
-- `specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/bls12-381-test-vectors/test_vectors/ec_operations_test_vectors`
-  - Project file at specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/bls12-381-test-vectors/test_vectors/ec_operations_test_vectors.
-- `specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/bls12-381-test-vectors/test_vectors/h2c_large_dst`
-  - Project file at specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/bls12-381-test-vectors/test_vectors/h2c_large_dst.
-- `specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/bls12-381-test-vectors/test_vectors/pairing_test_vectors`
-  - Project file at specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/bls12-381-test-vectors/test_vectors/pairing_test_vectors.
-- `specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/bls12-381-test-vectors/test_vectors/serde_test_vectors`
-  - Project file at specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/bls12-381-test-vectors/test_vectors/serde_test_vectors.
-- `specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/AGENTS.md`
-  - Scope: This directory contains vendored Praos crypto fixture content from upstream `cardano-crypto-praos`.
-- `specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/AGENTS.md`
-  - Scope: This directory contains raw upstream Praos VRF vector files used by crypto parity tests.
-- `specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver03_generated_1`
-  - Project file at specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver03_generated_1.
-- `specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver03_generated_2`
-  - Project file at specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver03_generated_2.
-- `specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver03_generated_3`
-  - Project file at specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver03_generated_3.
-- `specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver03_generated_4`
-  - Project file at specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver03_generated_4.
-- `specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver03_standard_10`
-  - Project file at specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver03_standard_10.
-- `specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver03_standard_11`
-  - Project file at specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver03_standard_11.
-- `specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver03_standard_12`
-  - Project file at specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver03_standard_12.
-- `specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver13_generated_1`
-  - Project file at specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver13_generated_1.
-- `specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver13_generated_2`
-  - Project file at specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver13_generated_2.
-- `specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver13_generated_3`
-  - Project file at specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver13_generated_3.
-- `specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver13_generated_4`
-  - Project file at specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver13_generated_4.
-- `specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver13_standard_10`
-  - Project file at specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver13_standard_10.
-- `specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver13_standard_11`
-  - Project file at specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver13_standard_11.
-- `specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver13_standard_12`
-  - Project file at specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver13_standard_12.
-- `specs/upstream-test-vectors/cardano-base/AGENTS.md`
-  - Scope: This directory is a vendored mirror root for upstream `cardano-base` fixture content.
-- `supply-chain/README.md`
-  - `supply-chain/` — cargo-vet audit trail: Wave 7 PR 21. Seeds the [cargo-vet](https://mozilla.github.io/cargo-vet/).
-- `supply-chain/audits.toml`
-  - TOML configuration file for audits.
-- `supply-chain/config.toml`
-  - TOML configuration file for config.
-- `tasks/lessons.md`
-  - Lessons: Start by restoring local parity infrastructure before making behavior claims. A green Rust build does not prove upstream parity when the Haskell reference tree is absent.
-- `tasks/todo.md`
-  - Core-First Completion TODO: [x] Create task tracking files before code changes.
 - `xtask/AGENTS.md`
   - xtask — workspace developer subcommands: Wave 9 PR 27. Lives at the workspace root (not under `crates/`) so.
 - `xtask/Cargo.toml`

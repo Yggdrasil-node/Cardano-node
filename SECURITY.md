@@ -38,7 +38,7 @@ Out of scope:
 - Development-only tooling (operator scripts, harnesses, fixtures).
 - Issues requiring physical access to the operator's machine.
 - Self-DoS by misconfiguration that the operator could correct.
-- Reports against vendored upstream test vectors (`specs/upstream-test-vectors/`)
+- Reports against vendored upstream test vectors (`dev/specs/upstream-test-vectors/`)
   that originate from upstream and are mirrored unchanged.
 
 ## Supported versions

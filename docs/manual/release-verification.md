@@ -159,5 +159,5 @@ build's resolved dep graph.
   stable across releases.
 - [`docs/DEPENDENCIES.md`](../DEPENDENCIES.md) — license / FFI
   posture for every dep in the SBOM.
-- [`supply-chain/README.md`](../../supply-chain/README.md) —
+- [`dev/supply-chain/README.md`](../../dev/supply-chain/README.md) —
   cargo-vet audit framework (Wave 7 PR 21).

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at_utc": "2026-06-02T19:46:12Z",
+  "generated_at_utc": "2026-06-02T23:52:27Z",
   "description_policy": "Each entry has one or two concise human-maintained description lines. Run accept-current after reviewing stale entries.",
   "files": [
     {
@@ -15,14 +15,25 @@
       "generated_self_exempt": false
     },
     {
-      "path": ".codex/config.toml",
+      "path": ".codex/tasks/lessons.md",
       "description_lines": [
-        "TOML configuration file for config."
+        "Lessons: Start by restoring local parity infrastructure before making behavior claims. A green Rust build does not prove upstream parity when the Haskell reference tree is absent."
       ],
-      "content_sha256": "25b3c3e54f4680321fecba0c673f3d579b1027cda73f0aa3e7fef46373b34acd",
-      "git_blob": "9ac7c6ee16fa0ba0b50b0a47a6d2cbaaff3b6eb1",
-      "source_mtime_ns": 1780366176517726416,
-      "described_at_utc": "2026-06-02T03:28:06Z",
+      "content_sha256": "802d29c0d8a2e2c44d087514e38927d08819cbeb166f21a4617cec7f29594138",
+      "git_blob": "378d60cca98cb62f16eec6a172c437cc7b91e713",
+      "source_mtime_ns": 1780415613918119236,
+      "described_at_utc": "2026-06-02T23:52:19Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": ".codex/tasks/todo.md",
+      "description_lines": [
+        "Core-First Completion TODO: [ ] Full-completion continuation plan (2026-06-02)."
+      ],
+      "content_sha256": "0101adfde4b9012399c3a6044417f63c146f473f4fb13fd23644683f73404ab1",
+      "git_blob": "681bbb5064290c943bd9836184c746bf8e96e9fe",
+      "source_mtime_ns": 1780429439873101706,
+      "described_at_utc": "2026-06-02T23:52:19Z",
       "generated_self_exempt": false
     },
     {
@@ -97,10 +108,10 @@
       "description_lines": [
         "Project file at .github/CODEOWNERS."
       ],
-      "content_sha256": "13f752ee15621efe0db408d37fbdcc9fa49cf901f2bdc4f58b8164881baab1b2",
-      "git_blob": "032fca27e4d111d9e602af896c0b57f79ed7d375",
-      "source_mtime_ns": 1780418064494109419,
-      "described_at_utc": "2026-06-02T16:49:42Z",
+      "content_sha256": "20957a67b0b45f46ed3cb1b3606098c6395397e4e6c0d1995c1e44c657dd4560",
+      "git_blob": "b07a3b2d401d34550978558b699bbba600936c80",
+      "source_mtime_ns": 1780443748560222719,
+      "described_at_utc": "2026-06-02T23:52:19Z",
       "generated_self_exempt": false
     },
     {
@@ -163,10 +174,10 @@
       "description_lines": [
         "Project file at .github/workflows/ci.yml."
       ],
-      "content_sha256": "9aaee13cf3359626d2bc6e0eaff285699387b67ed50fce1d04787e77d002ac3f",
-      "git_blob": "2e3fad07866aa336a0b9b5288dcbf04aff478626",
-      "source_mtime_ns": 1780409799354157478,
-      "described_at_utc": "2026-06-02T14:48:31Z",
+      "content_sha256": "693c72718aa298d6971361821df50081059455a06b3e4884321b8f441d6349c2",
+      "git_blob": "bb1865d2ea66b810b9bc0eebba64573474e427f6",
+      "source_mtime_ns": 1780443041542486482,
+      "described_at_utc": "2026-06-02T23:52:19Z",
       "generated_self_exempt": false
     },
     {
@@ -251,10 +262,10 @@
       "description_lines": [
         "Project file at .github/workflows/supply-chain-audit.yml."
       ],
-      "content_sha256": "0258ace505ae3472962e6f5ed3a27e92655a6c43442dabe9aca88efa3135ae41",
-      "git_blob": "032cf52709a3473cd9ad760b80e5b55050adb399",
-      "source_mtime_ns": 1780366176517726416,
-      "described_at_utc": "2026-06-02T03:28:07Z",
+      "content_sha256": "59900c23742ed32b1cbac211f86413d13db9f2783b721e0f2e6e9bfe01ca517e",
+      "git_blob": "44b0c9ed36b869073e5ccea40082832673dadec0",
+      "source_mtime_ns": 1780442203300208416,
+      "described_at_utc": "2026-06-02T23:52:19Z",
       "generated_self_exempt": false
     },
     {
@@ -286,10 +297,10 @@
         "Top-level workspace rules + rolling parity journal for Yggdrasil contributors.",
         "Defines upstream-reference expectations, command gates, autoplanning, and the parity-matrix gate."
       ],
-      "content_sha256": "78bb866da28a7b8dc9c59dc8bf680ea42582a29099a8d661dd0c600a4f8a11fc",
-      "git_blob": "e874cffe3c6d6d819c35afa7af631dea65c592b0",
-      "source_mtime_ns": 1780407974941877546,
-      "described_at_utc": "2026-06-02T14:06:34Z",
+      "content_sha256": "9de26588b1b9815349b33be149bb2de14acccb4c775c96c084708f714bf3284f",
+      "git_blob": "e12fb4749f47c1ff855ab98f3528d50f65d98978",
+      "source_mtime_ns": 1780441274936646507,
+      "described_at_utc": "2026-06-02T23:52:19Z",
       "generated_self_exempt": false
     },
     {
@@ -297,10 +308,10 @@
       "description_lines": [
         "Changelog: All notable changes to Yggdrasil are documented here."
       ],
-      "content_sha256": "baee8bb1da592b42f46a4199764406a53dc74ef175a8281df5b08cbc747f4285",
-      "git_blob": "7e50a1d8b99b1f101e3a31aa5cd094a85330493c",
-      "source_mtime_ns": 1780407974949429568,
-      "described_at_utc": "2026-06-02T14:06:34Z",
+      "content_sha256": "1460db16abcc242e77d2f66f6f57c6a00cd55ee80dca7456e1fbd2803bd632ad",
+      "git_blob": "58b4a490b2b5d0cd13de292f937ab43e29cc285a",
+      "source_mtime_ns": 1780441274940559170,
+      "described_at_utc": "2026-06-02T23:52:19Z",
       "generated_self_exempt": false
     },
     {
@@ -366,10 +377,10 @@
       "description_lines": [
         "Security Policy: If you discover a security vulnerability in Yggdrasil \u2014 particularly anything."
       ],
-      "content_sha256": "4a21993ad43e9af1d6bc69860f1e630d4afa793259478e4eaa80e355d2af470e",
-      "git_blob": "33ec1ea829b4840a9d5c7bad2ba1e88ff0eb9344",
-      "source_mtime_ns": 1780366176521659445,
-      "described_at_utc": "2026-06-02T03:28:07Z",
+      "content_sha256": "8d545acdac3bb53485e67c8cd1e5efa1eebf2f2da94b40e8e3eb6cd3d4930a9e",
+      "git_blob": "fab7e3878721f290674d0ece7bce478c4fec5e9a",
+      "source_mtime_ns": 1780441274936646507,
+      "described_at_utc": "2026-06-02T23:52:19Z",
       "generated_self_exempt": false
     },
     {
@@ -1372,10 +1383,10 @@
       "description_lines": [
         "Rust integration or regression tests for upstream vectors behavior."
       ],
-      "content_sha256": "5eeadec63f7e13971b716cd1df7105095a14262506255049640281155d6b169f",
-      "git_blob": "20f403e920bb030f4d6321afb9c5be52d45abec7",
-      "source_mtime_ns": 1780366176537391564,
-      "described_at_utc": "2026-06-02T03:28:09Z",
+      "content_sha256": "5b1a0b321bb44a82f1fffeda7efe822934ace2c868629ca1cb436532d744eadb",
+      "git_blob": "d4dc265fdabe315af5f6637b7b9cac365f255b3d",
+      "source_mtime_ns": 1780441274944471833,
+      "described_at_utc": "2026-06-02T23:52:19Z",
       "generated_self_exempt": false
     },
     {
@@ -3996,10 +4007,10 @@
       "description_lines": [
         "Pinned upstream IntersectMBO repository commit SHAs. Yggdrasil is a pure-Rust port; there are no Cargo `git =` dependencies. Pinning is therefore *documentary*: each constant recor"
       ],
-      "content_sha256": "b120cae708204b83f194d9a6425ab697545827c46c65c24e6823bded7aefcd24",
-      "git_blob": "6ecb9bff199199f0179893ea2ac2ccaaf7eb7bcf",
-      "source_mtime_ns": 1780395274980346324,
-      "described_at_utc": "2026-06-02T12:05:54Z",
+      "content_sha256": "b633e47488557bb29e5ee61a9c7e7589af87e09f71bd6e04e2f969a662188a9b",
+      "git_blob": "d40be063099bfafbf35dfac1f463d55f8d9e33ff",
+      "source_mtime_ns": 1780441274944471833,
+      "described_at_utc": "2026-06-02T23:52:20Z",
       "generated_self_exempt": false
     },
     {
@@ -10824,10 +10835,10 @@
       "description_lines": [
         "Guidance for the workspace-level scripts under `scripts/`.: This directory hosts vendored-tree refresh tooling, CI parity validators, and."
       ],
-      "content_sha256": "1a310c9c6028173eacb4239b8bb06f325ae90130e6d86d09f9e60407e4fbb71c",
-      "git_blob": "d97ba997ed0207ead184030dac4fffceca074ca7",
-      "source_mtime_ns": 1780418064490428066,
-      "described_at_utc": "2026-06-02T16:49:53Z",
+      "content_sha256": "491b9e1359f062d0f30b43a2112bd99dec30209d30dfbbee1160a5491cbba14d",
+      "git_blob": "3d3c5d73ac50065f777697695ba0ba5268b9c640",
+      "source_mtime_ns": 1780441274948384497,
+      "described_at_utc": "2026-06-02T23:52:23Z",
       "generated_self_exempt": false
     },
     {
@@ -10958,10 +10969,10 @@
         "Generated human-readable file inventory rendered from the filetree manifest.",
         "Self-exempt from recursive freshness checks because it is regenerated by the filetree script."
       ],
-      "content_sha256": "ba7ba5f984734289f0400d98ac4888776978f6ff49c8917c56fbdb0d141c22d9",
-      "git_blob": "b0f9616ff0d61db138bf68d22b8827c6c41d4583",
-      "source_mtime_ns": 1780426997897119003,
-      "described_at_utc": "2026-06-02T19:46:09Z",
+      "content_sha256": "e7638c4060a4e156e61772ce31bee43556accefdd0ba3c4bfc32d8268b51f4e6",
+      "git_blob": "4a859a8360243e630da1ce23f3c4904a90ace517",
+      "source_mtime_ns": 1780441274948384497,
+      "described_at_utc": "2026-06-02T23:52:23Z",
       "generated_self_exempt": true
     },
     {
@@ -10970,10 +10981,10 @@
         "Machine-readable source of truth for file descriptions and freshness metadata.",
         "Self-exempt from recursive freshness checks because it stores generated filetree state."
       ],
-      "content_sha256": "7d83d014b6a872b6cf4dc681d02dddc1859f82576c9c01557a48fc1036a3b32d",
-      "git_blob": "c2e3043bbf4c6f9d9327f93d30da8d538d4f2700",
-      "source_mtime_ns": 1780426478543642814,
-      "described_at_utc": "2026-06-02T19:46:09Z",
+      "content_sha256": "1266d031188e24a1740b0dce089893a2ea51138189c66f72a8a94b0ae8fc8bb3",
+      "git_blob": "f93e7dd771d9b3f6852d52ee7ada645f5c4dbe14",
+      "source_mtime_ns": 1780441274960122487,
+      "described_at_utc": "2026-06-02T23:52:23Z",
       "generated_self_exempt": true
     },
     {
@@ -11154,6 +11165,347 @@
       "generated_self_exempt": false
     },
     {
+      "path": "dev/specs/AGENTS.md",
+      "description_lines": [
+        "Guidance for vendored upstream test vectors and pinned specification artifacts under dev/specs/.: This directory holds vendored upstream test corpora that drive parity tests in the"
+      ],
+      "content_sha256": "fbced75b958df740b769b56fb65107b20706ddcbcece07913cbf51ed1d99225e",
+      "git_blob": "b4a4ee2e50b0d0c388f19caddd6966c3a9b408bd",
+      "source_mtime_ns": 1780443155540609014,
+      "described_at_utc": "2026-06-02T23:52:24Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "dev/specs/upstream-test-vectors/AGENTS.md",
+      "description_lines": [
+        "The official upstream vector and golden artifacts used for parity validation.: This directory vendors official upstream vector and golden artifacts used for parity validation. Rese"
+      ],
+      "content_sha256": "84867a88372f44d5c4c773fa92666111986f1098a5f1ef0cf9e2ce1f06cd9680",
+      "git_blob": "0b360b8ea09bae2e4c70ed04a9f2db325b034a7f",
+      "source_mtime_ns": 1780443487687679879,
+      "described_at_utc": "2026-06-02T23:52:24Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/AGENTS.md",
+      "description_lines": [
+        "Scope: This directory corresponds to a single pinned upstream commit snapshot."
+      ],
+      "content_sha256": "cbbe68fd847ba3fa64828f1b89af40bdb433cededf78cda902e74f4c9b2a650c",
+      "git_blob": "4798504461951a5d90c3cfd55b2ad5f8c5898a76",
+      "source_mtime_ns": 1780366176726176985,
+      "described_at_utc": "2026-06-02T03:28:23Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/AGENTS.md",
+      "description_lines": [
+        "Scope: This directory contains vendored fixture content from upstream `cardano-crypto-class`."
+      ],
+      "content_sha256": "08dc856341819267664c247f518be92683e269e7a92365ad0fda78642c2edb47",
+      "git_blob": "ed491a51dbaa63ec37d05d5365e831e6ed71f6c1",
+      "source_mtime_ns": 1780366176730110014,
+      "described_at_utc": "2026-06-02T03:28:23Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/bls12-381-test-vectors/AGENTS.md",
+      "description_lines": [
+        "Scope: This directory groups upstream BLS12-381 vector corpora used for crypto parity validation."
+      ],
+      "content_sha256": "6035ec3535be8d83319f9c1420ed8e98a7b0dc5ae1ef22630c0f0fb28b1fb17a",
+      "git_blob": "2b84b6a3cb1b161ba3d153e6cb25fa1c39675e60",
+      "source_mtime_ns": 1780366176730110014,
+      "described_at_utc": "2026-06-02T03:28:23Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/bls12-381-test-vectors/test_vectors/AGENTS.md",
+      "description_lines": [
+        "Scope: This directory contains raw upstream BLS12-381 vector files."
+      ],
+      "content_sha256": "109a832b6d632b3d891b396a8cfcb7a5d315178683cd5ad867f6821774481242",
+      "git_blob": "4385c555d1dc3ca876049c73701f703fa5e59011",
+      "source_mtime_ns": 1780366176730110014,
+      "described_at_utc": "2026-06-02T03:28:23Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/bls12-381-test-vectors/test_vectors/bls_sig_aug_test_vectors",
+      "description_lines": [
+        "Project file at dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/bls12-381-test-vectors/test_vectors/bls_sig_aug_test_vectors."
+      ],
+      "content_sha256": "457a11b979b6659f99d02e6f6035f404f5444c6f867d5589801c619a72784622",
+      "git_blob": "7d93ed180e043cf2ce853e218d0e6aa420068012",
+      "source_mtime_ns": 1780366176730110014,
+      "described_at_utc": "2026-06-02T03:28:23Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/bls12-381-test-vectors/test_vectors/ec_operations_test_vectors",
+      "description_lines": [
+        "Project file at dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/bls12-381-test-vectors/test_vectors/ec_operations_test_vectors."
+      ],
+      "content_sha256": "11915edbdaa8ef45fb97e77c5c4f52117ce6aaf9da5028349461574f29206446",
+      "git_blob": "7046033e7bd67b4c53d26adb181d73ccdf61aa79",
+      "source_mtime_ns": 1780366176730110014,
+      "described_at_utc": "2026-06-02T03:28:23Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/bls12-381-test-vectors/test_vectors/h2c_large_dst",
+      "description_lines": [
+        "Project file at dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/bls12-381-test-vectors/test_vectors/h2c_large_dst."
+      ],
+      "content_sha256": "49cb6493de53ec82c7dab6e8dedf48f65ec4c453eb31af8909d84564ff34b4f2",
+      "git_blob": "7031da4aa33f2066f118f52bda73072df38fb008",
+      "source_mtime_ns": 1780366176730110014,
+      "described_at_utc": "2026-06-02T03:28:23Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/bls12-381-test-vectors/test_vectors/pairing_test_vectors",
+      "description_lines": [
+        "Project file at dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/bls12-381-test-vectors/test_vectors/pairing_test_vectors."
+      ],
+      "content_sha256": "ae0695601cce47d5d2742da525b8bcd63d8d45ab224ec2c68f201bab738a4b45",
+      "git_blob": "1e480350817dacad108ed535da7f461e8fbf1e7b",
+      "source_mtime_ns": 1780366176730110014,
+      "described_at_utc": "2026-06-02T03:28:23Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/bls12-381-test-vectors/test_vectors/serde_test_vectors",
+      "description_lines": [
+        "Project file at dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/bls12-381-test-vectors/test_vectors/serde_test_vectors."
+      ],
+      "content_sha256": "4a083d3fe6d2a73f47206a92ab2c08930fb11aa2cbdebeeb34563b9ea36ad267",
+      "git_blob": "333fe51473706c687ecdb69ca281e2d27649a155",
+      "source_mtime_ns": 1780366176730110014,
+      "described_at_utc": "2026-06-02T03:28:23Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/AGENTS.md",
+      "description_lines": [
+        "Scope: This directory contains vendored Praos crypto fixture content from upstream `cardano-crypto-praos`."
+      ],
+      "content_sha256": "424bccc2dd6750c4a2aefc0b7ef0a7916c39305df7a114ec38a2c18f71c22ccf",
+      "git_blob": "0a094e59b0f36e734d089b0118b96d28f8ec20a9",
+      "source_mtime_ns": 1780366176730110014,
+      "described_at_utc": "2026-06-02T03:28:23Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/AGENTS.md",
+      "description_lines": [
+        "Scope: This directory contains raw upstream Praos VRF vector files used by crypto parity tests."
+      ],
+      "content_sha256": "d23aa7135fba0293c055b0b4a1a4bfb9e7b399853f796d22f491d27ac7e975d0",
+      "git_blob": "89f5eae5493b2abfd667ad00d77d3696f432df19",
+      "source_mtime_ns": 1780366176730110014,
+      "described_at_utc": "2026-06-02T03:28:23Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver03_generated_1",
+      "description_lines": [
+        "Project file at dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver03_generated_1."
+      ],
+      "content_sha256": "6c4f8a82c453acda114a3a3887c61fee7c2da223c6518ffb1618a34b614089c1",
+      "git_blob": "41368b137351fd7e67ba34690a47823fb3dc5e10",
+      "source_mtime_ns": 1780366176730110014,
+      "described_at_utc": "2026-06-02T03:28:23Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver03_generated_2",
+      "description_lines": [
+        "Project file at dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver03_generated_2."
+      ],
+      "content_sha256": "d15875d0598b4ecc962c966e272985a1e7113add367aa87c1ffbad8ccd2bef49",
+      "git_blob": "a058939bf4c995e909caa19a89aaa8f7f698f5e1",
+      "source_mtime_ns": 1780366176730110014,
+      "described_at_utc": "2026-06-02T03:28:23Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver03_generated_3",
+      "description_lines": [
+        "Project file at dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver03_generated_3."
+      ],
+      "content_sha256": "10e371f743bc78fdc344cc7b631335c9fa4bccc290143ccf720155b9f6ee1a5a",
+      "git_blob": "baf7e2fc864eb2b180bab4cdc493da012782a84f",
+      "source_mtime_ns": 1780366176730110014,
+      "described_at_utc": "2026-06-02T03:28:23Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver03_generated_4",
+      "description_lines": [
+        "Project file at dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver03_generated_4."
+      ],
+      "content_sha256": "c8ea137dfe7a730a2fa83458d3efaf2faf6a394e888d38d5138c2c36a4af6252",
+      "git_blob": "23c56967256a76d12fd127bdc03f3600921bd75c",
+      "source_mtime_ns": 1780366176730110014,
+      "described_at_utc": "2026-06-02T03:28:23Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver03_standard_10",
+      "description_lines": [
+        "Project file at dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver03_standard_10."
+      ],
+      "content_sha256": "f21491dab4462e9146da3995991c13c04ac26ce0a5f6fbff1597cba97d41f814",
+      "git_blob": "2e35456be77e80de490e9823530695d82d4843eb",
+      "source_mtime_ns": 1780366176730110014,
+      "described_at_utc": "2026-06-02T03:28:23Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver03_standard_11",
+      "description_lines": [
+        "Project file at dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver03_standard_11."
+      ],
+      "content_sha256": "2723c93fef149961f05e02516c3032453bb2852a9a2f2284e93eda6e112f2c9b",
+      "git_blob": "c1df72ee323f7102ec4e0be311a3a2b08958ddc6",
+      "source_mtime_ns": 1780366176730110014,
+      "described_at_utc": "2026-06-02T03:28:23Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver03_standard_12",
+      "description_lines": [
+        "Project file at dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver03_standard_12."
+      ],
+      "content_sha256": "b3875a5c5ea570b87beb4e84690455845b4c00d29e074bb004d93811f5719ae7",
+      "git_blob": "dd91ce7a4b20a29f0ed904ed81c7940489c52657",
+      "source_mtime_ns": 1780366176730110014,
+      "described_at_utc": "2026-06-02T03:28:23Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver13_generated_1",
+      "description_lines": [
+        "Project file at dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver13_generated_1."
+      ],
+      "content_sha256": "012e0c663bf4467f75ca9750f5c7ec2f5df9a4369963c9734a07702067a78ae9",
+      "git_blob": "f5a3b272f5965cc7f8161b79d479acafe7112243",
+      "source_mtime_ns": 1780366176730110014,
+      "described_at_utc": "2026-06-02T03:28:23Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver13_generated_2",
+      "description_lines": [
+        "Project file at dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver13_generated_2."
+      ],
+      "content_sha256": "de88b3656016653bcc8f485546fe69fc7168fc28f8bbfb5301578828bd5035cf",
+      "git_blob": "fa93cd90cc6b82ec431f8502f1e57fed3837cca8",
+      "source_mtime_ns": 1780366176730110014,
+      "described_at_utc": "2026-06-02T03:28:23Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver13_generated_3",
+      "description_lines": [
+        "Project file at dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver13_generated_3."
+      ],
+      "content_sha256": "005a4af0ab50566ed4d3fc7b4b08f52e96c803e6c61c67f8e1f125a41f4023dc",
+      "git_blob": "49ca2edee85997df1c58bd63bae134b967c2e6fd",
+      "source_mtime_ns": 1780366176730110014,
+      "described_at_utc": "2026-06-02T03:28:23Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver13_generated_4",
+      "description_lines": [
+        "Project file at dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver13_generated_4."
+      ],
+      "content_sha256": "da43c80219297aa23143cda501ec7183fdb9f660945345cb9be4a9e70c630d90",
+      "git_blob": "53673f7e396344b7b4b7b200ef19361a8e6ef05e",
+      "source_mtime_ns": 1780366176730110014,
+      "described_at_utc": "2026-06-02T03:28:23Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver13_standard_10",
+      "description_lines": [
+        "Project file at dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver13_standard_10."
+      ],
+      "content_sha256": "28ac9872566c4750d3e318ce98cecf9d989244e713538d2ca22a4a0beea84d4e",
+      "git_blob": "0e1b9ba9937915bc4e99eeddb3079b83b26d4595",
+      "source_mtime_ns": 1780366176730110014,
+      "described_at_utc": "2026-06-02T03:28:23Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver13_standard_11",
+      "description_lines": [
+        "Project file at dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver13_standard_11."
+      ],
+      "content_sha256": "d562c5b3d3e1d66629b118604b41ec237ca8d1b40bd6da917e250fcd27d17439",
+      "git_blob": "8ca08c98853068620adda230f821c4533ffbb8a6",
+      "source_mtime_ns": 1780366176730110014,
+      "described_at_utc": "2026-06-02T03:28:23Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver13_standard_12",
+      "description_lines": [
+        "Project file at dev/specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver13_standard_12."
+      ],
+      "content_sha256": "df927f78c778067defe2b110f5092913e1f8d7d9be16d10dfcd711e8a0f3aac3",
+      "git_blob": "9972dea3c7b867305ec88b96ca817ad0d6577ff1",
+      "source_mtime_ns": 1780366176730110014,
+      "described_at_utc": "2026-06-02T03:28:23Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "dev/specs/upstream-test-vectors/cardano-base/AGENTS.md",
+      "description_lines": [
+        "Scope: This directory is a vendored mirror root for upstream `cardano-base` fixture content."
+      ],
+      "content_sha256": "4ad2cb9b494d209af865485a27d02de0990b90ec2d1991a345f65a152f7d6dac",
+      "git_blob": "2e0eddb8ec3a21ac56986d11bf9f2cda39eb06e5",
+      "source_mtime_ns": 1780443621794459906,
+      "described_at_utc": "2026-06-02T23:52:24Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "dev/supply-chain/README.md",
+      "description_lines": [
+        "`dev/supply-chain/` \u2014 cargo-vet audit trail: Wave 7 PR 21. Seeds the [cargo-vet](https://mozilla.github.io/cargo-vet/)."
+      ],
+      "content_sha256": "cd324505ae28481e83b846b38abbf05b1b4e12ae829d59c4046606e6de3f51ed",
+      "git_blob": "c9c23dc1e7d2275ba8651e88b1fd917d269dc500",
+      "source_mtime_ns": 1780442478161265847,
+      "described_at_utc": "2026-06-02T23:52:24Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "dev/supply-chain/audits.toml",
+      "description_lines": [
+        "TOML configuration file for audits."
+      ],
+      "content_sha256": "91713772871541c736c1ee9bd5ff052be6ca743567104b0ec63579a506c58a4c",
+      "git_blob": "5e6a64af611e57789a961431f57b99168dd1539e",
+      "source_mtime_ns": 1780443881991778950,
+      "described_at_utc": "2026-06-02T23:52:24Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "dev/supply-chain/config.toml",
+      "description_lines": [
+        "TOML configuration file for config."
+      ],
+      "content_sha256": "0ca0cb96a23a6e8c91f1b4a6e4703e3fabc861a48231449eb38eeb1efdc7705f",
+      "git_blob": "d8d0e96738ba3eaa32704290bfdf0b66c132ba8d",
+      "source_mtime_ns": 1780366176730110014,
+      "described_at_utc": "2026-06-02T03:28:23Z",
+      "generated_self_exempt": false
+    },
+    {
       "path": "dev/test/audit-strict-mirror.py",
       "description_lines": [
         "Project file at dev/test/audit-strict-mirror.py."
@@ -11203,10 +11555,10 @@
       "description_lines": [
         "Project file at dev/test/check-fixture-manifest.py."
       ],
-      "content_sha256": "ff13a8c9b8bac298405849bfb2ff2113aaacf026c48abb0a60f1bc1e317ae91c",
-      "git_blob": "56836f4126269b9a2d10f80d3e1e4548b2e3c9b9",
-      "source_mtime_ns": 1780396208850792782,
-      "described_at_utc": "2026-06-02T12:05:58Z",
+      "content_sha256": "9d6a73de9e2c911fc2a3b33d14d9891d3db617ff7f76161ed1a6dcf50321a0c2",
+      "git_blob": "1c8b0dad09a8882a9d2a461e908228503e44a06d",
+      "source_mtime_ns": 1780441542275267592,
+      "described_at_utc": "2026-06-02T23:52:24Z",
       "generated_self_exempt": false
     },
     {
@@ -11284,10 +11636,10 @@
       "description_lines": [
         "Guidance for maintaining project policy and architecture documents under docs/.: Keep these documents synchronized with the implemented workspace, not with speculative future goals"
       ],
-      "content_sha256": "87b125043056205964ff773542a2471ad551dc0b029a8baa637da8d411eb2602",
-      "git_blob": "be902887a702e5bc9dc1bc0b7cb574084202110e",
-      "source_mtime_ns": 1780405552318058407,
-      "described_at_utc": "2026-06-02T13:40:03Z",
+      "content_sha256": "f07e0d8242fabe485d400c01cc93d1798fe0ad8833817cfefd7e272522fd414a",
+      "git_blob": "1dec52d20bbfeb42218fa496328ee8e557c70090",
+      "source_mtime_ns": 1780441274944471833,
+      "described_at_utc": "2026-06-02T23:52:24Z",
       "generated_self_exempt": false
     },
     {
@@ -11339,10 +11691,10 @@
       "description_lines": [
         "Contributing: `cargo fmt --all -- --check`."
       ],
-      "content_sha256": "b0e8f9a94f2a6a0849e62cabcdceb62b20d54d15a16bb15a656250ebd1040bdd",
-      "git_blob": "288044614f8db1005eaac6e6f8f9cb6601af6af6",
-      "source_mtime_ns": 1780366176667181541,
-      "described_at_utc": "2026-06-02T03:28:19Z",
+      "content_sha256": "2d36addd9f1c0ff5075c37728658a7a4428f1f8dad25f343c108bff57f9a5b6b",
+      "git_blob": "8f3fb77044a4758efd7401ce540e7ba37e1de5dc",
+      "source_mtime_ns": 1780441274944471833,
+      "described_at_utc": "2026-06-02T23:52:24Z",
       "generated_self_exempt": false
     },
     {
@@ -11428,10 +11780,10 @@
       "description_lines": [
         "Specification Sources: Yggdrasil is specification-driven. When sources disagree, use them in this order."
       ],
-      "content_sha256": "297c14aaaf30ccff1b657e1c4a568a399faeed1200b62e1b56cf351565c432d3",
-      "git_blob": "3a5ecb11316ab33a990698ea0888cb3db52fb42b",
-      "source_mtime_ns": 1780405552318058407,
-      "described_at_utc": "2026-06-02T13:40:03Z",
+      "content_sha256": "092f3217b4755706da6340c7417e2f379b6a6e0f6b936691444c9229da6c790d",
+      "git_blob": "a1c39a2ce28b9f466ed1e70f2b7699e07530747f",
+      "source_mtime_ns": 1780441274944471833,
+      "described_at_utc": "2026-06-02T23:52:24Z",
       "generated_self_exempt": false
     },
     {
@@ -11450,10 +11802,10 @@
       "description_lines": [
         "Upstream Parity Matrix: > Quick view: [`PARITY_DASHBOARD.md`](PARITY_DASHBOARD.md)."
       ],
-      "content_sha256": "cd47bd38152a30e0c55eb3d0fff7bc477b93e208020a60df6362f419208b8bf5",
-      "git_blob": "fde383aef34f015ff2ef9b12fca3de21fbf78819",
-      "source_mtime_ns": 1780418064494109419,
-      "described_at_utc": "2026-06-02T16:49:53Z",
+      "content_sha256": "986d89c67589264d4359f99fee9a6fabc29ebef6d6478bdba0dd61bd3e4f951f",
+      "git_blob": "b5349d4d910d94fb9894f126c3ecf9eb985a7db7",
+      "source_mtime_ns": 1780441274944471833,
+      "described_at_utc": "2026-06-02T23:52:24Z",
       "generated_self_exempt": false
     },
     {
@@ -11769,10 +12121,10 @@
       "description_lines": [
         "Release verification: Wave 7 PR 19 added cryptographic signing, build-provenance attestation,."
       ],
-      "content_sha256": "092ec919e9fe011ec5098dc02a6e7f6313bc2ab73b9bf97f9036b884cdb2ffbc",
-      "git_blob": "7afa17f6ff311eac9458ca8202f070ebc93d7170",
-      "source_mtime_ns": 1780395278414329096,
-      "described_at_utc": "2026-06-02T12:05:58Z",
+      "content_sha256": "084f099f564eedb1bce3d66472b0ea6c92809bae120eb0766f3f9a79393c28d2",
+      "git_blob": "704434db9d72ecedf28291c3534e231c31692440",
+      "source_mtime_ns": 1780441676942760255,
+      "described_at_utc": "2026-06-02T23:52:24Z",
       "generated_self_exempt": false
     },
     {
@@ -18444,369 +18796,6 @@
       "git_blob": "5f8fcbe35528cab174a83e5b376009f4ba5a248e",
       "source_mtime_ns": 1780366176722243955,
       "described_at_utc": "2026-06-02T03:28:23Z",
-      "generated_self_exempt": false
-    },
-    {
-      "path": "specs/AGENTS.md",
-      "description_lines": [
-        "Guidance for vendored upstream test vectors and pinned specification artifacts under specs/.: This directory holds vendored upstream test corpora that drive parity tests in the wor"
-      ],
-      "content_sha256": "68ed2f8b2cdbcd7c2d88f9dbf53e802053f9eb9013e57b635dca54a8fcdebaa5",
-      "git_blob": "14269ca1cb5b882ecda605995e5043bd3785b8d4",
-      "source_mtime_ns": 1780395274773156302,
-      "described_at_utc": "2026-06-02T12:06:01Z",
-      "generated_self_exempt": false
-    },
-    {
-      "path": "specs/upstream-test-vectors/AGENTS.md",
-      "description_lines": [
-        "The official upstream vector and golden artifacts used for parity validation.: This directory vendors official upstream vector and golden artifacts used for parity validation. Rese"
-      ],
-      "content_sha256": "c9e877c63dad0444ff38fde89c3f558ec6789874c577c4477257a12d08aa4b4c",
-      "git_blob": "1caa01a357c9dff0c84c85fc2c983ebe83b2a7b8",
-      "source_mtime_ns": 1780366176726176985,
-      "described_at_utc": "2026-06-02T03:28:23Z",
-      "generated_self_exempt": false
-    },
-    {
-      "path": "specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/AGENTS.md",
-      "description_lines": [
-        "Scope: This directory corresponds to a single pinned upstream commit snapshot."
-      ],
-      "content_sha256": "cbbe68fd847ba3fa64828f1b89af40bdb433cededf78cda902e74f4c9b2a650c",
-      "git_blob": "4798504461951a5d90c3cfd55b2ad5f8c5898a76",
-      "source_mtime_ns": 1780366176726176985,
-      "described_at_utc": "2026-06-02T03:28:23Z",
-      "generated_self_exempt": false
-    },
-    {
-      "path": "specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/AGENTS.md",
-      "description_lines": [
-        "Scope: This directory contains vendored fixture content from upstream `cardano-crypto-class`."
-      ],
-      "content_sha256": "08dc856341819267664c247f518be92683e269e7a92365ad0fda78642c2edb47",
-      "git_blob": "ed491a51dbaa63ec37d05d5365e831e6ed71f6c1",
-      "source_mtime_ns": 1780366176730110014,
-      "described_at_utc": "2026-06-02T03:28:23Z",
-      "generated_self_exempt": false
-    },
-    {
-      "path": "specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/bls12-381-test-vectors/AGENTS.md",
-      "description_lines": [
-        "Scope: This directory groups upstream BLS12-381 vector corpora used for crypto parity validation."
-      ],
-      "content_sha256": "6035ec3535be8d83319f9c1420ed8e98a7b0dc5ae1ef22630c0f0fb28b1fb17a",
-      "git_blob": "2b84b6a3cb1b161ba3d153e6cb25fa1c39675e60",
-      "source_mtime_ns": 1780366176730110014,
-      "described_at_utc": "2026-06-02T03:28:23Z",
-      "generated_self_exempt": false
-    },
-    {
-      "path": "specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/bls12-381-test-vectors/test_vectors/AGENTS.md",
-      "description_lines": [
-        "Scope: This directory contains raw upstream BLS12-381 vector files."
-      ],
-      "content_sha256": "109a832b6d632b3d891b396a8cfcb7a5d315178683cd5ad867f6821774481242",
-      "git_blob": "4385c555d1dc3ca876049c73701f703fa5e59011",
-      "source_mtime_ns": 1780366176730110014,
-      "described_at_utc": "2026-06-02T03:28:23Z",
-      "generated_self_exempt": false
-    },
-    {
-      "path": "specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/bls12-381-test-vectors/test_vectors/bls_sig_aug_test_vectors",
-      "description_lines": [
-        "Project file at specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/bls12-381-test-vectors/test_vectors/bls_sig_aug_test_vectors."
-      ],
-      "content_sha256": "457a11b979b6659f99d02e6f6035f404f5444c6f867d5589801c619a72784622",
-      "git_blob": "7d93ed180e043cf2ce853e218d0e6aa420068012",
-      "source_mtime_ns": 1780366176730110014,
-      "described_at_utc": "2026-06-02T03:28:23Z",
-      "generated_self_exempt": false
-    },
-    {
-      "path": "specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/bls12-381-test-vectors/test_vectors/ec_operations_test_vectors",
-      "description_lines": [
-        "Project file at specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/bls12-381-test-vectors/test_vectors/ec_operations_test_vectors."
-      ],
-      "content_sha256": "11915edbdaa8ef45fb97e77c5c4f52117ce6aaf9da5028349461574f29206446",
-      "git_blob": "7046033e7bd67b4c53d26adb181d73ccdf61aa79",
-      "source_mtime_ns": 1780366176730110014,
-      "described_at_utc": "2026-06-02T03:28:23Z",
-      "generated_self_exempt": false
-    },
-    {
-      "path": "specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/bls12-381-test-vectors/test_vectors/h2c_large_dst",
-      "description_lines": [
-        "Project file at specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/bls12-381-test-vectors/test_vectors/h2c_large_dst."
-      ],
-      "content_sha256": "49cb6493de53ec82c7dab6e8dedf48f65ec4c453eb31af8909d84564ff34b4f2",
-      "git_blob": "7031da4aa33f2066f118f52bda73072df38fb008",
-      "source_mtime_ns": 1780366176730110014,
-      "described_at_utc": "2026-06-02T03:28:23Z",
-      "generated_self_exempt": false
-    },
-    {
-      "path": "specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/bls12-381-test-vectors/test_vectors/pairing_test_vectors",
-      "description_lines": [
-        "Project file at specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/bls12-381-test-vectors/test_vectors/pairing_test_vectors."
-      ],
-      "content_sha256": "ae0695601cce47d5d2742da525b8bcd63d8d45ab224ec2c68f201bab738a4b45",
-      "git_blob": "1e480350817dacad108ed535da7f461e8fbf1e7b",
-      "source_mtime_ns": 1780366176730110014,
-      "described_at_utc": "2026-06-02T03:28:23Z",
-      "generated_self_exempt": false
-    },
-    {
-      "path": "specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/bls12-381-test-vectors/test_vectors/serde_test_vectors",
-      "description_lines": [
-        "Project file at specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/bls12-381-test-vectors/test_vectors/serde_test_vectors."
-      ],
-      "content_sha256": "4a083d3fe6d2a73f47206a92ab2c08930fb11aa2cbdebeeb34563b9ea36ad267",
-      "git_blob": "333fe51473706c687ecdb69ca281e2d27649a155",
-      "source_mtime_ns": 1780366176730110014,
-      "described_at_utc": "2026-06-02T03:28:23Z",
-      "generated_self_exempt": false
-    },
-    {
-      "path": "specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/AGENTS.md",
-      "description_lines": [
-        "Scope: This directory contains vendored Praos crypto fixture content from upstream `cardano-crypto-praos`."
-      ],
-      "content_sha256": "424bccc2dd6750c4a2aefc0b7ef0a7916c39305df7a114ec38a2c18f71c22ccf",
-      "git_blob": "0a094e59b0f36e734d089b0118b96d28f8ec20a9",
-      "source_mtime_ns": 1780366176730110014,
-      "described_at_utc": "2026-06-02T03:28:23Z",
-      "generated_self_exempt": false
-    },
-    {
-      "path": "specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/AGENTS.md",
-      "description_lines": [
-        "Scope: This directory contains raw upstream Praos VRF vector files used by crypto parity tests."
-      ],
-      "content_sha256": "d23aa7135fba0293c055b0b4a1a4bfb9e7b399853f796d22f491d27ac7e975d0",
-      "git_blob": "89f5eae5493b2abfd667ad00d77d3696f432df19",
-      "source_mtime_ns": 1780366176730110014,
-      "described_at_utc": "2026-06-02T03:28:23Z",
-      "generated_self_exempt": false
-    },
-    {
-      "path": "specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver03_generated_1",
-      "description_lines": [
-        "Project file at specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver03_generated_1."
-      ],
-      "content_sha256": "6c4f8a82c453acda114a3a3887c61fee7c2da223c6518ffb1618a34b614089c1",
-      "git_blob": "41368b137351fd7e67ba34690a47823fb3dc5e10",
-      "source_mtime_ns": 1780366176730110014,
-      "described_at_utc": "2026-06-02T03:28:23Z",
-      "generated_self_exempt": false
-    },
-    {
-      "path": "specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver03_generated_2",
-      "description_lines": [
-        "Project file at specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver03_generated_2."
-      ],
-      "content_sha256": "d15875d0598b4ecc962c966e272985a1e7113add367aa87c1ffbad8ccd2bef49",
-      "git_blob": "a058939bf4c995e909caa19a89aaa8f7f698f5e1",
-      "source_mtime_ns": 1780366176730110014,
-      "described_at_utc": "2026-06-02T03:28:23Z",
-      "generated_self_exempt": false
-    },
-    {
-      "path": "specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver03_generated_3",
-      "description_lines": [
-        "Project file at specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver03_generated_3."
-      ],
-      "content_sha256": "10e371f743bc78fdc344cc7b631335c9fa4bccc290143ccf720155b9f6ee1a5a",
-      "git_blob": "baf7e2fc864eb2b180bab4cdc493da012782a84f",
-      "source_mtime_ns": 1780366176730110014,
-      "described_at_utc": "2026-06-02T03:28:23Z",
-      "generated_self_exempt": false
-    },
-    {
-      "path": "specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver03_generated_4",
-      "description_lines": [
-        "Project file at specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver03_generated_4."
-      ],
-      "content_sha256": "c8ea137dfe7a730a2fa83458d3efaf2faf6a394e888d38d5138c2c36a4af6252",
-      "git_blob": "23c56967256a76d12fd127bdc03f3600921bd75c",
-      "source_mtime_ns": 1780366176730110014,
-      "described_at_utc": "2026-06-02T03:28:23Z",
-      "generated_self_exempt": false
-    },
-    {
-      "path": "specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver03_standard_10",
-      "description_lines": [
-        "Project file at specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver03_standard_10."
-      ],
-      "content_sha256": "f21491dab4462e9146da3995991c13c04ac26ce0a5f6fbff1597cba97d41f814",
-      "git_blob": "2e35456be77e80de490e9823530695d82d4843eb",
-      "source_mtime_ns": 1780366176730110014,
-      "described_at_utc": "2026-06-02T03:28:23Z",
-      "generated_self_exempt": false
-    },
-    {
-      "path": "specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver03_standard_11",
-      "description_lines": [
-        "Project file at specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver03_standard_11."
-      ],
-      "content_sha256": "2723c93fef149961f05e02516c3032453bb2852a9a2f2284e93eda6e112f2c9b",
-      "git_blob": "c1df72ee323f7102ec4e0be311a3a2b08958ddc6",
-      "source_mtime_ns": 1780366176730110014,
-      "described_at_utc": "2026-06-02T03:28:23Z",
-      "generated_self_exempt": false
-    },
-    {
-      "path": "specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver03_standard_12",
-      "description_lines": [
-        "Project file at specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver03_standard_12."
-      ],
-      "content_sha256": "b3875a5c5ea570b87beb4e84690455845b4c00d29e074bb004d93811f5719ae7",
-      "git_blob": "dd91ce7a4b20a29f0ed904ed81c7940489c52657",
-      "source_mtime_ns": 1780366176730110014,
-      "described_at_utc": "2026-06-02T03:28:23Z",
-      "generated_self_exempt": false
-    },
-    {
-      "path": "specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver13_generated_1",
-      "description_lines": [
-        "Project file at specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver13_generated_1."
-      ],
-      "content_sha256": "012e0c663bf4467f75ca9750f5c7ec2f5df9a4369963c9734a07702067a78ae9",
-      "git_blob": "f5a3b272f5965cc7f8161b79d479acafe7112243",
-      "source_mtime_ns": 1780366176730110014,
-      "described_at_utc": "2026-06-02T03:28:23Z",
-      "generated_self_exempt": false
-    },
-    {
-      "path": "specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver13_generated_2",
-      "description_lines": [
-        "Project file at specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver13_generated_2."
-      ],
-      "content_sha256": "de88b3656016653bcc8f485546fe69fc7168fc28f8bbfb5301578828bd5035cf",
-      "git_blob": "fa93cd90cc6b82ec431f8502f1e57fed3837cca8",
-      "source_mtime_ns": 1780366176730110014,
-      "described_at_utc": "2026-06-02T03:28:23Z",
-      "generated_self_exempt": false
-    },
-    {
-      "path": "specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver13_generated_3",
-      "description_lines": [
-        "Project file at specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver13_generated_3."
-      ],
-      "content_sha256": "005a4af0ab50566ed4d3fc7b4b08f52e96c803e6c61c67f8e1f125a41f4023dc",
-      "git_blob": "49ca2edee85997df1c58bd63bae134b967c2e6fd",
-      "source_mtime_ns": 1780366176730110014,
-      "described_at_utc": "2026-06-02T03:28:23Z",
-      "generated_self_exempt": false
-    },
-    {
-      "path": "specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver13_generated_4",
-      "description_lines": [
-        "Project file at specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver13_generated_4."
-      ],
-      "content_sha256": "da43c80219297aa23143cda501ec7183fdb9f660945345cb9be4a9e70c630d90",
-      "git_blob": "53673f7e396344b7b4b7b200ef19361a8e6ef05e",
-      "source_mtime_ns": 1780366176730110014,
-      "described_at_utc": "2026-06-02T03:28:23Z",
-      "generated_self_exempt": false
-    },
-    {
-      "path": "specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver13_standard_10",
-      "description_lines": [
-        "Project file at specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver13_standard_10."
-      ],
-      "content_sha256": "28ac9872566c4750d3e318ce98cecf9d989244e713538d2ca22a4a0beea84d4e",
-      "git_blob": "0e1b9ba9937915bc4e99eeddb3079b83b26d4595",
-      "source_mtime_ns": 1780366176730110014,
-      "described_at_utc": "2026-06-02T03:28:23Z",
-      "generated_self_exempt": false
-    },
-    {
-      "path": "specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver13_standard_11",
-      "description_lines": [
-        "Project file at specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver13_standard_11."
-      ],
-      "content_sha256": "d562c5b3d3e1d66629b118604b41ec237ca8d1b40bd6da917e250fcd27d17439",
-      "git_blob": "8ca08c98853068620adda230f821c4533ffbb8a6",
-      "source_mtime_ns": 1780366176730110014,
-      "described_at_utc": "2026-06-02T03:28:23Z",
-      "generated_self_exempt": false
-    },
-    {
-      "path": "specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver13_standard_12",
-      "description_lines": [
-        "Project file at specs/upstream-test-vectors/cardano-base/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/vrf_ver13_standard_12."
-      ],
-      "content_sha256": "df927f78c778067defe2b110f5092913e1f8d7d9be16d10dfcd711e8a0f3aac3",
-      "git_blob": "9972dea3c7b867305ec88b96ca817ad0d6577ff1",
-      "source_mtime_ns": 1780366176730110014,
-      "described_at_utc": "2026-06-02T03:28:23Z",
-      "generated_self_exempt": false
-    },
-    {
-      "path": "specs/upstream-test-vectors/cardano-base/AGENTS.md",
-      "description_lines": [
-        "Scope: This directory is a vendored mirror root for upstream `cardano-base` fixture content."
-      ],
-      "content_sha256": "4b565d24375cb711febd13d5acca688602d90ed6aae74f8efd4edf1dbdca1924",
-      "git_blob": "1f133bbe6718dc35b10c027ce9b117278a722c8d",
-      "source_mtime_ns": 1780366176730110014,
-      "described_at_utc": "2026-06-02T03:28:23Z",
-      "generated_self_exempt": false
-    },
-    {
-      "path": "supply-chain/README.md",
-      "description_lines": [
-        "`supply-chain/` \u2014 cargo-vet audit trail: Wave 7 PR 21. Seeds the [cargo-vet](https://mozilla.github.io/cargo-vet/)."
-      ],
-      "content_sha256": "34c096c74ad7b7046c2d23626f42f8d5a6c00ae1322cc879df9a0a55d4b9fc0c",
-      "git_blob": "ec4e12137f09042f81062cbd694e15bdd002dbe9",
-      "source_mtime_ns": 1780366176730110014,
-      "described_at_utc": "2026-06-02T03:28:23Z",
-      "generated_self_exempt": false
-    },
-    {
-      "path": "supply-chain/audits.toml",
-      "description_lines": [
-        "TOML configuration file for audits."
-      ],
-      "content_sha256": "bad0ce8a63786708a7d2181992e27db8065ce0237714112203d593f606084713",
-      "git_blob": "e8a4edd9c65c8bfe3ab2be6bde34a502b3e94406",
-      "source_mtime_ns": 1780366176730110014,
-      "described_at_utc": "2026-06-02T03:28:23Z",
-      "generated_self_exempt": false
-    },
-    {
-      "path": "supply-chain/config.toml",
-      "description_lines": [
-        "TOML configuration file for config."
-      ],
-      "content_sha256": "0ca0cb96a23a6e8c91f1b4a6e4703e3fabc861a48231449eb38eeb1efdc7705f",
-      "git_blob": "d8d0e96738ba3eaa32704290bfdf0b66c132ba8d",
-      "source_mtime_ns": 1780366176730110014,
-      "described_at_utc": "2026-06-02T03:28:23Z",
-      "generated_self_exempt": false
-    },
-    {
-      "path": "tasks/lessons.md",
-      "description_lines": [
-        "Lessons: Start by restoring local parity infrastructure before making behavior claims. A green Rust build does not prove upstream parity when the Haskell reference tree is absent."
-      ],
-      "content_sha256": "802d29c0d8a2e2c44d087514e38927d08819cbeb166f21a4617cec7f29594138",
-      "git_blob": "378d60cca98cb62f16eec6a172c437cc7b91e713",
-      "source_mtime_ns": 1780415613918119236,
-      "described_at_utc": "2026-06-02T15:56:27Z",
-      "generated_self_exempt": false
-    },
-    {
-      "path": "tasks/todo.md",
-      "description_lines": [
-        "Core-First Completion TODO: [x] Create task tracking files before code changes."
-      ],
-      "content_sha256": "0101adfde4b9012399c3a6044417f63c146f473f4fb13fd23644683f73404ab1",
-      "git_blob": "681bbb5064290c943bd9836184c746bf8e96e9fe",
-      "source_mtime_ns": 1780429439873101706,
-      "described_at_utc": "2026-06-02T19:46:12Z",
       "generated_self_exempt": false
     },
     {

@@ -2,7 +2,7 @@
 #
 # Run locally:
 #   cargo install --locked cargo-vet
-#   cargo vet
+#   cargo vet --store-path dev/supply-chain check
 # Run in CI:
 #   .github/workflows/supply-chain-audit.yml (weekly cron + manual).
 #

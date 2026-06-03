@@ -31,7 +31,7 @@ apply directly here. Five validators guard this tree's invariants:
 - `python3 dev/test/check-fixture-manifest.py` (CI gate since R303) —
   cross-checks the `cardano-base` SHA pin across
   `crates/node/config/src/upstream_pins.rs::UPSTREAM_CARDANO_BASE_COMMIT`,
-  `specs/upstream-test-vectors/cardano-base/<SHA>/`, `SPECS.md`,
+  `dev/specs/upstream-test-vectors/cardano-base/<SHA>/`, `SPECS.md`,
   and `UPSTREAM_PARITY.md` (this directory's own pin matrix).
 - `python3 dev/test/check-strict-mirror.py --fail-on-violation`
   (R288) — uses [`strict-mirror-audit.tsv`](strict-mirror-audit.tsv)

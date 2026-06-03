@@ -190,7 +190,7 @@ release tags) or a Rust file was renamed without updating the matrix.
 Cross-checks the `cardano-base` SHA pin matrix:
 
 - `crates/node/config/src/upstream_pins.rs::UPSTREAM_CARDANO_BASE_COMMIT` (Rust constant).
-- `specs/upstream-test-vectors/cardano-base/<SHA>/` (vendored corpus directory).
+- `dev/specs/upstream-test-vectors/cardano-base/<SHA>/` (vendored corpus directory).
 - `docs/SPECS.md` (provenance prose).
 - `docs/UPSTREAM_PARITY.md` (pin matrix table).
 

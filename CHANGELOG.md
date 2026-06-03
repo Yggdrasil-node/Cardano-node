@@ -142,7 +142,7 @@ basename-heuristic reliance.
 - **R303 — two new CI parity validators.** Adds
   `dev/test/check-fixture-manifest.py` (cross-checks the
   `cardano-base` SHA pin across `crates/node/config/src/upstream_pins.rs::
-  UPSTREAM_CARDANO_BASE_COMMIT`, `specs/upstream-test-vectors/
+  UPSTREAM_CARDANO_BASE_COMMIT`, `dev/specs/upstream-test-vectors/
   cardano-base/<SHA>/`, `docs/SPECS.md`, `docs/UPSTREAM_PARITY.md`;
   verifies 2 required corpora present) and
   `dev/test/check-reference-artifacts.py` (validates
@@ -152,7 +152,7 @@ basename-heuristic reliance.
   reference-artifacts kept local-only (CI doesn't carry the 1.3 GB
   vendored install).
 - **R304 — refine strict-mirror citation in non-Rust dirs.**
-  Adjusts `specs/AGENTS.md` and `configuration/AGENTS.md`
+  Adjusts `dev/specs/AGENTS.md` and `configuration/AGENTS.md`
   to clarify the strict-mirror policy applies to production `.rs`
   files only (vendored fixtures + operator config files don't
   fall under R274's file-naming policy).

@@ -35,6 +35,6 @@
 /dev/                  @FractionEstate
 
 # Vendored data — must not be hand-edited; flag any change for review.
-/specs/upstream-test-vectors/      @FractionEstate
+/dev/specs/upstream-test-vectors/  @FractionEstate
 /specs/upstream-cddl-fragments/    @FractionEstate
 /configuration/               @FractionEstate

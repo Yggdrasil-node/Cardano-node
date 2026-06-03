@@ -62,7 +62,7 @@ status see [`docs/UPSTREAM_PARITY.md`](UPSTREAM_PARITY.md).
   `python3 dev/test/check-strict-mirror.py`.
 
 ## Vendored Upstream Test Vectors
-- Vendored cryptographic vectors live under `specs/upstream-test-vectors/` with pinned upstream commit provenance.
+- Vendored cryptographic vectors live under `dev/specs/upstream-test-vectors/` with pinned upstream commit provenance.
 - Current pinned `cardano-base` source revision: `7a8a991945d401d89e27f53b3d3bb464a354ad4c`.
 - Included corpora:
 	- `cardano-crypto-praos/test_vectors/` (Praos VRF vectors)

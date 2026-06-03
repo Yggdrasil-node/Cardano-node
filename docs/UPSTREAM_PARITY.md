@@ -151,7 +151,7 @@ Yggdrasil is a pure-Rust port; there are no Cargo `git =` dependencies, so pinni
 
 | Repository | Pinned commit | Source |
 |---|---|---|
-| `cardano-base` | `7a8a991945d401d89e27f53b3d3bb464a354ad4c` | `crates/node/config/src/upstream_pins.rs` (R239 fixture refresh; mirrors vendored `specs/upstream-test-vectors/cardano-base/<sha>/` directory name) |
+| `cardano-base` | `7a8a991945d401d89e27f53b3d3bb464a354ad4c` | `crates/node/config/src/upstream_pins.rs` (R239 fixture refresh; mirrors vendored `dev/specs/upstream-test-vectors/cardano-base/<sha>/` directory name) |
 | `cardano-ledger` | `ca9b8c285e4493f2d25354914f8aae5483595507` | `crates/node/config/src/upstream_pins.rs` (R249 audit-baseline refresh; `StAnnTx` Haskell-internal threading + Dijkstra `MemoBytes` `BlockBody` prep + `blockBodySize` rename) |
 | `ouroboros-consensus` | `8c2475c253ab53fc2f0998a57a161b6778b54e43` | `crates/node/config/src/upstream_pins.rs` (R249 audit-baseline refresh; Peras voting-committee implementations + `LedgerTables` type indexing refactor) |
 | `ouroboros-network` | `8fe0f8ebc2623079edc7d708f19a0154b963f371` | `crates/node/config/src/upstream_pins.rs` (R249 audit-baseline refresh; internal `submitTxToMempool` API for sister `dmq-node` + x86_64-darwin Nix removal — wire codec unchanged) |
@@ -162,7 +162,7 @@ Yggdrasil is a pure-Rust port; there are no Cargo `git =` dependencies, so pinni
 
 - All SHAs are 40-character lowercase hexadecimal.
 - The set of pinned repositories is exactly the 6 listed above; adding/removing requires updating both `UPSTREAM_PINS` in source and this table.
-- The `cardano-base` pin must match the vendored test-vector directory name in `specs/upstream-test-vectors/cardano-base/<sha>/`.
+- The `cardano-base` pin must match the vendored test-vector directory name in `dev/specs/upstream-test-vectors/cardano-base/<sha>/`.
 
 **To advance a pin**: edit `crates/node/config/src/upstream_pins.rs`, run the full audit cadence (`cargo check-all`, `cargo test-all`, `cargo lint`, drift-guard tests, fixture cross-checks) against the new SHA, run `dev/scripts/check_upstream_drift.sh` to confirm, then update this table with the rationale.
 

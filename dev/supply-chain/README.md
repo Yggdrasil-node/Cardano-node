@@ -1,4 +1,4 @@
-# `supply-chain/` — cargo-vet audit trail
+# `dev/supply-chain/` — cargo-vet audit trail
 
 Wave 7 PR 21. Seeds the [cargo-vet](https://mozilla.github.io/cargo-vet/)
 manual-audit framework on top of the existing `cargo-deny` advisory /
@@ -16,9 +16,9 @@ license / bans gate.
 ## How to add an audit
 
 ```bash
-cargo vet certify <crate> <version>          # interactive
+cargo vet --store-path dev/supply-chain certify <crate> <version>          # interactive
 # or
-cargo vet certify ed25519-dalek 2.1.1 \
+cargo vet --store-path dev/supply-chain certify ed25519-dalek 2.1.1 \
   --criteria crypto-reviewed \
   --notes "Verified constant-time scalar ops; Zeroize on SigningKey; no unsafe."
 ```
@@ -30,7 +30,7 @@ description.
 ## How to update imported chains
 
 ```bash
-cargo vet update                  # refreshes imports.lock
+cargo vet --store-path dev/supply-chain update                  # refreshes imports.lock
 ```
 
 The weekly `.github/workflows/supply-chain-audit.yml` job runs this
@@ -42,7 +42,7 @@ implicitly and opens an issue if the chains drifted.
 permissive licenses only, no copyleft, no yanked deps, no unknown
 git registries. It runs on every push.
 
-`cargo-vet` enforces *human-attested* policy: a specific person
+`cargo-vet` enforces *human-attested* policy from `dev/supply-chain/`: a specific person
 audited a specific version under specific criteria. It runs
 weekly + on-demand via `cargo vet`.
 

@@ -61,7 +61,7 @@ const BLS_SIG_AUG_MSG: &[u8] = b"blst is such a blast";
 
 fn vendored_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../specs/upstream-test-vectors/cardano-base")
+        .join("../../dev/specs/upstream-test-vectors/cardano-base")
         .join(CARDANO_BASE_SHA)
 }
 

@@ -34,7 +34,7 @@
 //! consumed by `dev/scripts/check_upstream_drift.sh`.
 
 /// `cardano-base` — already pinned via vendored test vectors under
-/// `specs/upstream-test-vectors/cardano-base/`. The SHA below mirrors
+/// `dev/specs/upstream-test-vectors/cardano-base/`. The SHA below mirrors
 /// the directory name in that tree so a `git mv`-style refresh is
 /// detectable.
 ///
@@ -353,7 +353,7 @@ mod tests {
     #[test]
     fn upstream_cardano_base_pin_matches_vendored_directory_name() {
         // Sanity: verify the SHA matches the vendored directory name
-        // referenced throughout `specs/upstream-test-vectors/cardano-base/`.
+        // referenced throughout `dev/specs/upstream-test-vectors/cardano-base/`.
         // We can't read the filesystem from a unit test reliably across
         // build configurations, so we just pin the literal here. The
         // drift-detector script does the directory cross-check.

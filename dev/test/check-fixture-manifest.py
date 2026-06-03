@@ -5,7 +5,7 @@ Cross-checks that every authoritative reference to the
 `cardano-base` upstream commit SHA agrees:
 
   1. `crates/node/config/src/upstream_pins.rs::UPSTREAM_CARDANO_BASE_COMMIT`
-  2. `specs/upstream-test-vectors/cardano-base/<SHA>/` directory name
+  2. `dev/specs/upstream-test-vectors/cardano-base/<SHA>/` directory name
   3. `docs/SPECS.md` Vendored Upstream Test Vectors section
   4. `docs/UPSTREAM_PARITY.md` pin matrix
 
@@ -28,7 +28,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 UPSTREAM_PINS_RS = ROOT / "crates" / "node" / "config" / "src" / "upstream_pins.rs"
-FIXTURE_TREE = ROOT / "specs" / "upstream-test-vectors" / "cardano-base"
+FIXTURE_TREE = ROOT / "dev" / "specs" / "upstream-test-vectors" / "cardano-base"
 SPECS_MD = ROOT / "docs" / "SPECS.md"
 UPSTREAM_PARITY_MD = ROOT / "docs" / "UPSTREAM_PARITY.md"
 

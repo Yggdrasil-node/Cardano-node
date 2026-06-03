@@ -5,14 +5,15 @@ name: Supply-chain audit
 # Two gates layered on top of the existing weekly cargo-deny in
 # `.github/workflows/ci.yml`:
 #
-#   1. `cargo vet check`             — confirms every dep meets the
+#   1. `cargo vet --store-path dev/supply-chain check`
+#                                     — confirms every dep meets the
 #                                       per-crate criteria policy
-#                                       declared in `supply-chain/config.toml`.
+#                                       declared in `dev/supply-chain/config.toml`.
 #   2. `cargo supply-chain publishers --diffable` — surfaces every
 #                                       crates.io publisher in the
 #                                       transitive graph; on drift
 #                                       from the committed
-#                                       `supply-chain/publishers.snapshot.txt`,
+#                                       `dev/supply-chain/publishers.snapshot.txt`,
 #                                       opens or updates a tracking
 #                                       issue.
 #
@@ -52,7 +53,7 @@ jobs:
           tool: cargo-vet
 
       - name: cargo vet
-        run: cargo vet
+        run: cargo vet --store-path dev/supply-chain check
 
   publisher-drift:
     runs-on: ubuntu-latest
@@ -87,7 +88,7 @@ jobs:
         id: diff
         run: |
           set -euo pipefail
-          baseline="supply-chain/publishers.snapshot.txt"
+          baseline="dev/supply-chain/publishers.snapshot.txt"
           if [[ ! -f "$baseline" ]]; then
             echo "[baseline] no committed baseline yet; uploading first snapshot as artifact"
             echo "drift=first-run" >> "$GITHUB_OUTPUT"
@@ -127,7 +128,7 @@ jobs:
 
           \`cargo supply-chain publishers --diffable\` produced a different
           publisher set than the committed baseline at
-          \`supply-chain/publishers.snapshot.txt\`.
+          \`dev/supply-chain/publishers.snapshot.txt\`.
 
           New / removed publishers usually mean:
 
@@ -146,11 +147,11 @@ jobs:
           1. Inspect the artifact \`publishers-snapshot\` from this workflow run.
           2. Audit the new publisher(s) in the \`cargo vet\` queue if any
              of their crates fall under \`crypto-reviewed\` or
-             \`observability-reviewed\` (see \`supply-chain/config.toml\`).
+             \`observability-reviewed\` (see \`dev/supply-chain/config.toml\`).
           3. Once accepted, refresh the baseline:
              \`\`\`bash
-             cargo supply-chain publishers --diffable | sort > supply-chain/publishers.snapshot.txt
-             git add supply-chain/publishers.snapshot.txt
+             cargo supply-chain publishers --diffable | sort > dev/supply-chain/publishers.snapshot.txt
+             git add dev/supply-chain/publishers.snapshot.txt
              git commit -m "supply-chain: refresh publishers snapshot"
              \`\`\`
           MARKDOWN
@@ -186,5 +187,5 @@ jobs:
         if: steps.diff.outputs.drift == 'first-run'
         run: |
           echo "::notice::No publishers.snapshot.txt committed yet. After reviewing the artifact, commit it with:"
-          echo "::notice::  cargo supply-chain publishers --diffable | sort > supply-chain/publishers.snapshot.txt"
-          echo "::notice::  git add supply-chain/publishers.snapshot.txt && git commit"
+          echo "::notice::  cargo supply-chain publishers --diffable | sort > dev/supply-chain/publishers.snapshot.txt"
+          echo "::notice::  git add dev/supply-chain/publishers.snapshot.txt && git commit"

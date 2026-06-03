@@ -146,7 +146,7 @@ jobs:
 
       # Fixture-manifest validator. Cross-checks the cardano-base
       # SHA pin across `crates/node/config/src/upstream_pins.rs::UPSTREAM_CARDANO_BASE_COMMIT`,
-      # `specs/upstream-test-vectors/cardano-base/<SHA>/`,
+      # `dev/specs/upstream-test-vectors/cardano-base/<SHA>/`,
       # `docs/SPECS.md`, and `docs/UPSTREAM_PARITY.md`. Asserts every
       # required upstream-vendored fixture corpus is present.
       - name: Fixture-manifest validator
