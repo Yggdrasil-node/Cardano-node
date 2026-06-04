@@ -220,7 +220,7 @@ tracing-opentelemetry = { version = "0.27", default-features = false, features =
 # Pinned `default-features = false` to keep the audit-time
 # transitive footprint narrow.
 metrics = { version = "0.24", default-features = false }
-metrics-exporter-prometheus = { version = "0.17", default-features = false, features = ["http-listener"] }
+metrics-exporter-prometheus = { version = "0.18", default-features = false, features = ["http-listener"] }
 
 yggdrasil-cardano-cli = { path = "crates/tools/cardano-cli" }
 yggdrasil-consensus = { path = "crates/consensus" }
