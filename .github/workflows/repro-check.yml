@@ -208,7 +208,7 @@ jobs:
           cat reproducibility-report.txt
 
       - name: Upload reproducibility report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: reproducibility-${{ matrix.archive_suffix }}-${{ steps.tag.outputs.tag }}
           path: |
