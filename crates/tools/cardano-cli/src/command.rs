@@ -48,6 +48,13 @@ pub enum Command {
         #[command(subcommand)]
         command: crate::era_independent::address::command::AddressCmds,
     },
+    /// Key utility commands. Mirrors upstream
+    /// `Cardano.CLI.EraIndependent.Key.Command.KeyCmds`.
+    Key {
+        /// Key subcommand group.
+        #[command(subcommand)]
+        command: crate::era_independent::key::command::KeyCmds,
+    },
     /// Show resolved reference config paths and network magic.
     /// Mirrors upstream's `Cardano.CLI.Helper`-style operator
     /// introspection helpers; Yggdrasil-specific utility.

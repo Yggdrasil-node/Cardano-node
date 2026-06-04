@@ -196,7 +196,9 @@ where
 
 fn maybe_conway_deposit_args(era: CardanoEra, deposit: u64) -> Vec<String> {
     match era {
-        CardanoEra::Conway => vec!["--key-reg-deposit-amt".to_string(), deposit.to_string()],
+        CardanoEra::Conway | CardanoEra::Dijkstra => {
+            vec!["--key-reg-deposit-amt".to_string(), deposit.to_string()]
+        }
         _ => Vec::new(),
     }
 }
@@ -393,6 +395,28 @@ mod tests {
                 "keys/stake.vkey",
                 "--out-file",
                 "tmp/stake.deregcert",
+            ]
+        );
+
+        let dijkstra = create_stake_key_deregistration_certificate_plan(
+            ShelleyBasedEra::Dijkstra,
+            "tmp",
+            "keys/stake.vkey",
+            2_000_000,
+            "stake.deregcert",
+        );
+        assert_eq!(
+            dijkstra.args,
+            vec![
+                "dijkstra",
+                "stake-address",
+                "deregistration-certificate",
+                "--stake-verification-key-file",
+                "keys/stake.vkey",
+                "--out-file",
+                "tmp/stake.deregcert",
+                "--key-reg-deposit-amt",
+                "2000000",
             ]
         );
     }

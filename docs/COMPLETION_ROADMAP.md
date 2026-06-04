@@ -62,7 +62,7 @@ operator and wire-comparison closure requirements.
 - **Parity matrix (updated through R532):** 22 tracked entries — 2 `verified_11_0_1`,
   12 `implemented_needs_11_0_1_evidence`, 8 `partial`.
 - **Sister tools (13):** 1 verified (`bech32`); 4 functional-pending-soak
-  (`cardano-cli` with 40 operational subcommands, `cardano-submit-api`,
+  (`cardano-cli` with 41 operational subcommands, `cardano-submit-api`,
   `db-truncater`, `db-synthesizer`); 2 functional-partial (`cardano-tracer`,
   `db-analyser`); 6 skeleton (`kes-agent`, `kes-agent-control`,
   `snapshot-converter`, `tx-generator`, `dmq-node`, `cardano-testnet`).
@@ -108,14 +108,20 @@ workspace; `cargo lint-no-default` is green.
 ### A2 — cardano-cli subcommand migration — ✅ COMPLETE (verified 2026-05-20)
 The cardano-cli C-arc closed at R515 and the R527-R529 stale-placement
 cleanup moved the remaining query plans into the shared CLI crate.
-`crates/tools/cardano-cli/src/command.rs` carries all **40 `Command`
-variants**, `run.rs` dispatches them, and the crate has passing focused
-coverage for the post-R529 LSQ additions. The standalone
-`yggdrasil-cardano-cli` binary covers the
+`crates/tools/cardano-cli/src/command.rs` carries the completed
+40-command C-arc plus the post-C-arc `key verification-key` slice,
+`run.rs` dispatches them, and the crate has passing focused
+coverage for the post-R529 LSQ additions and key verification-key.
+The standalone `yggdrasil-cardano-cli` binary covers the
 offline operator toolkit (keys / addresses / txid / sign / build / build-raw /
-view), the full 27-query LocalStateQuery surface, and `transaction submit`.
+view / key verification-key), the full 27-query LocalStateQuery surface, and
+`transaction submit`.
+The `key verification-key` slice covers normal Ed25519 payment, stake,
+DRep, constitutional committee, genesis, genesis delegate, genesis UTxO,
+and stake-pool signing-key TextEnvelope families; extended/BIP32 and KES/VRF
+key shapes remain outside this bounded slice.
 Older central docs undercounted the migrated subcommands; the current surface
-is the 40-command / 27-query split above, matching
+is the 41-command / 27-query split above, matching
 `crates/tools/cardano-cli/AGENTS.md`. The only outstanding item is
 byte-equivalence evidence against a real upstream `cardano-cli 11.0` binary —
 Category-B operator-soak work, tracked by the `parity-matrix.json`
@@ -405,7 +411,10 @@ own parser / generator / submission implementation plus upstream
 comparison evidence. `cardano-testnet` has its era-free types,
 Parsers/Cardano option composition, typed `Command` payload wiring,
 byte-equivalent `version` subcommand, `Testnet/Types.hs` runtime
-record carriers, pure `Testnet/Process/Cli/Keys.hs` command
+record carriers, pure `Testnet/Components/Configuration.hs`
+constants / genesis-hash config / no-hash config / era-string helpers,
+Dijkstra direct-hardfork config, pure
+`Testnet/Process/Cli/Keys.hs` command
 builders, and `Testnet/Process/Cli/Transaction.hs` sign/submit/txid
 plus spend-output txbody builders, plus `Testnet/Process/Cli/DRep.hs` pure key/cert/vote
 builders and `Testnet/Process/Cli/SPO.hs` pure certificate/vote
@@ -416,7 +425,7 @@ through R834, `Testnet/Property/Util.hs` pure harness primitives through R835,
 `assertExpectedSposInLedgerState` stake-pool query wrapper through R837, and
 `Testnet/Property/Run.hs` pure harness-control/planning helpers through R839; its
 remaining implementation work is node/KES spawning and supervision,
-era-genesis, DRep/SPO runtime workflows, transaction runtime/query
+`createSPOGenesisAndFiles`, era-genesis, DRep/SPO runtime workflows, transaction runtime/query
 orchestration, and the remaining Process/Property harness execution for
 `cardano` and `create-env`. R533 shipped
 its upstream `Command.hs` parser

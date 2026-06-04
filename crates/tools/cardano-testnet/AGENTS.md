@@ -4,9 +4,11 @@
 surface, Parsers/Cardano option-composition layer, typed `Command`
 payload wiring, `version` subcommand dispatch,
 `Testnet/Types.hs` process-handle runtime record carriers, the
-`Testnet/Defaults.hs` pure node-configuration defaults and default key/path
-helpers (`defaultYamlConfig`, `defaultYamlHardforkViaConfig`,
-`defaultGenesisFilepath`, `defaultSpoKeys`, DRep / committee key paths,
+`Testnet/Components/Configuration.hs` constants, genesis-hash config, no-hash
+config, and era-string helpers, the `Testnet/Defaults.hs` pure
+node-configuration defaults and default key/path helpers (`defaultYamlConfig`, `defaultYamlHardforkViaConfig`,
+`defaultGenesisFilepath`, including Dijkstra direct-hardfork config,
+`defaultSpoKeys`, DRep / committee key paths,
 delegator stake keys, UTxO key pairs, and default P2P topology builders), the
 pure `Testnet/Process/Cli/Keys.hs` command builders plus the
 `Testnet/Process/Cli/Transaction.hs` pure sign/submit/txid and
@@ -92,14 +94,20 @@ Hedgehog Process/Property carve-out (`tokio::process` + `proptest`).
   `defaultYamlHardforkViaConfig`, `defaultSpoKeys`, DRep / committee
   key paths, delegator stake keys, UTxO key pairs, and the
   `defaultMainnetTopology` / `defaultP2PTopology` records, with
-  upstream protocol-version, cumulative hardfork-at-epoch, tracer,
+  upstream protocol-version, cumulative hardfork-at-epoch through
+  Dijkstra, tracer,
   base config keys, root-peer groups, valencies, trust flags,
   advertise flags, bootstrap policy, ledger-peer policy, and
   peer-snapshot defaults. Topology serialization omits disabled
   `bootstrapPeers` and absent `peerSnapshotFile` fields, matching
   upstream `networkTopologyToJSON`.
-- ✅ `components/` — `TestnetWaitPeriod` (`Query.hs`) and the
-  `Configuration.hs` constants.
+- ✅ `components/` — `TestnetWaitPeriod` (`Query.hs`) plus the
+  `Configuration.hs` constants, `createConfigJson`,
+  `createConfigJsonNoHash`, `getByronGenesisHash`,
+  `getShelleyGenesisHash`, `eraToString`, and `anyEraToString`
+  helpers. `createConfigJson` uses the shared `yggdrasil-node-genesis`
+  Byron canonical-JSON hash and Shelley-family raw-file hash helpers,
+  matching upstream's split.
 - ✅ `process/cli/keys.rs` — pure command builders for
   `Testnet/Process/Cli/Keys.hs`: Shelley payment/stake/VRF/KES
   keygen argv, node cold-keygen argv, and legacy Byron key/address
@@ -153,7 +161,7 @@ Hedgehog Process/Property carve-out (`tokio::process` + `proptest`).
   no longer part of this deferral.
 - ❌ The concrete node/KES-agent spawning and supervision bodies, the
   per-era genesis records (`Defaults.hs`), the `Components/` node-query
-  / genesis-creation bodies, the `Start/*` era startup, the remaining
+  / `createSPOGenesisAndFiles` genesis-creation body, the `Start/*` era startup, the remaining
   runtime/query-heavy SPO registration/check workflows, the runtime/query-heavy DRep
   workflows, transaction runtime UTxO/script-address orchestration, and the
   `Process/Property/Run.hs` Hedgehog-to-Rust execution harness carve-out.

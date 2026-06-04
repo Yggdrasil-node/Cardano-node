@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at_utc": "2026-06-03T01:14:13Z",
+  "generated_at_utc": "2026-06-04T23:40:06Z",
   "description_policy": "Each entry has one or two concise human-maintained description lines. Run accept-current after reviewing stale entries.",
   "files": [
     {
@@ -30,10 +30,10 @@
       "description_lines": [
         "Core-First Completion TODO: [ ] Full-completion continuation plan (2026-06-02)."
       ],
-      "content_sha256": "0101adfde4b9012399c3a6044417f63c146f473f4fb13fd23644683f73404ab1",
-      "git_blob": "681bbb5064290c943bd9836184c746bf8e96e9fe",
-      "source_mtime_ns": 1780429439873101706,
-      "described_at_utc": "2026-06-02T23:52:19Z",
+      "content_sha256": "c8dbce9c3239dbb4f833b761a4177447b7bc1d638fa34b783465826fe5cd005a",
+      "git_blob": "364407a7606802c65045a64bb7eb207ef1171c58",
+      "source_mtime_ns": 1780616297337308964,
+      "described_at_utc": "2026-06-04T23:40:01Z",
       "generated_self_exempt": false
     },
     {
@@ -174,10 +174,10 @@
       "description_lines": [
         "Project file at .github/workflows/ci.yml."
       ],
-      "content_sha256": "693c72718aa298d6971361821df50081059455a06b3e4884321b8f441d6349c2",
-      "git_blob": "bb1865d2ea66b810b9bc0eebba64573474e427f6",
-      "source_mtime_ns": 1780443041542486482,
-      "described_at_utc": "2026-06-02T23:52:19Z",
+      "content_sha256": "08da326ec3ffb015a144289442e773ae0b170d0f92474c02e777b4daead6c496",
+      "git_blob": "06aee4812558286fc9604dc75e2b03a3398aa674",
+      "source_mtime_ns": 1780541843527371849,
+      "described_at_utc": "2026-06-04T03:06:44Z",
       "generated_self_exempt": false
     },
     {
@@ -297,10 +297,10 @@
         "Top-level workspace rules + rolling parity journal for Yggdrasil contributors.",
         "Defines upstream-reference expectations, command gates, autoplanning, and the parity-matrix gate."
       ],
-      "content_sha256": "9de26588b1b9815349b33be149bb2de14acccb4c775c96c084708f714bf3284f",
-      "git_blob": "e12fb4749f47c1ff855ab98f3528d50f65d98978",
-      "source_mtime_ns": 1780441274936646507,
-      "described_at_utc": "2026-06-02T23:52:19Z",
+      "content_sha256": "33f246b9385bf00e0a8c55ff86261d23907d9c619c6e5ea2b40f6ecacb63ecaa",
+      "git_blob": "3ec3602090f9fb7741bb37a0eb744171e18efe16",
+      "source_mtime_ns": 1780541576812744561,
+      "described_at_utc": "2026-06-04T03:06:45Z",
       "generated_self_exempt": false
     },
     {
@@ -320,10 +320,10 @@
         "Pinned Rust dependency lockfile for reproducible workspace builds.",
         "Captures exact transitive crate versions resolved for this repository."
       ],
-      "content_sha256": "8dee48f4ed3fe875d816abfeaad0b5b0366b84dc9cfc8f207d46fa5bcad1208d",
-      "git_blob": "6736f825fb69bc43c72e1c5419773a1696dcabd2",
-      "source_mtime_ns": 1780381756629475310,
-      "described_at_utc": "2026-06-02T06:33:27Z",
+      "content_sha256": "cc9f242ebb7da88cb479a8e25656f0e5bddd012b439392d0e486cf17fa332a34",
+      "git_blob": "3b80eb8a71e0a9bc34c777b1c3f8292ea3cd0846",
+      "source_mtime_ns": 1780502113789808659,
+      "described_at_utc": "2026-06-03T16:24:37Z",
       "generated_self_exempt": false
     },
     {
@@ -366,10 +366,10 @@
         "Top-level project overview for Yggdrasil \u2014 the pure-Rust Cardano node port.",
         "Summarizes goals, parity targets, current status, architecture, setup, and validation commands."
       ],
-      "content_sha256": "0314390fd4a683e2ae08f2d9cc5e5edc0bf63b134c51af4112691401ecf1cf9d",
-      "git_blob": "8058b5976800cc7d1b415f51fe6ce26b492ede5a",
-      "source_mtime_ns": 1780418064490428066,
-      "described_at_utc": "2026-06-02T16:49:42Z",
+      "content_sha256": "b477bdb865dc76d5865ce2d2dd1b810d46cdac4eaa26bf39fe2b812a535ae938",
+      "git_blob": "680b232ef61fef3b2c72fe0d297eb17d21c355ce",
+      "source_mtime_ns": 1780511720173718451,
+      "described_at_utc": "2026-06-03T18:46:50Z",
       "generated_self_exempt": false
     },
     {
@@ -798,10 +798,10 @@
       "description_lines": [
         "Guidance for maintaining crate boundaries and shared conventions across the Rust workspace crates.: Keep this directory as a crate index, not as a place for cross-cutting implement"
       ],
-      "content_sha256": "3aebb155534e0d8afac8b17029b2f1d01e3e54efe900924f6b462bf00508eb49",
-      "git_blob": "108b942ab13f53725ec2c2a35af4f2ce57cba2e1",
-      "source_mtime_ns": 1780395274692582404,
-      "described_at_utc": "2026-06-02T12:05:52Z",
+      "content_sha256": "d20932a6e89b9ca653cd08c302baac669b7724570ff1406319ce155feb92d83d",
+      "git_blob": "b2df78b90e5f7153f9d254ae46be0a5cf3a9e93d",
+      "source_mtime_ns": 1780491758535827364,
+      "described_at_utc": "2026-06-03T13:22:39Z",
       "generated_self_exempt": false
     },
     {
@@ -5374,10 +5374,10 @@
       "description_lines": [
         "Guidance for the pure-Rust port of upstream `cardano-cli`.: Focus on **strict 1:1 file-mirror parity** with upstream."
       ],
-      "content_sha256": "c31ee5646aef86a0fe32e202ce157847326b1ce098066602b3a7f530212f2db9",
-      "git_blob": "b9fd4ba26c6fcc7da83b1136f0bf26aced5cb8dd",
-      "source_mtime_ns": 1780395275206720607,
-      "described_at_utc": "2026-06-02T12:05:55Z",
+      "content_sha256": "b6b35343b0a404360746a315ce54fe4278273c3023d21e0f8db0ecc318c4429d",
+      "git_blob": "8e70d73d2160afc86a97d09dc02f0402b6216e73",
+      "source_mtime_ns": 1780495508406454998,
+      "described_at_utc": "2026-06-03T14:22:24Z",
       "generated_self_exempt": false
     },
     {
@@ -5518,10 +5518,10 @@
       "description_lines": [
         "Top-level cardano-cli command type. Mirrors upstream `Cardano.CLI.Command` (the entry-point sum type that aggregates Byron / Compatible / per-era / Legacy / EraBased."
       ],
-      "content_sha256": "aed7a0e7dab824962c87d1b61d333c6bad27edd4e7248dfcc385636ff538fdf5",
-      "git_blob": "e52937823e48516a75ba4a7f8d59bbb53b02ca3e",
-      "source_mtime_ns": 1780447616359987502,
-      "described_at_utc": "2026-06-03T01:14:07Z",
+      "content_sha256": "f4655c6b07af21c8f7b319cd3730d67e82286bec5fbdef66441d11b67762b206",
+      "git_blob": "f1c4f60f747367b58cdd9e428ef3d2717bcc703e",
+      "source_mtime_ns": 1780451533663312919,
+      "described_at_utc": "2026-06-03T09:48:17Z",
       "generated_self_exempt": false
     },
     {
@@ -7168,10 +7168,10 @@
       "description_lines": [
         "EraIndependent command."
       ],
-      "content_sha256": "1b4b07d5056d8ca962ce2e5612445ccf7704285c6852c0bed630ec56b02d1970",
-      "git_blob": "9685d7fa533350bf6890b147eef32f60db746fa8",
-      "source_mtime_ns": 1780366176616052156,
-      "described_at_utc": "2026-06-02T03:28:16Z",
+      "content_sha256": "5bace006afaef46b48ed8b332c75045311e6f9857b9fdcd95dc37d7686607a33",
+      "git_blob": "e7e2d46d8e4723140263d37835e686b38abb6351",
+      "source_mtime_ns": 1780451166360967084,
+      "described_at_utc": "2026-06-03T09:48:17Z",
       "generated_self_exempt": false
     },
     {
@@ -7179,10 +7179,10 @@
       "description_lines": [
         "EraIndependent option."
       ],
-      "content_sha256": "1252681e9d393246366a994397022f8d049d84d1a4b31c352dc4cda722070a5a",
-      "git_blob": "84ba085852bb0679710ffed30ec0071855b48e56",
-      "source_mtime_ns": 1780366176616052156,
-      "described_at_utc": "2026-06-02T03:28:16Z",
+      "content_sha256": "e8658354c0d9603020876d24c8fc96cfceab17c7cd3b6a5762f3b94850ef11f8",
+      "git_blob": "296700e7a453b86f56aaa2070c43e26e2bac7444",
+      "source_mtime_ns": 1780451269661750436,
+      "described_at_utc": "2026-06-03T09:48:17Z",
       "generated_self_exempt": false
     },
     {
@@ -7190,10 +7190,10 @@
       "description_lines": [
         "EraIndependent run."
       ],
-      "content_sha256": "ea3510f1692fc49a4a30ec958c0407174b827f469f57075334e28f594ac884c7",
-      "git_blob": "a9cb68d160989cee37dcd4d91bd26bed4b23bc0b",
-      "source_mtime_ns": 1780366176616052156,
-      "described_at_utc": "2026-06-02T03:28:16Z",
+      "content_sha256": "164e506f93fc7251379373469d839a4589b35976aa6d4578b9df14c73a325c80",
+      "git_blob": "446f2227435ad1cb4378344b5c9101f49f30a545",
+      "source_mtime_ns": 1780495380240932162,
+      "described_at_utc": "2026-06-03T14:22:24Z",
       "generated_self_exempt": false
     },
     {
@@ -7531,10 +7531,10 @@
       "description_lines": [
         "cardano-cli argument parser. Mirrors upstream `Cardano.CLI.Parser` \u2014 the optparse-applicative parser that produces a `ClientCommand` from `argv`. Yggdrasil uses."
       ],
-      "content_sha256": "f4d5226b791d63670712e2cf15a0bc4879adcba97c4355eb13b20d9b70ba7341",
-      "git_blob": "c142f8eb3541e756a5fe97ce1ab915a644efbda1",
-      "source_mtime_ns": 1780448095039184948,
-      "described_at_utc": "2026-06-03T01:14:09Z",
+      "content_sha256": "f8fe1efd36ad5ebe6a95bc52b4df8d711c5a9ab9779f49ac8908de3b505969a6",
+      "git_blob": "896c5f47bde9dc09db6d6d4870e2e84f72509075",
+      "source_mtime_ns": 1780451767408313623,
+      "described_at_utc": "2026-06-03T09:48:17Z",
       "generated_self_exempt": false
     },
     {
@@ -7619,10 +7619,10 @@
       "description_lines": [
         "Top-level cardano-cli run dispatcher. Mirrors upstream `Cardano.CLI.Run` \u2014 the dispatcher that routes a parsed `Command` to its per-cluster runner (Byron / Compatible /."
       ],
-      "content_sha256": "cbd358d14e2e1e13a1098dc941c4d0b74452fa527f560a69dcf25670d0622e06",
-      "git_blob": "d23effef01b6f1706805f00f73378d7484a4785e",
-      "source_mtime_ns": 1780447930735702805,
-      "described_at_utc": "2026-06-03T01:14:09Z",
+      "content_sha256": "d09f2c30364e032f39ad0dbdfb951b7532cf37968c885d8ed3a615875cebbf9f",
+      "git_blob": "b61eea99bf0dab123b4de61d956d8f554046ba50",
+      "source_mtime_ns": 1780451645855276960,
+      "described_at_utc": "2026-06-03T09:48:17Z",
       "generated_self_exempt": false
     },
     {
@@ -8280,10 +8280,10 @@
       "description_lines": [
         "Guidance for the pure-Rust port of upstream `cardano-testnet`.: **Status:** `partial` (post-R335-pattern skeleton). Concrete."
       ],
-      "content_sha256": "7960f49a84e98380b3d64715bf90bdc5f2b90336dc2fd124379d7eb3f045b648",
-      "git_blob": "1262e5c5990d5eb544842165b2629b8a794a1c0b",
-      "source_mtime_ns": 1780395275229741721,
-      "described_at_utc": "2026-06-02T12:05:56Z",
+      "content_sha256": "88bd0ad16bb65e2a2c5b9c8e1494a9e63e7db4322d0f54947d9dc6289f0556a6",
+      "git_blob": "11679bb66a9d598c1c45ba483586978fc8d4fffd",
+      "source_mtime_ns": 1780506089394293942,
+      "described_at_utc": "2026-06-03T17:34:40Z",
       "generated_self_exempt": false
     },
     {
@@ -8292,10 +8292,10 @@
         "Cargo manifest for the tools crate.",
         "Declares crate metadata, dependencies, features, and local lint behavior."
       ],
-      "content_sha256": "b13ad4cf28ac5468e2443914516e7a2eb40100d6bab8a773404f22a35d17196d",
-      "git_blob": "791ee028a9b4f7a3d37c775c383a01516d8520d6",
-      "source_mtime_ns": 1780381157306486286,
-      "described_at_utc": "2026-06-02T06:33:30Z",
+      "content_sha256": "86e12f335d6568ec4f00b8d3d51ef7848a744aa7e36ad16497b59ec0eeae2b26",
+      "git_blob": "b0be50c180a0c18329c60c142b0608273b762f8e",
+      "source_mtime_ns": 1780501992117644450,
+      "described_at_utc": "2026-06-03T16:24:39Z",
       "generated_self_exempt": false
     },
     {
@@ -8314,10 +8314,10 @@
       "description_lines": [
         "cardano-testnet configuration-creation constants."
       ],
-      "content_sha256": "6fbf73aa7017ea4560355a5f8f243a186acb7d563f6856a530525b2827f14519",
-      "git_blob": "2d64e09a5234399c7553333c6fc8d4c953e0ede5",
-      "source_mtime_ns": 1780366176631784274,
-      "described_at_utc": "2026-06-02T03:28:17Z",
+      "content_sha256": "9945e07112b5b5cb2657856589c99dd76cdb0a1339216b5df54358f52d730cf7",
+      "git_blob": "f551b51c64140c37e4630b5fecb02f72fbdc6682",
+      "source_mtime_ns": 1780507813497933495,
+      "described_at_utc": "2026-06-03T17:34:40Z",
       "generated_self_exempt": false
     },
     {
@@ -8336,10 +8336,10 @@
       "description_lines": [
         "cardano-testnet default genesis / script values."
       ],
-      "content_sha256": "6d6e1f9c79da599d5adcf2f6ea6c4a13545be926e7bd7a042b92cbf06cabd5ce",
-      "git_blob": "318e9bc5d493b0d5e9139336174c8848fc8baf0a",
-      "source_mtime_ns": 1780384877833495437,
-      "described_at_utc": "2026-06-02T07:42:02Z",
+      "content_sha256": "71db2b16f429b097b0d6986b15b7b57c8d5db76a4db5f7484b66a118e46f0af7",
+      "git_blob": "3f9aa672f97eeb22d1ac653ffb0b88718cf67138",
+      "source_mtime_ns": 1780505253229956188,
+      "described_at_utc": "2026-06-03T17:34:40Z",
       "generated_self_exempt": false
     },
     {
@@ -8446,10 +8446,10 @@
       "description_lines": [
         "`cardano-cli` stake-pool-operator command builders."
       ],
-      "content_sha256": "e2176226706c3450c5df72c5ca9d53f7450676665d6487576a6c6acf3edecd3d",
-      "git_blob": "d8b4d0174373cecc1df8976fb0026d5e692e348e",
-      "source_mtime_ns": 1780366176635717304,
-      "described_at_utc": "2026-06-02T03:28:17Z",
+      "content_sha256": "ac7aae25a7675b350bc850de0c1c8c4548b58902641051ec8fc84354c88fe54f",
+      "git_blob": "8a8adb1a920146eee8c9d838121719d7ec2d3d8e",
+      "source_mtime_ns": 1780505936711660208,
+      "described_at_utc": "2026-06-03T17:34:40Z",
       "generated_self_exempt": false
     },
     {
@@ -8545,10 +8545,10 @@
       "description_lines": [
         "Programmatic-introspection helpers for the cardano-testnet deferred surfaces. R445 surfaced the initial era-aware-dispatch + Process/Property carve-out as a `*_status()` helper. R772-R823 filled in the era-free type surface and the Parsers/Cardano.hs option-composition layer; the remaining explicit deferral is `Command` payload wiring plus the runtime/process harness."
       ],
-      "content_sha256": "edefc76ab5b26c1294b29a85f0ece45fe572a33b4a78b1ee325acbd1a4e7ca6c",
-      "git_blob": "c7da283366e5febeefcc28288d6137206a173ea1",
-      "source_mtime_ns": 1780381638466489471,
-      "described_at_utc": "2026-06-02T06:33:30Z",
+      "content_sha256": "e2231f244e082646ccf1089644b5278f690764f5e9b20d74a944b3007119f7c1",
+      "git_blob": "8a16fc946d7b7e30d6c143bf9fdce78240575caa",
+      "source_mtime_ns": 1780502728193481387,
+      "described_at_utc": "2026-06-03T16:24:39Z",
       "generated_self_exempt": false
     },
     {
@@ -8556,10 +8556,10 @@
       "description_lines": [
         "Operator-facing types for the `cardano-testnet` binary."
       ],
-      "content_sha256": "8322e8e53d35b84cffed2ba99b03b54de374795238fd80f5c3c1f494567d93c1",
-      "git_blob": "5794887acd28b7a084732b0680436d26e418e815",
-      "source_mtime_ns": 1780366176635717304,
-      "described_at_utc": "2026-06-02T03:28:17Z",
+      "content_sha256": "0b575a9571a6a6237e2079d405f1f075592b2c5007901907d84e5311c9ac8939",
+      "git_blob": "390adb115c7a0e8c68a5e440e128558f509c9db3",
+      "source_mtime_ns": 1780505139877079023,
+      "described_at_utc": "2026-06-03T17:34:40Z",
       "generated_self_exempt": false
     },
     {
@@ -9991,10 +9991,10 @@
       "description_lines": [
         "CLI argument parser for the `kes-agent-control` binary."
       ],
-      "content_sha256": "ab58ef49af6c2a4a9d7b34a5f456e494228b1eca6e80a6eb8a4699e0e0d3632f",
-      "git_blob": "62a7c54f7fd95a652e965db18a9dac0225563d0a",
-      "source_mtime_ns": 1780366176655382452,
-      "described_at_utc": "2026-06-02T03:28:18Z",
+      "content_sha256": "36d58375d2c10d63fdeedef836b80e303337d0c4951f3f2425b9f2eaf4d28e58",
+      "git_blob": "e1869dff9ced487a8bc39c9f30c893a3836cfe09",
+      "source_mtime_ns": 1780548843349708574,
+      "described_at_utc": "2026-06-04T05:16:27Z",
       "generated_self_exempt": false
     },
     {
@@ -10057,10 +10057,10 @@
       "description_lines": [
         "Guidance for the pure-Rust port of upstream `kes-agent`.: **Status:** `partial` (post-R335-pattern skeleton). Concrete."
       ],
-      "content_sha256": "d1ef45c6f11f1e32bca0a87e40bb6be8e88ce56784d4c4b494faf8a201c5f213",
-      "git_blob": "7f691b48ce2d506cfa2e0f53eb77da5ecdb3d4db",
-      "source_mtime_ns": 1780406883481556258,
-      "described_at_utc": "2026-06-02T13:40:02Z",
+      "content_sha256": "c0644e838a9f0493faf1d6f0bc9f6aefdd27470371fdeb06b89b684a74224395",
+      "git_blob": "ffbb28c68c62b7c517a6611d7b03133fc0ad0d81",
+      "source_mtime_ns": 1780611877089604059,
+      "described_at_utc": "2026-06-04T22:28:55Z",
       "generated_self_exempt": false
     },
     {
@@ -10069,10 +10069,10 @@
         "Cargo manifest for the tools crate.",
         "Declares crate metadata, dependencies, features, and local lint behavior."
       ],
-      "content_sha256": "04accb49c77f0622018e01ea4e8c1e22a2a9053e00440b3b22104b27a640c269",
-      "git_blob": "f241b7001d01036f4c3f64ea3330bab4c52bd89f",
-      "source_mtime_ns": 1780366176655382452,
-      "described_at_utc": "2026-06-02T03:28:18Z",
+      "content_sha256": "f30e6a36f80509b26ce991580bd49b8ead9e0242c8a55e5d9ca7804eb7405cd2",
+      "git_blob": "470d87c2c4d76f152e9fbea54fa5f2a2f709ad6e",
+      "source_mtime_ns": 1780611877089604059,
+      "described_at_utc": "2026-06-04T22:28:55Z",
       "generated_self_exempt": false
     },
     {
@@ -10080,10 +10080,10 @@
       "description_lines": [
         "Pure-Rust port of upstream `kes-agent`."
       ],
-      "content_sha256": "51f213c93d09441521275a78399199d793d050fb727a2d2124fd41216d3a61d8",
-      "git_blob": "ec516e83e79e1fe92d322980103238d689abfed2",
-      "source_mtime_ns": 1780366176655382452,
-      "described_at_utc": "2026-06-02T03:28:18Z",
+      "content_sha256": "3f77c3235b3f8727f1a01e8b6c7810b7c9a58070a146f9610e2890c0cdd6c3a1",
+      "git_blob": "ac1407a0c3927bc74975cf431cd5fc370b99c2d9",
+      "source_mtime_ns": 1780576519757735647,
+      "described_at_utc": "2026-06-04T13:14:45Z",
       "generated_self_exempt": false
     },
     {
@@ -10102,10 +10102,329 @@
       "description_lines": [
         "CLI argument parser shell for the `kes-agent` binary."
       ],
-      "content_sha256": "e6558923ac82f1c824443df16d610d98cd1294fe10d4b8c3565caf5a01b5a37a",
-      "git_blob": "8bb011bdfb2c02c0abcfea4d85f4bf5d17c362c8",
-      "source_mtime_ns": 1780366176655382452,
-      "described_at_utc": "2026-06-02T03:28:18Z",
+      "content_sha256": "f7cb413ce9b4f01e592b4554ebb78a485866f673bf48dc71ce8aaee23233c0b1",
+      "git_blob": "55d62577beba5da1fdab06b6d9929c4c63d21ead",
+      "source_mtime_ns": 1780555160357568045,
+      "described_at_utc": "2026-06-04T12:05:15Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "crates/tools/kes-agent/src/protocols/agent_info.rs",
+      "description_lines": [
+        "Agent state information displayed by control clients."
+      ],
+      "content_sha256": "6a1a1207fa6e3bb0e3250bdaf6d778b97cac02b106e8fa232cb4194c04b54328",
+      "git_blob": "a9ba88827a2f357c18ba2a327e6d02f60b82d4ba",
+      "source_mtime_ns": 1780577279756351620,
+      "described_at_utc": "2026-06-04T13:14:45Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "crates/tools/kes-agent/src/protocols/bearer_util.rs",
+      "description_lines": [
+        "Duplex raw-bearer helper vocabulary."
+      ],
+      "content_sha256": "6e07fdda026795f14d979cdb4d397d78962029934d40225df3c3ce0671738278",
+      "git_blob": "ebc70670e4cc98e32e5b92a5f491741460176903",
+      "source_mtime_ns": 1780611242773770353,
+      "described_at_utc": "2026-06-04T22:28:55Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "crates/tools/kes-agent/src/protocols/control_v0_driver.rs",
+      "description_lines": [
+        "Version 0 control driver vocabulary."
+      ],
+      "content_sha256": "5eb984b576c523617b2aaa4c27fc23f66cadb7a5d0e7625bb5661edc2a6b6cb7",
+      "git_blob": "ca8b53a4261da5cbd1180234d3c4562787ef6503",
+      "source_mtime_ns": 1780600991319283113,
+      "described_at_utc": "2026-06-04T19:49:25Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "crates/tools/kes-agent/src/protocols/control_v0_peers.rs",
+      "description_lines": [
+        "Pure peers for the version 0 control protocol."
+      ],
+      "content_sha256": "857a8502133d89cec91711610bb711a89866bbe06ff3ed1f0baaa6d7a7518aaf",
+      "git_blob": "e51762eea0ce4fc29ffd9bb38978d979417e73cc",
+      "source_mtime_ns": 1780600991319283113,
+      "described_at_utc": "2026-06-04T19:49:25Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "crates/tools/kes-agent/src/protocols/control_v0_protocol.rs",
+      "description_lines": [
+        "Version 0 control protocol for KES-agent control commands."
+      ],
+      "content_sha256": "771023cc4fa0f7464e4116dd09824fd33e0b300d5ddac3cb215d398e0edbad04",
+      "git_blob": "e3a5c8ef689246f73bdbeff39ec23d870e4a7dcf",
+      "source_mtime_ns": 1780600991319283113,
+      "described_at_utc": "2026-06-04T19:49:25Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "crates/tools/kes-agent/src/protocols/control_v1_driver.rs",
+      "description_lines": [
+        "Version 1 control driver vocabulary."
+      ],
+      "content_sha256": "6d8afad730d530138753f323d482733245f119931c285ea81f8f612e89fb7d4d",
+      "git_blob": "a3bede369bf12d9523ab809ecf8b9654f04a599d",
+      "source_mtime_ns": 1780597133849849303,
+      "described_at_utc": "2026-06-04T18:53:59Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "crates/tools/kes-agent/src/protocols/control_v1_peers.rs",
+      "description_lines": [
+        "Pure peers for the version 1 control protocol."
+      ],
+      "content_sha256": "ce23d4dac94cfeb7289c1dac9da36753d0315b0055c75c69a8230d7badcea049",
+      "git_blob": "b5e529e1aabd9420725568b5aeb540768dbf8a37",
+      "source_mtime_ns": 1780597133845851054,
+      "described_at_utc": "2026-06-04T18:53:59Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "crates/tools/kes-agent/src/protocols/control_v1_protocol.rs",
+      "description_lines": [
+        "Version 1 control protocol for KES-agent control commands."
+      ],
+      "content_sha256": "ebc2f4965db353d3100995a6f149c669d63475ec9d709c5dd6b086321ff9d06a",
+      "git_blob": "9c1749a54915a4717272611fcadab13575fb98a8",
+      "source_mtime_ns": 1780596184605894594,
+      "described_at_utc": "2026-06-04T18:53:59Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "crates/tools/kes-agent/src/protocols/control_v2_driver.rs",
+      "description_lines": [
+        "Version 2 control driver vocabulary."
+      ],
+      "content_sha256": "7ea7e8c846d90834727ec5b44e76fd77bdebb9c74b93c7ad32be1b4a6d8c8517",
+      "git_blob": "f6257b115b0412ff512a51867924b30d4ea3c0ce",
+      "source_mtime_ns": 1780592644639677525,
+      "described_at_utc": "2026-06-04T17:43:18Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "crates/tools/kes-agent/src/protocols/control_v2_peers.rs",
+      "description_lines": [
+        "Pure peers for the version 2 control protocol."
+      ],
+      "content_sha256": "2aaeb5689c1ad453a6d55613aa2360082873fbd8c5d2c0f38ac2e807c751669a",
+      "git_blob": "fe4eb98cedae7873441b4c4c98c4745d9bbd4151",
+      "source_mtime_ns": 1780593133186007633,
+      "described_at_utc": "2026-06-04T17:43:18Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "crates/tools/kes-agent/src/protocols/control_v2_protocol.rs",
+      "description_lines": [
+        "Version 2 control protocol for KES-agent control commands."
+      ],
+      "content_sha256": "e5c502221af9b4816a5e6bbe5bbd715baaa78184b259b03eb9c34e905a3f6d1b",
+      "git_blob": "039ae9a6d895e5a42c2a8b617cc55c29b1bfb941",
+      "source_mtime_ns": 1780592340633858699,
+      "described_at_utc": "2026-06-04T17:43:18Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "crates/tools/kes-agent/src/protocols/control_v3_driver.rs",
+      "description_lines": [
+        "Version 3 control driver vocabulary."
+      ],
+      "content_sha256": "4cb5a6c2d3d24385ce4a3780fdb76b01b0e829f3be865e8c83c0226cb6f138b9",
+      "git_blob": "90f7a9031572f3a6c38951a1eab1dbac8dd4447b",
+      "source_mtime_ns": 1780588291672382927,
+      "described_at_utc": "2026-06-04T16:37:14Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "crates/tools/kes-agent/src/protocols/control_v3_peers.rs",
+      "description_lines": [
+        "Pure peers for the version 3 control protocol."
+      ],
+      "content_sha256": "67448b1a409ddf06aaf484c1db247d83182d6d7e5f483a01c643ef487e33d287",
+      "git_blob": "240634f50e0dfa7da1bc1363035d5414481a7c3b",
+      "source_mtime_ns": 1780589257765928642,
+      "described_at_utc": "2026-06-04T16:37:14Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "crates/tools/kes-agent/src/protocols/control_v3_protocol.rs",
+      "description_lines": [
+        "Version 3 control protocol for KES-agent control commands."
+      ],
+      "content_sha256": "093bd56f20a30b5d43155ded7c1bf4be121344c8c4954c7bcdf356a529a04661",
+      "git_blob": "67bab4478ac6ad0c303553e762311412accde68a",
+      "source_mtime_ns": 1780588072433026352,
+      "described_at_utc": "2026-06-04T16:37:14Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "crates/tools/kes-agent/src/protocols/mod.rs",
+      "description_lines": [
+        "Common protocol vocabulary for the pure-Rust `kes-agent` port."
+      ],
+      "content_sha256": "26804b0145a3f9ad3eeefab5b87ba01d52d665eb1f603b920d82aeaf6a42e82f",
+      "git_blob": "1388f23d0582bf18e377236bc3c0a0b5e316c4f6",
+      "source_mtime_ns": 1780610997151867270,
+      "described_at_utc": "2026-06-04T22:28:55Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "crates/tools/kes-agent/src/protocols/recv_result.rs",
+      "description_lines": [
+        "Result of receiving a KES key bundle."
+      ],
+      "content_sha256": "178810289bbd14a5ef140380c10888021c7c34bda8e3c2ed02cf9cb329e2ffb4",
+      "git_blob": "fe24132e1c5e2f24a775205bd3a673dcc596776a",
+      "source_mtime_ns": 1780577279756351620,
+      "described_at_utc": "2026-06-04T13:14:45Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "crates/tools/kes-agent/src/protocols/service_v0_driver.rs",
+      "description_lines": [
+        "Version 0 service driver vocabulary."
+      ],
+      "content_sha256": "6ea5b2f11038ba54fd7e0c460c99ef55eadc08727a2988599a9b7a7c077afa1c",
+      "git_blob": "450df3f6b8ea0aced386267a6837faa641b620e7",
+      "source_mtime_ns": 1780607719683500913,
+      "described_at_utc": "2026-06-04T21:34:23Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "crates/tools/kes-agent/src/protocols/service_v0_peers.rs",
+      "description_lines": [
+        "Pure peers for the version 0 service protocol."
+      ],
+      "content_sha256": "61af076b9dc7671d23e0854f72e4f2275fc06e757bfb5a5b2e36ba5309354c71",
+      "git_blob": "cb8ba7a4170a0d1d433426d5545605024dff5670",
+      "source_mtime_ns": 1780607719683500913,
+      "described_at_utc": "2026-06-04T21:34:23Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "crates/tools/kes-agent/src/protocols/service_v0_protocol.rs",
+      "description_lines": [
+        "Version 0 service protocol for pushing KES keys."
+      ],
+      "content_sha256": "80b7e79b123b22f972e289707b465ef3668a4268c6c43f095141668f35846d30",
+      "git_blob": "54ccfaf79eb51447843ac48dda08f213d5e55035",
+      "source_mtime_ns": 1780607719683500913,
+      "described_at_utc": "2026-06-04T21:34:23Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "crates/tools/kes-agent/src/protocols/service_v1_driver.rs",
+      "description_lines": [
+        "Version 1 service driver vocabulary."
+      ],
+      "content_sha256": "16582f87dbb54c2db96f763f35abdeb6c74a606eee9539fe629b2dd0a1a9c781",
+      "git_blob": "1b26f4f42d6855878af7c8e030b3b4d78e9e319a",
+      "source_mtime_ns": 1780603724024105422,
+      "described_at_utc": "2026-06-04T20:39:46Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "crates/tools/kes-agent/src/protocols/service_v1_peers.rs",
+      "description_lines": [
+        "Pure peers for the version 1 service protocol."
+      ],
+      "content_sha256": "0e86d7440a81449fb1558506c538550f448f3b493c7d383e7ddaa435d468a34f",
+      "git_blob": "b78a5f2e09345006c183716dbc1021529710be1c",
+      "source_mtime_ns": 1780604229330224660,
+      "described_at_utc": "2026-06-04T20:39:46Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "crates/tools/kes-agent/src/protocols/service_v1_protocol.rs",
+      "description_lines": [
+        "Version 1 service protocol for pushing KES keys."
+      ],
+      "content_sha256": "a9417599f5c6a9c160b44d45e32327e305dd343c31aab7b9d221a5e1d78f8662",
+      "git_blob": "b92ed89e3b7d93223b7123c552ed16b42b68a1ce",
+      "source_mtime_ns": 1780603724024105422,
+      "described_at_utc": "2026-06-04T20:39:46Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "crates/tools/kes-agent/src/protocols/service_v2_driver.rs",
+      "description_lines": [
+        "Version 2 service driver vocabulary."
+      ],
+      "content_sha256": "494b8521ee643e560c2c1cf107709410a99d04aaa6ce7d61daafb858f8dbad92",
+      "git_blob": "8e73208697c27b7ea5a56820ceb6d027eeba5027",
+      "source_mtime_ns": 1780584262714596351,
+      "described_at_utc": "2026-06-04T15:27:42Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "crates/tools/kes-agent/src/protocols/service_v2_peers.rs",
+      "description_lines": [
+        "Pure peers for the version 2 service protocol."
+      ],
+      "content_sha256": "59718a80254b5ed1603f6278ad8c5e70d54264859e5bc79ff84239cff710ad15",
+      "git_blob": "fa5f2016cd62cdc6e97cd6b5ba775e8b9000f1bb",
+      "source_mtime_ns": 1780584262714596351,
+      "described_at_utc": "2026-06-04T15:27:42Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "crates/tools/kes-agent/src/protocols/service_v2_protocol.rs",
+      "description_lines": [
+        "Version 2 service protocol for pushing KES keys."
+      ],
+      "content_sha256": "a97a0cd0c01ae43a00f5044300c8b5bef5b2c88ec1df828699ada6f3dc9d5b6e",
+      "git_blob": "781629c84a71215e514e24a4971b108f77d97512",
+      "source_mtime_ns": 1780584262718196351,
+      "described_at_utc": "2026-06-04T15:27:42Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "crates/tools/kes-agent/src/protocols/types.rs",
+      "description_lines": [
+        "Common protocol types used by control and service protocols."
+      ],
+      "content_sha256": "8ff1b040d66865eaae000a8e120f742b34f4a8b1fdc57d1cf2057a05f3571dde",
+      "git_blob": "e54e9c05c8a1b0caf6ae33df89e884e797e22ef1",
+      "source_mtime_ns": 1780580901729366123,
+      "described_at_utc": "2026-06-04T14:21:13Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "crates/tools/kes-agent/src/protocols/version_handshake_driver.rs",
+      "description_lines": [
+        "Version-handshake driver trace vocabulary."
+      ],
+      "content_sha256": "420808b0675e92dd40ba0ce77a846ecc265ebd152e1cc54748b0863f5d519a69",
+      "git_blob": "f94c34c0b039b83dfd0bd929e76c283b85b8173c",
+      "source_mtime_ns": 1780580901729366123,
+      "described_at_utc": "2026-06-04T14:21:13Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "crates/tools/kes-agent/src/protocols/version_handshake_peers.rs",
+      "description_lines": [
+        "Pure peers for version negotiation."
+      ],
+      "content_sha256": "857c67f6db6f410e4753b95276490df8d7f24dc63dd7344d73f1b27cf69ed26e",
+      "git_blob": "d84ab4e22b83504540c15834171372e248f82073",
+      "source_mtime_ns": 1780581144512814675,
+      "described_at_utc": "2026-06-04T14:21:13Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "crates/tools/kes-agent/src/protocols/version_handshake_protocol.rs",
+      "description_lines": [
+        "Protocol for negotiating KES-agent protocol versions."
+      ],
+      "content_sha256": "4dd030af8c029d5745470fe882fbfceaccb76d544b6d320c49a9f953fc4129a7",
+      "git_blob": "4f8577c992b89137d589f28dd69611d7114defbf",
+      "source_mtime_ns": 1780581144512814675,
+      "described_at_utc": "2026-06-04T14:21:13Z",
       "generated_self_exempt": false
     },
     {
@@ -10969,10 +11288,10 @@
         "Generated human-readable file inventory rendered from the filetree manifest.",
         "Self-exempt from recursive freshness checks because it is regenerated by the filetree script."
       ],
-      "content_sha256": "5d3313868d027c20586366fbd3472fea5127378bef1633d053f80a79fdf012d7",
-      "git_blob": "fa2c35ebb7a17f8c5f9d26cee4e59a9bf4a8132e",
-      "source_mtime_ns": 1780444347886818220,
-      "described_at_utc": "2026-06-03T01:14:10Z",
+      "content_sha256": "a77411e882d6bb0a852639edbaa38a4f6a452c281420d6eaddffdbcc5e7d1079",
+      "git_blob": "58c569f1550ce6e097b05898f83a3c18437d2940",
+      "source_mtime_ns": 1780613386115245630,
+      "described_at_utc": "2026-06-04T23:40:04Z",
       "generated_self_exempt": true
     },
     {
@@ -10981,10 +11300,10 @@
         "Machine-readable source of truth for file descriptions and freshness metadata.",
         "Self-exempt from recursive freshness checks because it stores generated filetree state."
       ],
-      "content_sha256": "009f1354b2049999ebe38f132e47f0dfecb510c4aee8fdfa9d14cacb4b2528e6",
-      "git_blob": "3e2566c796e90b54ddd3a41a8e624f5964b4858b",
-      "source_mtime_ns": 1780444347723063230,
-      "described_at_utc": "2026-06-03T01:14:10Z",
+      "content_sha256": "c4c8763f9d7a7e5c17544c71268c1b25c3c5b3ad1fd0108e6d40fd39d3cb77bc",
+      "git_blob": "230db4a57ae694af1e6173d7b00dc832fb6e76bb",
+      "source_mtime_ns": 1780613386027326215,
+      "described_at_utc": "2026-06-04T23:40:04Z",
       "generated_self_exempt": true
     },
     {
@@ -11609,6 +11928,17 @@
       "generated_self_exempt": false
     },
     {
+      "path": "dev/test/check-type-parity.py",
+      "description_lines": [
+        "Project file at dev/test/check-type-parity.py."
+      ],
+      "content_sha256": "f080ccc6f4f46ed3854368cbce64fda6589ef471eb8e15066439f463ed9cfff1",
+      "git_blob": "6c5bcb1e59a18269787d22fa5edb3d0f11bbbaef",
+      "source_mtime_ns": 1780541357589320358,
+      "described_at_utc": "2026-06-04T03:06:51Z",
+      "generated_self_exempt": false
+    },
+    {
       "path": "dev/test/filetree.py",
       "description_lines": [
         "Stdlib-only maintenance tool for scanning, rendering, checking, and accepting filetree metadata.",
@@ -11636,10 +11966,10 @@
       "description_lines": [
         "Guidance for maintaining project policy and architecture documents under docs/.: Keep these documents synchronized with the implemented workspace, not with speculative future goals"
       ],
-      "content_sha256": "f07e0d8242fabe485d400c01cc93d1798fe0ad8833817cfefd7e272522fd414a",
-      "git_blob": "1dec52d20bbfeb42218fa496328ee8e557c70090",
-      "source_mtime_ns": 1780441274944471833,
-      "described_at_utc": "2026-06-02T23:52:24Z",
+      "content_sha256": "696751a922caa1256e43a198e39e261d6b7324333ff8674e842d2541a24e632b",
+      "git_blob": "5c8756ccf85484ec84e93a74c159970ad6450746",
+      "source_mtime_ns": 1780541747877918971,
+      "described_at_utc": "2026-06-04T03:06:51Z",
       "generated_self_exempt": false
     },
     {
@@ -11680,10 +12010,10 @@
       "description_lines": [
         "Completion Roadmap: > **Document classification:** operational."
       ],
-      "content_sha256": "075b4ed510307460deebf3ea5ad01191df82129e25cbcbb0c65d67985ca2450b",
-      "git_blob": "9ea31b1ab914a76169e3635bb6d301c188f85380",
-      "source_mtime_ns": 1780409799357757478,
-      "described_at_utc": "2026-06-02T14:48:36Z",
+      "content_sha256": "ebe1e70af3dd2430213296f7f10435fb83478354553d1b17315664377a3d061c",
+      "git_blob": "7a13c97d66feabc23695cb4faa02e00a10fb251d",
+      "source_mtime_ns": 1780506428456632197,
+      "described_at_utc": "2026-06-03T17:34:41Z",
       "generated_self_exempt": false
     },
     {
@@ -11758,10 +12088,10 @@
       "description_lines": [
         "PARITY & FUNCTION SUMMARY FOR MANAGEMENT: > **Document classification:** current."
       ],
-      "content_sha256": "46c10a6cce094fd400ce4372b2d9887bdc5a8133145c0d17dc9213f865c60692",
-      "git_blob": "4fb498998a9eda783b15fc89f0c4829563916735",
-      "source_mtime_ns": 1780418064494109419,
-      "described_at_utc": "2026-06-02T16:49:53Z",
+      "content_sha256": "de204615615d7b3fcd9bb32e28d07122ea553e7c3a273dc4e3a74a774d383ccd",
+      "git_blob": "e08e839ccd29d9d04c278703e0e9017db53b637a",
+      "source_mtime_ns": 1780491818997681439,
+      "described_at_utc": "2026-06-03T13:22:50Z",
       "generated_self_exempt": false
     },
     {
@@ -11780,10 +12110,10 @@
       "description_lines": [
         "Specification Sources: Yggdrasil is specification-driven. When sources disagree, use them in this order."
       ],
-      "content_sha256": "092f3217b4755706da6340c7417e2f379b6a6e0f6b936691444c9229da6c790d",
-      "git_blob": "a1c39a2ce28b9f466ed1e70f2b7699e07530747f",
-      "source_mtime_ns": 1780441274944471833,
-      "described_at_utc": "2026-06-02T23:52:24Z",
+      "content_sha256": "47a2ebeb6476c21ab7a08662973b127a901b35352cbdb5e2c0a71840016fdc25",
+      "git_blob": "7c4775593ee4e54c67d69bcd1b07d41805e9c8fb",
+      "source_mtime_ns": 1780541699353451138,
+      "described_at_utc": "2026-06-04T03:06:51Z",
       "generated_self_exempt": false
     },
     {
@@ -12000,10 +12330,10 @@
       "description_lines": [
         "CLI Reference: This is the authoritative reference for the `yggdrasil-node` binary. Every subcommand and flag is listed."
       ],
-      "content_sha256": "e6e1e8c7c83f483c31aca4e6d73a03476e5be155333229e0e14a029026e5b21b",
-      "git_blob": "d25888a4f6b2b38e879db9661c4880d9c114ddb2",
-      "source_mtime_ns": 1780366176678980629,
-      "described_at_utc": "2026-06-02T03:28:19Z",
+      "content_sha256": "22788132d1122facf31bcd630955602f54519dd4b0d43943725defb86dd7ba7a",
+      "git_blob": "5483bc46baf6146f66801d34a8ced3f678d2ba59",
+      "source_mtime_ns": 1780491758535827364,
+      "described_at_utc": "2026-06-03T13:22:51Z",
       "generated_self_exempt": false
     },
     {
@@ -18743,6 +19073,17 @@
       "generated_self_exempt": false
     },
     {
+      "path": "docs/type-parity-audit.tsv",
+      "description_lines": [
+        "Project file at docs/type-parity-audit.tsv."
+      ],
+      "content_sha256": "09f06590d54dba1c0c2e3ac56d706509cea274393dae5b8e22bacf8e875766de",
+      "git_blob": "a184913d7609919623ceb7e3b8afd9c733ded6bc",
+      "source_mtime_ns": 1780615050311737131,
+      "described_at_utc": "2026-06-04T23:40:06Z",
+      "generated_self_exempt": false
+    },
+    {
       "path": "docs/upstream-haskell-files.txt",
       "description_lines": [
         "Project file at docs/upstream-haskell-files.txt."
@@ -18758,10 +19099,10 @@
       "description_lines": [
         "Project file at justfile."
       ],
-      "content_sha256": "74ff4ff31161b21002d04c7a9339bcb7c3c2ed264e9889edd7ccf3dd3bb5cc5a",
-      "git_blob": "9f53a560b4040bc6df5426513f84eaf3dfe987d0",
-      "source_mtime_ns": 1780418064494109419,
-      "described_at_utc": "2026-06-02T16:49:57Z",
+      "content_sha256": "97246d312abe08ec0e310db85a7686bbb6c04eb5b5f3cbe5c45474a2e00190ec",
+      "git_blob": "4b89e911ee2ddb14c79218ac3d2fa2bfcc3a21f3",
+      "source_mtime_ns": 1780511720170079491,
+      "described_at_utc": "2026-06-03T18:46:55Z",
       "generated_self_exempt": false
     },
     {

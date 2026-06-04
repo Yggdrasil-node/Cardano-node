@@ -123,6 +123,18 @@ jobs:
       - name: Fetch upstream Haskell reference sources
         run: bash dev/reference/setup-reference.sh --sources-only
 
+      # Exact type/name parity validator.
+      # Complements the filename-level strict-mirror guard by checking
+      # docs/type-parity-audit.tsv entries: each declared Rust
+      # identifier/config key and its upstream Haskell counterpart must
+      # be listed as single-token text and exist as identifier-boundary
+      # tokens in the expected Rust `.rs` and upstream Haskell `.hs`
+      # mirror files, with lower-kebab-case scope names and explanatory
+      # sentence notes. Runs after the source-only reference fetch
+      # because upstream paths live under `.reference-haskell-cardano-node/`.
+      - name: Type/name parity validator
+        run: python3 dev/test/check-type-parity.py
+
       # Parity-matrix path/schema validator.
       # Walks docs/parity-matrix.json and asserts every entry's
       # `haskell_reference[*].path` and `rust_surface[*].path` exists

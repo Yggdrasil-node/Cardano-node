@@ -262,7 +262,10 @@ pub fn default_yaml_config() -> Map<String, Value> {
                 "ConwayGenesisFile",
                 json!(default_genesis_filepath(CardanoEra::Conway)),
             ),
-            ("DijkstraGenesisFile", json!("dijkstra-genesis.json")),
+            (
+                "DijkstraGenesisFile",
+                json!(default_genesis_filepath(CardanoEra::Dijkstra)),
+            ),
             ("RequiresNetworkMagic", json!("RequiresMagic")),
             ("PeerSharing", json!(false)),
             (
@@ -308,6 +311,7 @@ fn last_known_block_version_major(era: ShelleyBasedEra) -> i64 {
         ShelleyBasedEra::Alonzo => 5,
         ShelleyBasedEra::Babbage => 8,
         ShelleyBasedEra::Conway => 9,
+        ShelleyBasedEra::Dijkstra => 10,
     }
 }
 
@@ -340,6 +344,15 @@ fn hardfork_keys_through(era: ShelleyBasedEra) -> &'static [&'static str] {
             "TestAlonzoHardForkAtEpoch",
             "TestBabbageHardForkAtEpoch",
             "TestConwayHardForkAtEpoch",
+        ],
+        ShelleyBasedEra::Dijkstra => &[
+            "TestShelleyHardForkAtEpoch",
+            "TestAllegraHardForkAtEpoch",
+            "TestMaryHardForkAtEpoch",
+            "TestAlonzoHardForkAtEpoch",
+            "TestBabbageHardForkAtEpoch",
+            "TestConwayHardForkAtEpoch",
+            "TestDijkstraHardForkAtEpoch",
         ],
     }
 }
@@ -450,6 +463,10 @@ mod tests {
         assert_eq!(
             default_genesis_filepath(CardanoEra::Conway),
             "conway-genesis.json"
+        );
+        assert_eq!(
+            default_genesis_filepath(CardanoEra::Dijkstra),
+            "dijkstra-genesis.json"
         );
     }
 
@@ -684,6 +701,7 @@ mod tests {
             (ShelleyBasedEra::Alonzo, 5),
             (ShelleyBasedEra::Babbage, 8),
             (ShelleyBasedEra::Conway, 9),
+            (ShelleyBasedEra::Dijkstra, 10),
         ];
         for (era, major) in cases {
             let config = default_yaml_hardfork_via_config(era);
@@ -707,6 +725,20 @@ mod tests {
             "TestConwayHardForkAtEpoch",
         ] {
             assert_eq!(conway[key], json!(0), "missing {key}");
+        }
+        assert!(!conway.contains_key("TestDijkstraHardForkAtEpoch"));
+
+        let dijkstra = default_yaml_hardfork_via_config(ShelleyBasedEra::Dijkstra);
+        for key in [
+            "TestShelleyHardForkAtEpoch",
+            "TestAllegraHardForkAtEpoch",
+            "TestMaryHardForkAtEpoch",
+            "TestAlonzoHardForkAtEpoch",
+            "TestBabbageHardForkAtEpoch",
+            "TestConwayHardForkAtEpoch",
+            "TestDijkstraHardForkAtEpoch",
+        ] {
+            assert_eq!(dijkstra[key], json!(0), "missing {key}");
         }
 
         let mary = default_yaml_hardfork_via_config(ShelleyBasedEra::Mary);

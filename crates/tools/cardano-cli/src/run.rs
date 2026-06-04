@@ -79,6 +79,10 @@ pub fn run_command_with(command: Command, client: &dyn LsqClient) -> Result<()> 
             // R519: upstream-shaped era-independent address group.
             crate::era_independent::address::run::run_address_cmds(command)
         }
+        Command::Key { command } => {
+            // R520: upstream-shaped era-independent key group.
+            crate::era_independent::key::run::run_key_cmds(command)
+        }
         Command::ShowUpstreamConfig {
             network,
             upstream_config_root,

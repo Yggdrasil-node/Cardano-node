@@ -105,7 +105,7 @@ sub-tree into this crate (R256), mirroring upstream's package layout.
 
 | Crate          | LOC     | Upstream package | Status                                       |
 |----------------|---------|------------------|----------------------------------------------|
-| `cardano-cli`  | ~3.9k   | `cardano-cli`    | `implemented_needs_11_0_1_evidence` — C-arc complete; 40 `Command` variants wired in the standalone `yggdrasil-cardano-cli`; byte-equivalence evidence against upstream remains the operator-side gate. |
+| `cardano-cli`  | ~3.9k   | `cardano-cli`    | `implemented_needs_11_0_1_evidence` — C-arc complete plus `key verification-key`; 41 operational commands wired in the standalone `yggdrasil-cardano-cli`; byte-equivalence evidence against upstream remains the operator-side gate. |
 
 The C-arc parallel port is complete from the Rust implementation side. See
 [`tools/cardano-cli/AGENTS.md`](tools/cardano-cli/AGENTS.md) for the current

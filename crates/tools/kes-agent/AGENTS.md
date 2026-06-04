@@ -1,8 +1,11 @@
 # Guidance for the pure-Rust port of upstream `kes-agent`.
 
-**Status:** `partial` (R335-pattern skeleton + R443 structured
-deferral). Next milestone: **R444+** socket-protocol fixture capture
-and daemon dispatch follow-on. Scope band: **MEDIUM**.
+**Status:** `partial` (R335 help/version skeleton + typed
+`AgentMain.hs` parser/env surface + common protocol type vocabulary +
+version-handshake + Control V0/V1/V2/V3 and Service V0/V1/V2
+protocol/peer/trace surfaces + BearerUtil helper vocabulary + R443
+structured deferral). Next milestone: **R444+** socket-protocol
+fixture capture and daemon dispatch follow-on. Scope band: **MEDIUM**.
 
 ## Strict 1:1 file-mirror policy (R274+)
 
@@ -31,6 +34,38 @@ rehearsal vs upstream.
 - ✅ `<binary> --help` byte-equivalent to upstream (golden test pinned
   in `tests/cli_help_golden.rs`).
 - ✅ `<binary> --version` byte-equivalent to upstream.
+- ✅ Typed `parser::ProgramOptions` dispatch for
+  `start|stop|restart|status|run`, `-F/--config/--config-file`, and
+  the upstream `run` mode flags.
+- ✅ Environment-derived normal/service option overlays matching
+  upstream `nmoFromEnv`, `smoFromEnv`, and `splitBy ':'`.
+- ✅ Common protocol vocabulary mirrors for upstream
+  `Protocols/AgentInfo.hs`, `Protocols/RecvResult.hs`, and
+  `Protocols/Types.hs`, including enum ordinal tests and selected
+  pretty-rendering contracts.
+- ✅ Version-handshake protocol mirrors for upstream
+  `Protocols/VersionHandshake/{Protocol,Peers,Driver}.hs`, including
+  the typed version identifier, peer negotiation choice, and driver
+  trace pretty contracts.
+- ✅ Control V0/V1/V2/V3 protocol mirrors for upstream
+  `Protocols/Control/V0/{Protocol,Peers,Driver}.hs`,
+  `Protocols/Control/V1/{Protocol,Peers,Driver}.hs`,
+  `Protocols/Control/V2/{Protocol,Peers,Driver}.hs` and
+  `Protocols/Control/V3/{Protocol,Peers,Driver}.hs`, including typed
+  control messages, `Control:<crypto>:0.5`, `Control:1.0`,
+  `Control:2.0`, and `Control:3.0`, pure control command peer
+  choices, command discriminators, and read-error trace mapping.
+- ✅ Service V0/V1/V2 protocol mirrors for upstream
+  `Protocols/Service/V0/{Protocol,Peers,Driver}.hs`,
+  `Protocols/Service/V1/{Protocol,Peers,Driver}.hs`, and
+  `Protocols/Service/V2/{Protocol,Peers,Driver}.hs`, including typed
+  service messages, V0 `Service:<crypto>:0.4`, V2 key/drop
+  discriminants, pure receiver/pusher choices, and read-error trace
+  mapping.
+- ✅ BearerUtil helper mirror for upstream `Protocols/BearerUtil.hs`,
+  including `BearerConnectionClosed`, `withDuplexBearer`, the
+  one-byte-at-a-time receive buffering model, and the 1024-byte
+  receiver buffer constant.
 - ❌ Daemon dispatch — returns `RunError::DaemonDispatchDeferred`
   (R443 structured deferral). See **Carve-out inventory** below.
 - ❌ End-to-end behavioral tests against upstream binary — pending
@@ -84,6 +119,27 @@ Per the R326-R459 plan, this crate's full implementation lands across
 the named mini-arc rounds:
 
 - ✅ Skeleton shipped (R327 + R335-pattern bulk skeleton at R335-R336).
+- ✅ Typed `AgentMain.hs` parser/options surface shipped.
+- ✅ `AgentMain.hs` env-option overlay surface shipped.
+- ✅ Common protocol type vocabulary shipped for
+  `Protocols/{AgentInfo,RecvResult,Types}.hs`.
+- ✅ Version-handshake protocol/peer/trace surface shipped for
+  `Protocols/VersionHandshake/{Protocol,Peers,Driver}.hs`.
+- ✅ Control V0 protocol/peer/trace surface shipped for
+  `Protocols/Control/V0/{Protocol,Peers,Driver}.hs`.
+- ✅ Control V1 protocol/peer/trace surface shipped for
+  `Protocols/Control/V1/{Protocol,Peers,Driver}.hs`.
+- ✅ Control V2 protocol/peer/trace surface shipped for
+  `Protocols/Control/V2/{Protocol,Peers,Driver}.hs`.
+- ✅ Control V3 protocol/peer/trace surface shipped for
+  `Protocols/Control/V3/{Protocol,Peers,Driver}.hs`.
+- ✅ Service V0 protocol/peer/trace surface shipped for
+  `Protocols/Service/V0/{Protocol,Peers,Driver}.hs`.
+- ✅ Service V1 protocol/peer/trace surface shipped for
+  `Protocols/Service/V1/{Protocol,Peers,Driver}.hs`.
+- ✅ Service V2 protocol/peer/trace surface shipped for
+  `Protocols/Service/V2/{Protocol,Peers,Driver}.hs`.
+- ✅ BearerUtil helper vocabulary shipped for `Protocols/BearerUtil.hs`.
 - ✅ Structured daemon/socket deferral surfaced at R443.
 - 🟡 Next: **R444+** — upstream socket-protocol fixture capture and
   daemon dispatch follow-on.

@@ -5,13 +5,14 @@ license.workspace = true
 rust-version.workspace = true
 version.workspace = true
 publish = false
-description = "Pure-Rust port of the upstream kes-agent KES key custody + period-rotation agent. SKELETON STUB with R443 structured deferral; daemon/socket dispatch resumes at R444+ after upstream socket-protocol byte-equivalence fixture capture."
+description = "Pure-Rust port of the upstream kes-agent KES key custody + period-rotation agent. Ships help/version, typed AgentMain parser/env parity, common protocol type parity, version-handshake parity, Control V0/V1/V2/V3 protocol parity, Service V0/V1/V2 protocol parity, and BearerUtil helper parity; daemon/socket dispatch resumes at R444+ after upstream socket-protocol byte-equivalence fixture capture."
 
-# R327 skeleton + R443 structured deferral for the kes-agent sister-tool
-# crate. The crate currently ships the lib.rs / main.rs / parser.rs /
+# R327 skeleton + typed AgentMain parser/options/env surface + R443
+# structured deferral for the kes-agent sister-tool crate. The crate
+# currently ships lib.rs / main.rs / parser.rs / protocols/* /
 # golden-test surface plus a programmatic daemon-status descriptor; the
-# operational port (start / stop / restart / status / run subcommands +
-# KES key lifecycle wiring) resumes in the R444+ daemon/socket follow-on
+# operational port (start / stop / restart / status / run daemon behavior
+# + KES key lifecycle wiring) resumes in the R444+ daemon/socket follow-on
 # after upstream socket-protocol byte-equivalence fixtures are captured.
 # Upstream source vendored at:
 # .reference-haskell-cardano-node/deps/kes-agent/kes-agent/

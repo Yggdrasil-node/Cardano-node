@@ -44,7 +44,7 @@ The crate exposes `yggdrasil_cardano_cli::*` as a workspace-internal
 library; the `yggdrasil-node` binary consumes specific helpers (see
 "Integration with `node` crate" below). The standalone
 `yggdrasil-cardano-cli` binary (`main.rs`, shipped R506) exposes the
-current 40-command C-arc surface. The `yggdrasil-node cardano-cli`
+current 41-command standalone surface. The `yggdrasil-node cardano-cli`
 compatibility wrapper exposes the variants declared in
 `crates/node/cardano-node/src/cli.rs::CardanoCliCommand`; keep it as a
 thin adapter instead of duplicating runtime logic in the node crate.
@@ -269,8 +269,8 @@ thin adapter instead of duplicating runtime logic in the node crate.
   the balance invariant `total_input == Σ outputs + fee + change`
   verified end-to-end in tests by decoding the built tx with
   `ConwayTxBody::decode_cbor`. 92 tests total post-R515.
-  **33 operational subcommands at R515; later LSQ cleanup rounds expanded
-  this to the current 40-command surface.**
+  **33 operational subcommands at R515; later LSQ cleanup rounds and the
+  post-C-arc key slice expanded this to the current 41-command surface.**
 - **R523 (stale-placement cleanup, 2026-05) - shared LSQ query
   helpers.** `lsq.rs` now owns the pure `format_utc_time` and
   `decode_optional_prefixed_hex` helpers used by SystemStart rendering
@@ -311,7 +311,7 @@ transaction runners, and shared NtC query/submission clients. Keep new
 operator behavior here first, then leave the node binary with a thin
 argument-adapter wrapper.
 
-Standalone operator surface mapped to upstream `cardano-cli` (40 subcommands):
+Standalone operator surface mapped to upstream `cardano-cli` (41 subcommands):
 
 | `yggdrasil-cardano-cli ...`                 | `cardano-cli ...`                          |
 | ------------------------------------------- | ------------------------------------------ |
@@ -352,6 +352,7 @@ Standalone operator surface mapped to upstream `cardano-cli` (40 subcommands):
 | `transaction-build-raw`                     | `transaction build-raw`                    |
 | `transaction-build` (offline)               | `transaction build` (offline subset)       |
 | **Keys + Addresses**                        |                                            |
+| `key verification-key`                      | `key verification-key`                     |
 | `address-key-gen`                           | `address key-gen`                          |
 | `address-key-hash`                          | `address key-hash`                         |
 | `address-build`                             | `address build`                            |
@@ -399,9 +400,11 @@ Current subcommand-migration status:
 | `Query*` (27 LSQ subcommands) | ✅ migrated (R510–R512, R527–R529) | `lsq.rs` `NtcQuery` enum + `lsq_tokio.rs` `plan_for`: tip / chain-block-no / current-era / system-start / era-history / current-epoch / stake-distribution / stake-pools / protocol-parameters / query-utxo by address / query-utxo by tx-in / reward-balance / delegations-and-rewards / stake-pool-params / drep-stake-distribution / constitution / gov-state / drep-state / committee-state / treasury-and-reserves / account-state / genesis-delegations / stability-window / num-dormant-epochs / expected-network-id / deposit-pot / ledger-counts |
 | `TransactionBuildRaw` | ✅ migrated (R514) | `era_based/transaction/run.rs::run_transaction_build_raw_cmd` — typed `ConwayTxBody` via the ledger's parity `CborEncode`, wrapped as `[body,{},true,null]` |
 | `TransactionBuild` | ✅ migrated (R515) | `era_based/transaction/run.rs::run_transaction_build_cmd` + `balance_conway_tx` — offline auto fee + change balancing (operator-supplied fee coefficients) |
+| `KeyVerificationKey` | ✅ migrated (post-C-arc) | `era_independent/key/run.rs::run_verification_key_cmd` — normal Ed25519 payment/stake/governance/genesis/stake-pool signing-key TextEnvelope to verification-key TextEnvelope |
 
-The standalone binary now exposes **40 operational subcommands —
-the cardano-cli C-arc is complete**: the offline operator toolkit
+The standalone binary now exposes **41 operational subcommands**:
+the completed 40-command cardano-cli C-arc plus the post-C-arc
+`key verification-key` slice. The surface covers the offline operator toolkit
 (keys / addresses / txid / single-signer signing / shallow tx-view /
 `build-raw` / `build`), the complete 27-query LocalStateQuery
 surface, and `transaction submit`.
@@ -414,7 +417,7 @@ protocol-parameter + UTxO-value resolution) is a possible future
 enhancement, but not required for the operator workflows the
 standalone binary targets.
 
-Subcommands beyond the current 40-command C-arc surface (the full
+Subcommands beyond the current 41-command standalone surface (the full
 upstream `cardano-cli` has hundreds of subcommands across Byron / Compatible
 / EraBased / EraIndependent / Legacy) are out-of-scope until
 operator demand prioritizes specific port targets. The leaf

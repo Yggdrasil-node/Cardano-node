@@ -40,9 +40,9 @@
 //!
 //! Per-subcommand options:
 //!
-//! - `gen-staged-key` / `export-staged-vkey`: `--kes-vkey FILEPATH`
+//! - `gen-staged-key` / `export-staged-vkey`: `--kes-verification-key-file FILEPATH`
 //!   (where to write the verification key).
-//! - `install-key`: `--op-cert FILEPATH` (operational certificate
+//! - `install-key`: `--opcert-file FILEPATH` (operational certificate
 //!   path).
 //! - `drop-staged-key` / `drop-key` / `info`: common-options-only.
 //!
@@ -153,8 +153,9 @@ where
     let after = &argv[subcommand_idx + 1..];
 
     // Parse common options from both before- and after-segments. Because
-    // upstream lets you write `--verbose 1 gen-staged-key --kes-vkey
-    // foo.vkey` OR `gen-staged-key --kes-vkey foo.vkey --verbose 1`,
+    // upstream lets you write `--verbose 1 gen-staged-key
+    // --kes-verification-key-file foo.vkey` OR `gen-staged-key
+    // --kes-verification-key-file foo.vkey --verbose 1`,
     // we accumulate from both windows. Per-subcommand flags are filtered
     // out of the after-segment by `parse_subcommand_options`.
     let mut common = parse_common_options(before)?;
@@ -163,17 +164,17 @@ where
 
     let chosen = match subcommand.as_str() {
         "gen-staged-key" => {
-            let kes_vkey = extract_kes_vkey(after)?;
+            let ver_key_file = extract_ver_key_file(after)?;
             ProgramOptions::RunGenKey(GenKeyOptions {
                 common: CommonOptions::default(),
-                kes_verification_key_file: kes_vkey,
+                kes_verification_key_file: ver_key_file,
             })
         }
         "export-staged-vkey" => {
-            let kes_vkey = extract_kes_vkey(after)?;
+            let ver_key_file = extract_ver_key_file(after)?;
             ProgramOptions::RunQueryKey(QueryKeyOptions {
                 common: CommonOptions::default(),
-                kes_verification_key_file: kes_vkey,
+                kes_verification_key_file: ver_key_file,
             })
         }
         "drop-staged-key" => ProgramOptions::RunDropStagedKey(DropStagedKeyOptions {
@@ -229,7 +230,7 @@ fn parse_common_options(window: &[String]) -> Result<CommonOptions, ParseError> 
 }
 
 /// Parse common options from the after-subcommand window. Filters out
-/// per-subcommand flags (`--kes-vkey`, `--op-cert`) so the common-options
+/// per-subcommand flags (`--kes-verification-key-file`, `--opcert-file`) so the common-options
 /// parser only sees its own grammar.
 fn parse_common_options_in_subcommand_window(
     window: &[String],
@@ -239,14 +240,14 @@ fn parse_common_options_in_subcommand_window(
 }
 
 /// Filter the after-subcommand window to keep only common-option flags
-/// and their values. Per-subcommand flags (`--kes-vkey`, `--op-cert`)
-/// are dropped along with their values.
+/// and their values. Per-subcommand flags (`--kes-verification-key-file`,
+/// `--opcert-file`) are dropped along with their values.
 fn filter_common_options(window: &[String]) -> Result<Vec<String>, ParseError> {
     let mut out: Vec<String> = Vec::new();
     let mut iter = window.iter().peekable();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
-            "--kes-vkey" | "--op-cert" => {
+            "--kes-verification-key-file" | "--opcert-file" => {
                 // Drop the flag and its value.
                 let _ = iter.next();
             }
@@ -269,12 +270,12 @@ fn filter_common_options(window: &[String]) -> Result<Vec<String>, ParseError> {
     Ok(out)
 }
 
-/// Extract `--kes-vkey FILEPATH` from a subcommand window (returns
+/// Extract `--kes-verification-key-file FILEPATH` from a subcommand window (returns
 /// `None` if absent).
-fn extract_kes_vkey(window: &[String]) -> Result<Option<PathBuf>, ParseError> {
+fn extract_ver_key_file(window: &[String]) -> Result<Option<PathBuf>, ParseError> {
     let mut iter = window.iter().peekable();
     while let Some(arg) = iter.next() {
-        if arg == "--kes-vkey" {
+        if arg == "--kes-verification-key-file" {
             let v = take_value(&mut iter, arg)?;
             return Ok(Some(PathBuf::from(v)));
         }
@@ -282,12 +283,12 @@ fn extract_kes_vkey(window: &[String]) -> Result<Option<PathBuf>, ParseError> {
     Ok(None)
 }
 
-/// Extract `--op-cert FILEPATH` from a subcommand window (returns
+/// Extract `--opcert-file FILEPATH` from a subcommand window (returns
 /// `None` if absent).
 fn extract_op_cert(window: &[String]) -> Result<Option<PathBuf>, ParseError> {
     let mut iter = window.iter().peekable();
     while let Some(arg) = iter.next() {
-        if arg == "--op-cert" {
+        if arg == "--opcert-file" {
             let v = take_value(&mut iter, arg)?;
             return Ok(Some(PathBuf::from(v)));
         }
@@ -356,8 +357,9 @@ mod tests {
     }
 
     #[test]
-    fn parses_gen_staged_key_with_kes_vkey() {
-        let args = parse_args(["gen-staged-key", "--kes-vkey", "out.vkey"]).expect("parses");
+    fn parses_gen_staged_key_with_ver_key_file() {
+        let args = parse_args(["gen-staged-key", "--kes-verification-key-file", "out.vkey"])
+            .expect("parses");
         match args {
             ProgramOptions::RunGenKey(o) => {
                 assert_eq!(
@@ -373,8 +375,12 @@ mod tests {
 
     #[test]
     fn parses_export_staged_vkey() {
-        let args =
-            parse_args(["export-staged-vkey", "--kes-vkey", "current.vkey"]).expect("parses");
+        let args = parse_args([
+            "export-staged-vkey",
+            "--kes-verification-key-file",
+            "current.vkey",
+        ])
+        .expect("parses");
         match args {
             ProgramOptions::RunQueryKey(o) => {
                 assert_eq!(
@@ -401,8 +407,8 @@ mod tests {
     }
 
     #[test]
-    fn parses_install_key_with_op_cert() {
-        let args = parse_args(["install-key", "--op-cert", "node.cert"]).expect("parses");
+    fn parses_install_key_with_opcert_file() {
+        let args = parse_args(["install-key", "--opcert-file", "node.cert"]).expect("parses");
         match args {
             ProgramOptions::RunInstallKey(o) => {
                 assert_eq!(
@@ -426,7 +432,7 @@ mod tests {
             "--control-address",
             "/var/run/kes.sock",
             "gen-staged-key",
-            "--kes-vkey",
+            "--kes-verification-key-file",
             "out.vkey",
         ])
         .expect("parses");
@@ -440,8 +446,14 @@ mod tests {
 
     #[test]
     fn common_options_after_subcommand_apply() {
-        let args = parse_args(["gen-staged-key", "--kes-vkey", "out.vkey", "--verbose", "2"])
-            .expect("parses");
+        let args = parse_args([
+            "gen-staged-key",
+            "--kes-verification-key-file",
+            "out.vkey",
+            "--verbose",
+            "2",
+        ])
+        .expect("parses");
         match args {
             ProgramOptions::RunGenKey(o) => {
                 assert_eq!(o.common.verbosity, Some(2));
@@ -537,7 +549,7 @@ mod tests {
             "--verbose",
             "1",
             "install-key",
-            "--op-cert",
+            "--opcert-file",
             "node.cert",
             "--retry-attempts",
             "5",

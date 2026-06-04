@@ -39,6 +39,10 @@ and feature level. Update them in lockstep with code changes:
   Every production `.rs` is graded `(a) DIRECT_MIRROR` or
   `(c) NO_MIRROR_NEEDS_DOCSTRING (verified)`. CI gate:
   `python3 dev/test/check-strict-mirror.py --fail-on-violation`.
+- [`docs/type-parity-audit.tsv`](type-parity-audit.tsv) —
+  exact-text identifier and config-key parity manifest for public
+  surfaces that need type/name evidence in addition to filename
+  parity. Validated by `python3 dev/test/check-type-parity.py`.
 - [`docs/upstream-haskell-files.txt`](upstream-haskell-files.txt) —
   flat-file index of every upstream `.hs` under
   `.reference-haskell-cardano-node/`, rebuilt by
@@ -60,6 +64,17 @@ status see [`docs/UPSTREAM_PARITY.md`](UPSTREAM_PARITY.md).
   docstring stanza. Authoring-time guidance lives in root
   [`AGENTS.md`](../AGENTS.md); the CI counterpart is
   `python3 dev/test/check-strict-mirror.py`.
+- Public parity surfaces listed in `docs/type-parity-audit.tsv` must
+  keep their Rust identifiers/config keys and upstream Haskell
+  counterparts present as identifier-boundary tokens in the declared
+  files. Manifest `rust_text` and `upstream_text` values must be single
+  tokens. Manifest paths must stay repository-relative, non-escaping,
+  duplicate-free, deterministically sorted, under `crates/` on the Rust
+  side as `.rs` files, and under `.reference-haskell-cardano-node/` on
+  the upstream side as `.hs` files. Manifest scopes must stay
+  lower-kebab-case, and notes must be explanatory sentences. Run
+  `python3 dev/test/check-type-parity.py` after changing those names or
+  extending the manifest.
 
 ## Vendored Upstream Test Vectors
 - Vendored cryptographic vectors live under `dev/specs/upstream-test-vectors/` with pinned upstream commit provenance.

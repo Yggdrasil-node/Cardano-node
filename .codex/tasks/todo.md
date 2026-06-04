@@ -2,29 +2,38 @@
 
 ## Plan
 
+- [x] Full-completion quality push (2026-06-03).
+  - [x] Review current lessons, root guidance, roadmap, parity summary, and technical debt before implementation.
+  - [x] Inspect dirty worktree and preserve existing cardano-cli/filetree changes as active local work.
+  - [x] Validate the in-progress `cardano-cli key verification-key` slice against upstream `Cardano.CLI.EraIndependent.Key.*`.
+  - [x] Fix any correctness, parity, or test issues found in that slice.
+  - [x] Run focused `yggdrasil-cardano-cli` tests plus required formatting/parity guards for touched areas.
+  - [x] Run the broad local quality gates that are feasible in this environment.
+  - [x] Record exact verification results and remaining external blockers in this file's Review section.
+
 - [ ] Full-completion continuation plan (2026-06-02).
-  - [ ] Establish the current baseline without overwriting existing worktree changes.
+  - [x] Establish the current baseline without overwriting existing worktree changes.
     - [x] Review `tasks/lessons.md` for WSL/Linux, reference-binary, and commit-identity constraints.
     - [x] Review `docs/COMPLETION_ROADMAP.md` and `docs/PARITY_SUMMARY.md` for current blockers.
     - [x] Inspect `docs/parity-matrix.json` status counts and identify non-verified entries.
     - [x] Run lightweight parity/status preflight guards before any code changes.
     - [x] Reconcile the existing dirty worktree with the active plan and preserve user changes.
-  - [ ] Close executable local quality gaps first.
-    - [ ] Run and fix failures from `cargo fmt --all -- --check`, `cargo check-all`, `cargo lint`, and focused tests for touched crates.
-    - [ ] Run and fix failures from `dev/test/check-strict-mirror.py`, `dev/test/check-stale-placement.py`, `dev/test/check-doc-status-headers.py`, `dev/test/check-parity-matrix.py`, `dev/test/check-fixture-manifest.py`, and `dev/test/filetree.py check`.
+  - [x] Close executable local quality gaps first.
+    - [x] Run and fix failures from `cargo fmt --all -- --check`, `cargo check-all`, `cargo lint`, and focused tests for touched crates.
+    - [x] Run and fix failures from `dev/test/check-strict-mirror.py`, `dev/test/check-stale-placement.py`, `dev/test/check-doc-status-headers.py`, `dev/test/check-parity-matrix.py`, `dev/test/check-fixture-manifest.py`, and `dev/test/filetree.py check`.
     - [x] Restore root operator script executable modes if still required by stale-placement.
     - [x] Update stale live helper-placement guidance for the `dev/{scripts,evidence,reference,test}` split.
-    - [ ] Update the relevant local `AGENTS.md` files only when the folder guidance is stale or incomplete.
+    - [x] Update the relevant local `AGENTS.md` files only when the folder guidance is stale or incomplete.
   - [x] Remove retired AI-harness workspace artifacts for Codex-only operation.
     - [x] Move filetree state into neutral `dev/filetree/` metadata.
     - [x] Remove retired AI-harness files from the live workspace.
     - [x] Update living docs, guards, and filetree metadata to stop referencing retired AI-harness live paths.
     - [x] Preserve historical operational-run references as audit history unless they break a live guard.
-  - [ ] Advance full naming parity for partial sister tools.
-    - [ ] Pick one bounded sister-tool arc from the partial parity-matrix entries (`kes-agent`, `kes-agent-control`, `cardano-tracer`, `db-analyser`, `snapshot-converter`, `cardano-testnet`, `tx-generator`, or `dmq-node`).
-    - [ ] Read that tool's `AGENTS.md` and the mirrored upstream Haskell files before changing terminology or behavior.
-    - [ ] Implement one strict naming-parity slice with focused Rustdocs/tests and update `docs/strict-mirror-audit.tsv` only when the verdict actually changes.
-  - [ ] Advance `cardano-cli hash genesis-file` naming parity.
+  - [x] Advance full naming parity for one bounded partial sister-tool slice.
+    - [x] Pick one bounded sister-tool arc from the partial parity-matrix entries (`kes-agent`, `kes-agent-control`, `cardano-tracer`, `db-analyser`, `snapshot-converter`, `cardano-testnet`, `tx-generator`, or `dmq-node`).
+    - [x] Read that tool's `AGENTS.md` and the mirrored upstream Haskell files before changing terminology or behavior.
+    - [x] Implement one strict naming-parity slice with focused Rustdocs/tests and update `docs/strict-mirror-audit.tsv` only when the verdict actually changes.
+  - [x] Advance `cardano-cli hash genesis-file` naming parity.
     - [x] Read `crates/tools/cardano-cli/AGENTS.md` and upstream `Cardano.CLI.EraIndependent.Hash.{Command,Option,Run}` before changing terminology.
     - [x] Replace the hash command/run placeholder surface with the upstream-shaped `HashCmds` / `GenesisFile` slice.
     - [x] Wire the nested `hash genesis-file --genesis FILE` parser and runner through the top-level dispatcher.
@@ -33,7 +42,7 @@
     - [ ] Do not mark Gap BO, Gap BP, R178, or BlockFetch complete without strict Haskell/operator artifacts under `target/core-closeout/`.
     - [ ] Use `dev/evidence/stage-core-closeout-artifacts.py` and `dev/test/check-core-closeout-artifacts.py` when live evidence becomes available.
     - [ ] Keep `docs/parity-matrix.json` as the first source updated for any status change, then synchronize prose docs.
-  - [ ] Document verification and review.
+  - [x] Document verification and review.
     - [x] Add a review section entry with exact commands, pass/fail status, and any blockers.
     - [x] Record user corrections in `tasks/lessons.md` before continuing after correction.
 
@@ -151,13 +160,476 @@
       the same emitted JSON shape.
     - [x] Run focused network/cardano-testnet tests and required
       workspace/parity guards.
-  - [ ] Restore root operator script executable modes after main-tip drift.
-    - [ ] Re-stage every tracked root `scripts/*.sh` operator helper as
-      `100755` in the Git index.
-    - [ ] Verify `dev/test/check-stale-placement.py` passes again.
-    - [ ] Commit and push the executable-mode gate fix to `main`.
+  - [x] Port the next pure `cardano-testnet`
+    `Testnet/Components/Configuration.hs` helper slice.
+    - [x] Read `crates/tools/cardano-testnet/AGENTS.md` and upstream
+      `Testnet/Components/Configuration.hs`.
+    - [x] Add pure `createConfigJsonNoHash`, `eraToString`, and
+      `anyEraToString` mirrors using existing local defaults/era
+      helpers.
+    - [x] Run focused cardano-testnet tests and required workspace/parity
+      guards.
+  - [x] Port the `cardano-testnet` hash-bearing
+    `Testnet/Components/Configuration.hs` config slice.
+    - [x] Re-read upstream `createConfigJson`, `getByronGenesisHash`,
+      and `getShelleyGenesisHash`.
+    - [x] Add `createConfigJson`, `getByronGenesisHash`, and
+      `getShelleyGenesisHash` mirrors using shared
+      `yggdrasil-node-genesis` hash helpers.
+    - [x] Run focused cardano-testnet tests and required workspace/parity
+      guards.
+  - [x] Port the `cardano-testnet` Dijkstra era-tag/config slice.
+    - [x] Read upstream `Testnet/Defaults.hs` Dijkstra direct-hardfork
+      config and `eraToProtocolVersion` handling.
+    - [x] Confirm touched filenames keep their strict mirror status and
+      touched public types/functions preserve upstream terminology.
+    - [x] Add Dijkstra to the portable `CardanoEra` /
+      `ShelleyBasedEra` tags and default YAML hardfork config.
+    - [x] Treat Dijkstra as Conway-onwards for SPO stake-key
+      deregistration deposit args.
+    - [x] Run focused cardano-testnet tests and required workspace/parity
+      guards.
+  - [x] Add type/name parity guard coverage for completed public surfaces.
+    - [x] Add `docs/type-parity-audit.tsv` rows for the completed
+      `cardano-cli key verification-key` and `cardano-testnet`
+      Dijkstra/configuration/defaults surfaces.
+    - [x] Add `dev/test/check-type-parity.py` with a self-test and
+      exact Rust/upstream text checks.
+    - [x] Expand coverage to the completed `cardano-cli hash
+      genesis-file` command/run surface and the completed
+      `cardano-testnet` default key/path/topology helpers.
+    - [x] Expand coverage to the completed `cardano-testnet`
+      `Process/Cli/{Keys,Transaction,DRep,SPO}.hs` pure builder
+      surface.
+    - [x] Expand coverage to the completed `cardano-testnet`
+      `Testnet/Types.hs` portable/runtime record surface carried in
+      `runtime_types.rs`.
+    - [x] Expand coverage to the completed `cardano-testnet`
+      `Testnet/Process/{Run,RunIO}.hs` and
+      `Testnet/Property/{Util,Assert,Run}.hs` helper surfaces.
+    - [x] Expand coverage to the completed `cardano-testnet`
+      `Testnet/Start/Types.hs` operator option/type surface.
+    - [x] Expand coverage to the completed `cardano-testnet`
+      shared `Cardano.Node.Testnet.Paths` and `Testnet/Filepath.hs`
+      path-helper surfaces.
+    - [x] Expand coverage to the completed `cardano-testnet`
+      `Parsers/{Cardano,Run,Version}.hs` option/command parser
+      surfaces.
+    - [x] Expand coverage to the completed `cardano-testnet`
+      `Testnet/Components/Query.hs` `TestnetWaitPeriod` surface.
+    - [x] Expand coverage to the completed `snapshot-converter`
+      `snapshot-converter.hs` parser, config/type, run-mode, and
+      structured-deferral status surface.
+    - [x] Document the guard in root verification expectations and
+      `docs/SPECS.md`.
+    - [x] Run the type-parity guard plus required workspace/parity
+      checks.
+  - [x] Wire the type/name parity guard into standard verification.
+    - [x] Add `check-type-parity.py` to `just parity-all`.
+    - [x] Add a CI type/name parity validator after the source-only
+      upstream reference fetch.
+    - [x] Update README and docs guidance so operators run the guard
+      after changing manifest-listed public parity surfaces.
+    - [x] Run the integrated parity workflow and affected guards.
+  - [x] Confirm accepted operator/reference shell executable modes.
+    - [x] Verify every tracked `dev/{scripts,evidence,reference}/*.sh`
+      helper is `100755` in the Git index.
+    - [x] Verify `dev/test/check-stale-placement.py` passes with the
+      accepted `dev/` helper placement.
+    - [x] Retire the obsolete root `scripts/*.sh` follow-up wording;
+      root operator helpers no longer live there.
+  - [x] Tighten `kes-agent-control` parser/type parity.
+    - [x] Read `crates/tools/kes-agent-control/AGENTS.md` and upstream
+      `deps/kes-agent/kes-agent/cli/ControlMain.hs`.
+    - [x] Replace local shorthand parser flags with upstream
+      `--kes-verification-key-file` and `--opcert-file` spellings.
+    - [x] Add exact type/name audit rows for the shipped
+      `CommonOptions`, per-subcommand option records,
+      `ProgramOptions`, parser entry points, and common-option fields.
+    - [x] Run focused crate tests and required type-parity checks.
+  - [x] Port the `kes-agent` typed `AgentMain.hs` parser surface.
+    - [x] Read `crates/tools/kes-agent/AGENTS.md` and upstream
+      `deps/kes-agent/kes-agent/cli/AgentMain.hs`.
+    - [x] Replace the raw passthrough parser with typed
+      `ProgramOptions`, `ProgramModeOptions`, `NormalModeOptions`,
+      `ServiceModeOptions`, `LogTarget`, and log-level parsing.
+    - [x] Preserve the daemon/socket runtime deferral while parsing
+      upstream `start|stop|restart|status|run` commands and
+      `run`-mode options.
+    - [x] Remove the non-upstream `-v` version shortcut so only
+      `--version` short-circuits, matching upstream help.
+    - [x] Add exact type/name audit rows for the shipped
+      `kes-agent` parser and option surface.
+    - [x] Run focused crate tests and required type-parity checks.
+  - [x] Port the `kes-agent` `AgentMain.hs` environment option surface.
+    - [x] Add `nmo_from_env`, `smo_from_env`, and testable lookup
+      variants for the upstream env-var overlays.
+    - [x] Add `split_by` matching upstream `splitBy ':'` behavior for
+      bootstrap-path lists.
+    - [x] Preserve upstream invalid log-level/log-target failure
+      behavior as typed parser errors.
+    - [x] Add exact type/name audit rows for the new env helpers.
+    - [x] Run focused crate tests and required type-parity checks.
+  - [x] Port the `kes-agent` common protocol type vocabulary.
+    - [x] Read upstream `Protocols/AgentInfo.hs`,
+      `Protocols/RecvResult.hs`, and `Protocols/Types.hs`.
+    - [x] Add strict filename mirrors under
+      `crates/tools/kes-agent/src/protocols/`.
+    - [x] Mirror common protocol enums/records, enum ordinals, and
+      selected upstream pretty-rendering contracts without wiring socket
+      runtime behavior.
+    - [x] Add exact type/name audit rows for the shipped common
+      protocol vocabulary.
+    - [x] Run focused crate tests, focused Clippy, strict mirror, and
+      type-parity checks.
+  - [x] Port the `kes-agent` version-handshake protocol vocabulary.
+    - [x] Read upstream `Protocols/VersionHandshake/Protocol.hs`,
+      `Peers.hs`, and `Driver.hs`.
+    - [x] Strengthen `VersionIdentifier` from a numeric alias to a
+      typed version tag matching upstream `mkVersionIdentifier`.
+    - [x] Add strict filename mirrors for version-handshake states,
+      messages, state tokens, pure peer negotiation, and driver trace
+      vocabulary.
+    - [x] Add exact type/name audit rows for the shipped
+      version-handshake identifiers and helpers.
+    - [x] Run focused crate tests, focused Clippy, strict mirror, and
+      type-parity checks.
+  - [x] Port the `kes-agent` Control V0 protocol vocabulary.
+    - [x] Read upstream `Protocols/Control/V0/Protocol.hs`,
+      `Peers.hs`, and `Driver.hs`.
+    - [x] Add strict filename mirrors for Control V0 states,
+      messages, the crypto-parameterized `AgentInfo` record shape, pure
+      command peer choices, command discriminators, and read-error trace
+      vocabulary.
+    - [x] Preserve the upstream `Control:<crypto>:0.5` version
+      identifier formula and the current `StandardCrypto` registration
+      text used by the V0 control driver path.
+    - [x] Preserve the upstream V0 behavior where `controlDropKey`
+      sends `DropStagedKeyMessage` and `DropKeyCmd` decodes to
+      `ProtocolErrorMessage`.
+    - [x] Add exact type/name audit rows for the shipped Control V0
+      identifiers and helpers.
+    - [x] Run focused crate tests, focused Clippy, strict mirror, and
+      type-parity checks.
+  - [x] Port the `kes-agent` Control V1 protocol vocabulary.
+    - [x] Read upstream `Protocols/Control/V1/Protocol.hs`,
+      `Peers.hs`, and `Driver.hs`.
+    - [x] Add strict filename mirrors for Control V1 states,
+      messages, the direct `BundleInfo` `AgentInfo` record shape, pure
+      command peer choices, command discriminators, and read-error
+      trace vocabulary.
+    - [x] Pin the typed `Control:1.0` version identifier and preserve
+      upstream `ControlProtocol`, `Message`, `SControlProtocol`,
+      `ControlDriverTrace`, and `ReadResult` terminology in Rust form.
+    - [x] Preserve the upstream V1 behavior where `controlDropKey`
+      sends `DropStagedKeyMessage` and `DropKeyCmd` decodes to
+      `ProtocolErrorMessage`.
+    - [x] Add exact type/name audit rows for the shipped Control V1
+      identifiers and helpers.
+    - [x] Run focused crate tests, focused Clippy, strict mirror, and
+      type-parity checks.
+  - [x] Port the `kes-agent` Control V2 protocol vocabulary.
+    - [x] Read upstream `Protocols/Control/V2/Protocol.hs`,
+      `Peers.hs`, and `Driver.hs`.
+    - [x] Add strict filename mirrors for Control V2 states,
+      messages, the older `AgentInfo` record shape, pure command peer
+      choices, command discriminators, and read-error trace vocabulary.
+    - [x] Pin the typed `Control:2.0` version identifier and preserve
+      upstream `ControlProtocol`, `Message`, `SControlProtocol`,
+      `ControlDriverTrace`, and `ReadResult` terminology in Rust form.
+    - [x] Add exact type/name audit rows for the shipped Control V2
+      identifiers and helpers.
+    - [x] Run focused crate tests, focused Clippy, strict mirror, and
+      type-parity checks.
+  - [x] Port the `kes-agent` Control V3 protocol vocabulary.
+    - [x] Read upstream `Protocols/Control/V3/Protocol.hs`,
+      `Peers.hs`, and `Driver.hs`.
+    - [x] Add strict filename mirrors for Control V3 states,
+      messages, `AgentInfo` records, pure command peer choices,
+      command discriminators, and read-error trace vocabulary.
+    - [x] Pin the typed `Control:3.0` version identifier and preserve
+      upstream `ControlProtocol`, `Message`, `SControlProtocol`,
+      `ControlDriverTrace`, and `ReadResult` terminology in Rust form.
+    - [x] Add exact type/name audit rows for the shipped Control V3
+      identifiers and helpers.
+    - [x] Run focused crate tests, focused Clippy, strict mirror, and
+      type-parity checks.
+  - [x] Port the `kes-agent` Service V1 protocol vocabulary.
+    - [x] Read upstream `Protocols/Service/V1/Protocol.hs`,
+      `Peers.hs`, and `Driver.hs`.
+    - [x] Add strict filename mirrors for Service V1 states,
+      messages, state tokens, pure receiver/pusher choices, key-message
+      payload handling, and read-error trace vocabulary.
+    - [x] Pin the typed `Service:1.0` version identifier and preserve
+      upstream `ServiceProtocol`, `ServiceMessage`, and `ReadResult`
+      terminology in Rust form.
+    - [x] Preserve the upstream V1 no-next-key pusher path as
+      `RecvErrorUnsupportedOperation` without adding V2 timestamp/drop
+      behavior.
+    - [x] Add exact type/name audit rows for the shipped Service V1
+      identifiers and helpers.
+    - [x] Run focused crate tests, focused Clippy, strict mirror, and
+      type-parity checks.
+  - [x] Port the `kes-agent` Service V2 protocol vocabulary.
+    - [x] Read upstream `Protocols/Service/V2/Protocol.hs`,
+      `Peers.hs`, and `Driver.hs`.
+    - [x] Add strict filename mirrors for Service V2 states,
+      messages, state tokens, pure receiver/pusher choices, key/drop
+      discriminants, and read-error trace vocabulary.
+    - [x] Pin the typed `Service:2.0` version identifier and preserve
+      upstream `ServiceProtocol`, `ServiceMessage`, `KeyMessageTypeID`,
+      and `ReadResult` terminology in Rust form.
+    - [x] Add exact type/name audit rows for the shipped Service V2
+      identifiers and helpers.
+    - [x] Run focused crate tests, focused Clippy, strict mirror, and
+      type-parity checks.
+    - [x] Run post-slice broad workspace/parity gates.
+  - [x] Port the `kes-agent` Service V0 protocol vocabulary.
+    - [x] Read upstream `Protocols/Service/V0/Protocol.hs`,
+      `Peers.hs`, and `Driver.hs`.
+    - [x] Add strict filename mirrors for Service V0 states,
+      messages, state tokens, pure receiver/pusher choices,
+      crypto-version identifiers, and read-error trace vocabulary.
+    - [x] Pin the typed Service V0 version formula and preserve
+      upstream `ServiceProtocol`, `ServiceMessage`, and `ReadResult`
+      terminology in Rust form.
+    - [x] Add exact type/name audit rows for the shipped Service V0
+      identifiers and helpers.
+    - [x] Run focused crate tests, focused Clippy, strict mirror, and
+      type-parity checks.
+    - [x] Run post-slice broad workspace/parity gates.
+  - [x] Port the `kes-agent` BearerUtil protocol helper vocabulary.
+    - [x] Read upstream `Protocols/BearerUtil.hs`.
+    - [x] Add a strict filename mirror for `BearerConnectionClosed`,
+      `withDuplexBearer`, the one-byte-at-a-time receive buffering
+      semantics, and the 1024-byte receiver buffer constant.
+    - [x] Preserve daemon/socket dispatch deferral while making the
+      helper testable without raw socket I/O.
+    - [x] Add exact type/name audit rows for the shipped BearerUtil
+      identifiers and helpers.
+    - [x] Run focused crate tests, focused Clippy, strict mirror, and
+      type-parity checks.
+    - [x] Run post-slice broad workspace/parity gates.
 
 ## Review
+
+- 2026-06-05 `snapshot-converter` type/name parity audit slice:
+  expanded `docs/type-parity-audit.tsv` from 721 to 749 exact
+  Rust/upstream checks for the completed `snapshot-converter.hs`
+  parser, config/type, run-mode, and structured-deferral status
+  surfaces. Covered names include `Config`, `DaemonConfig`,
+  `NoDaemonConfig`, `Snapshot'`, `StandaloneSnapshot'`,
+  `LSMSnapshot'`, `SnapshotsDirectoryWithFormat`, `parseConfig`,
+  `main`, `convertSnapshot`, `watchTree`, and every shipped
+  operator-facing snapshot-converter flag spelling.
+- 2026-06-05 `snapshot-converter` focused verification passed:
+  `python3 dev/test/check-type-parity.py` (`749 rows clean`);
+  `cargo test -p yggdrasil-snapshot-converter --lib` (`33 passed`);
+  `cargo test -p yggdrasil-snapshot-converter --test cli_help_golden`
+  (`2 passed`); `cargo fmt --all -- --check`; `python3
+  dev/test/check-strict-mirror.py --fail-on-violation`; `python3
+  dev/test/check-type-parity.py --self-test`.
+- 2026-06-05 post-`snapshot-converter` broad verification passed:
+  `python3 dev/test/check-stale-placement.py --self-test`; `python3
+  dev/test/check-stale-placement.py`; `python3
+  dev/test/check-parity-matrix.py`; `python3
+  dev/test/check-doc-status-headers.py`; `python3
+  dev/test/check-fixture-manifest.py`; `cargo check-all`; `cargo
+  lint`; `cargo lint-no-default`; `cargo test-all` (passed, with the
+  existing 3 ignored node-tracer doctests).
+
+- 2026-06-04 `kes-agent` BearerUtil slice: added a strict filename
+  mirror for upstream `Protocols/BearerUtil.hs`. The slice ships
+  `BearerConnectionClosed`, the 1024-byte `bufferSize` mirror, a
+  pure `TChan Word8`-style receive buffer model, one-byte-at-a-time
+  forwarding, EOF-to-connection-closed detection, and a testable
+  `withDuplexBearer` model while keeping concrete raw socket I/O in
+  the daemon/socket follow-on. `docs/type-parity-audit.tsv` now
+  carries 721 exact Rust/upstream rows.
+- 2026-06-04 `kes-agent` BearerUtil focused verification passed:
+  `cargo fmt --all`; `cargo test -p yggdrasil-kes-agent --lib`
+  (`119 passed`); `cargo clippy -p yggdrasil-kes-agent --all-targets
+  --all-features -- -D warnings`; `python3
+  dev/test/check-type-parity.py` (`721 rows clean`); `python3
+  dev/test/check-strict-mirror.py --fail-on-violation`.
+- 2026-06-04 post-`kes-agent` BearerUtil broad verification passed:
+  `cargo fmt --all -- --check`; `python3
+  dev/test/check-type-parity.py`; `python3
+  dev/test/check-strict-mirror.py --fail-on-violation`; `python3
+  dev/test/check-stale-placement.py --self-test`; `python3
+  dev/test/check-stale-placement.py`; `python3
+  dev/test/check-parity-matrix.py`; `python3
+  dev/test/check-doc-status-headers.py`; `python3
+  dev/test/check-fixture-manifest.py`; `cargo check-all`; `cargo
+  lint`; `cargo lint-no-default`; `cargo test-all` (passed, with the
+  existing 3 ignored node-tracer doctests). The first filetree check
+  correctly flagged the task-log edit after metadata refresh; filetree
+  was refreshed and rechecked before final staging.
+
+- 2026-06-04 `kes-agent` Service V0 slice: added strict filename
+  mirrors for upstream `Protocols/Service/V0/{Protocol,Peers,Driver}.hs`.
+  The slice pins the legacy `Service:<crypto>:0.4` version formula,
+  mirrors the V0 key-only message surface, pure receiver/pusher choices,
+  no-next-key `RecvErrorUnsupportedOperation` path, state tokens,
+  key-message payload selection, and Service read-error trace mapping.
+  `docs/type-parity-audit.tsv` now carries 712 exact Rust/upstream rows.
+- 2026-06-04 `kes-agent` Service V0 focused verification passed:
+  `cargo fmt --all`; `python3 dev/test/check-type-parity.py`
+  (`712 rows clean`); `git add` for new production mirrors before
+  the index-based guard; `cargo test -p yggdrasil-kes-agent --lib`
+  (`112 passed`); `cargo clippy -p yggdrasil-kes-agent --all-targets
+  --all-features -- -D warnings`; `python3
+  dev/test/check-strict-mirror.py --fail-on-violation`.
+- 2026-06-04 post-`kes-agent` Service V0 broad verification passed:
+  `cargo fmt --all -- --check`; `python3
+  dev/test/check-type-parity.py`; `python3
+  dev/test/check-strict-mirror.py --fail-on-violation`; `python3
+  dev/test/check-stale-placement.py --self-test`; `python3
+  dev/test/check-stale-placement.py`; `python3
+  dev/test/check-parity-matrix.py`; `python3
+  dev/test/check-doc-status-headers.py`; `python3
+  dev/test/check-fixture-manifest.py`; `python3 dev/test/filetree.py
+  check`; `cargo check-all`; `cargo lint`; `cargo lint-no-default`;
+  `cargo test-all` (passed, with the existing 3 ignored node-tracer
+  doctests).
+
+- 2026-06-04 `kes-agent` Service V1 slice: added strict filename
+  mirrors for upstream `Protocols/Service/V1/{Protocol,Peers,Driver}.hs`.
+  The slice pins the typed `Service:1.0` version identifier, mirrors the
+  V1 key-only message surface without V2's timestamp/drop discriminator,
+  preserves the no-next-key `RecvErrorUnsupportedOperation` pusher path,
+  carries the Service read-error trace mapping, and expands
+  `docs/type-parity-audit.tsv` to 680 exact Rust/upstream rows while
+  preserving the daemon/socket runtime deferral.
+- 2026-06-04 `kes-agent` Service V1 focused verification passed:
+  `cargo fmt --all`; `cargo test -p yggdrasil-kes-agent --lib`
+  (`104 passed`); `cargo clippy -p yggdrasil-kes-agent --all-targets
+  --all-features -- -D warnings`; `python3
+  dev/test/check-type-parity.py` (`680 rows clean`); `python3
+  dev/test/check-strict-mirror.py --fail-on-violation`.
+- 2026-06-04 post-`kes-agent` Service V1 broad verification passed:
+  `cargo fmt --all -- --check`; `cargo check-all`; `cargo lint`;
+  `cargo lint-no-default`; `cargo test-all`; `python3
+  dev/test/check-type-parity.py`; `python3
+  dev/test/check-strict-mirror.py --fail-on-violation`; `python3
+  dev/test/check-stale-placement.py --self-test`; `python3
+  dev/test/check-stale-placement.py`; `python3
+  dev/test/check-parity-matrix.py`; `python3
+  dev/test/check-doc-status-headers.py`; `python3
+  dev/test/check-fixture-manifest.py`; `python3
+  dev/test/filetree.py accept-current`; `python3
+  dev/test/filetree.py render`; `python3 dev/test/filetree.py check`.
+
+- 2026-06-04 kes-agent Control V0 protocol slice: added strict
+  filename mirrors for upstream
+  `Protocols/Control/V0/{Protocol,Peers,Driver}.hs`. The Rust surface
+  now carries the `Control:<crypto>:0.5` version formula, the current
+  `Control:StandardCrypto:0.5` registration helper, the V0
+  crypto-parameterized `AgentInfo` shape, V0 state/message vocabulary,
+  pure peer helpers, driver command discriminators,
+  `DropKeyCmd -> ProtocolErrorMessage`, and the upstream V0
+  `controlDropKey` behavior that sends `DropStagedKeyMessage`.
+- 2026-06-04 kes-agent Control V0 verification passed: `cargo fmt
+  --all`; `python3 dev/test/check-type-parity.py` (`650 rows clean`);
+  `python3 dev/test/check-strict-mirror.py --fail-on-violation`;
+  `cargo test -p yggdrasil-kes-agent --lib` (`96 passed`); `cargo
+  clippy -p yggdrasil-kes-agent --all-targets --all-features -- -D
+  warnings`; `cargo fmt --all -- --check`; `python3
+  dev/test/check-stale-placement.py --self-test`; `python3
+  dev/test/check-stale-placement.py`; `python3
+  dev/test/check-parity-matrix.py`; `python3
+  dev/test/check-doc-status-headers.py`; `python3
+  dev/test/check-fixture-manifest.py`; `cargo check-all`; `cargo
+  lint`; `cargo lint-no-default`; `cargo test-all`; `python3
+  dev/test/filetree.py accept-current`; `python3
+  dev/test/filetree.py render`; `python3 dev/test/filetree.py check`.
+- 2026-06-04 kes-agent Control V1 protocol slice: added strict
+  filename mirrors for upstream
+  `Protocols/Control/V1/{Protocol,Peers,Driver}.hs`. The Rust surface
+  now carries `Control:1.0`, the V1 direct `AgentInfo` `BundleInfo`
+  shape, V1 state/message vocabulary, pure peer helpers, driver command
+  discriminators, `DropKeyCmd -> ProtocolErrorMessage`, and the
+  upstream V1 `controlDropKey` behavior that sends
+  `DropStagedKeyMessage`.
+- 2026-06-04 kes-agent Control V1 verification passed: `cargo fmt
+  --all`; `python3 dev/test/check-type-parity.py` (`592 rows clean`);
+  `python3 dev/test/check-strict-mirror.py --fail-on-violation`;
+  `cargo test -p yggdrasil-kes-agent --lib` (`84 passed`); `cargo
+  clippy -p yggdrasil-kes-agent --all-targets --all-features -- -D
+  warnings`; `cargo fmt --all -- --check`; `python3
+  dev/test/check-stale-placement.py --self-test`; `python3
+  dev/test/check-stale-placement.py`; `python3
+  dev/test/check-parity-matrix.py`; `python3
+  dev/test/check-doc-status-headers.py`; `python3
+  dev/test/check-fixture-manifest.py`; `cargo check-all`; `cargo
+  lint`; `cargo lint-no-default`; `cargo test-all`; `python3
+  dev/test/filetree.py accept-current`; `python3
+  dev/test/filetree.py render`; `python3 dev/test/filetree.py check`.
+- 2026-06-03 full-completion quality push: validated the dirty `cardano-cli key verification-key` slice against upstream `Cardano.CLI.EraIndependent.Key.{Command,Option,Run}`. The Rust implementation now exposes the upstream-shaped `key verification-key` group, derives verification-key TextEnvelopes from supported normal Ed25519 payment, stake, DRep, constitutional committee, genesis, genesis delegate, genesis UTxO, and stake-pool signing-key TextEnvelopes, dispatches through the standalone CLI runner, and has parser plus exact output-shape tests. The current standalone CLI docs now report 41 operational commands: the completed 40-command C-arc plus this post-C-arc key slice.
+- 2026-06-03 verification passed: `cargo fmt --all -- --check`; `cargo test -p yggdrasil-cardano-cli key --lib`; `cargo test -p yggdrasil-cardano-cli --lib`; `cargo check-all`; `cargo lint`; `cargo lint-no-default`; `cargo test-all`; `python3 dev/test/check-stale-placement.py`; `python3 dev/test/check-doc-status-headers.py`; `python3 dev/test/check-strict-mirror.py`; `python3 dev/test/check-parity-matrix.py`; `python3 dev/test/check-fixture-manifest.py`; `python3 dev/test/filetree.py accept-current`; `python3 dev/test/filetree.py render`; `python3 dev/test/filetree.py check`; `git diff --check`.
+- Remaining full-completion blockers are not locally closable by code edits alone: Gap BO upstream Haskell TPraos VRF replay fixture, Gap BP upstream Plutus V2 trace comparison, R178 Conway LSQ socket byte/normalized comparison, and BlockFetch §6.5 multi-peer/mainnet Haskell tip-comparison soaks remain open per the roadmap and parity matrix.
+- 2026-06-03 continuation: strengthened `key verification-key` from the initial payment/stake subset to every normal Ed25519 signing-key TextEnvelope family that shares the 32-byte DSIGN payload shape: payment, stake, DRep, constitutional committee cold/hot, genesis, genesis delegate, genesis UTxO, and stake-pool. Extended/BIP32 and KES/VRF key shapes remain intentionally unsupported until their codecs exist locally.
+- 2026-06-03 continuation verification passed: `cargo fmt --all -- --check`; `cargo test -p yggdrasil-cardano-cli verification_key_cmd --lib`; `cargo test -p yggdrasil-cardano-cli --lib`; `cargo check-all`; `cargo lint`; `cargo test-all`; `python3 dev/test/check-stale-placement.py`; `python3 dev/test/check-doc-status-headers.py`; `python3 dev/test/check-strict-mirror.py`; `python3 dev/test/check-parity-matrix.py`; `python3 dev/test/check-fixture-manifest.py`.
+- 2026-06-03 cardano-testnet Configuration helper slice: ported the pure upstream `Testnet/Components/Configuration.hs` exports `createConfigJsonNoHash`, `eraToString`, and `anyEraToString` as `create_config_json_no_hash`, `era_to_string`, and `any_era_to_string`, delegating to the existing `default_yaml_hardfork_via_config` and canonical era helpers. Updated `crates/tools/cardano-testnet/AGENTS.md`, `crates/tools/cardano-testnet/src/status.rs`, and `docs/COMPLETION_ROADMAP.md` so the completed pure `Configuration.hs` surface is discoverable while the IO/genesis/hash work remains honestly deferred.
+- 2026-06-03 cardano-testnet Configuration verification passed: `cargo fmt --all -- --check`; `cargo test -p yggdrasil-cardano-testnet configuration --lib`; `cargo test -p yggdrasil-cardano-testnet --lib`; `cargo check-all`; `cargo lint`; `cargo lint-no-default`; `cargo test-all`; `python3 dev/test/check-stale-placement.py`; `python3 dev/test/check-strict-mirror.py`; `python3 dev/test/check-doc-status-headers.py`; `python3 dev/test/check-parity-matrix.py`; `python3 dev/test/check-fixture-manifest.py`; `python3 dev/test/filetree.py accept-current`; `python3 dev/test/filetree.py render`; `python3 dev/test/filetree.py check`; `git diff --check`.
+- 2026-06-03 cardano-testnet hash-bearing Configuration slice: ported upstream `createConfigJson`, `getByronGenesisHash`, and `getShelleyGenesisHash` as `create_config_json`, `get_byron_genesis_hash`, and `get_shelley_genesis_hash`. The implementation delegates Byron canonical-JSON hashing and Shelley-family raw-file hashing to the shared `yggdrasil-node-genesis` helpers, preserving upstream's split hash semantics and merging the resulting hash fields with `default_yaml_hardfork_via_config`.
+- 2026-06-03 cardano-testnet hash-bearing Configuration verification passed: `cargo fmt --all -- --check`; `cargo test -p yggdrasil-cardano-testnet configuration --lib`; `cargo test -p yggdrasil-cardano-testnet --lib`; `cargo check-all`; `cargo lint`; `cargo lint-no-default`; `cargo test-all`; `python3 dev/test/check-stale-placement.py`; `python3 dev/test/check-strict-mirror.py`; `python3 dev/test/check-doc-status-headers.py`; `python3 dev/test/check-parity-matrix.py`; `python3 dev/test/check-fixture-manifest.py`.
+- 2026-06-03 cardano-testnet Dijkstra era-tag/config slice: added Dijkstra to the portable `CardanoEra` / `ShelleyBasedEra` tags, default genesis filepath derivation, `default_yaml_hardfork_via_config` protocol-version major 10 and cumulative `TestDijkstraHardForkAtEpoch`, `create_config_json` Dijkstra genesis hash path, and SPO stake-key deregistration deposit handling for Conway-onwards eras. The default creation era remains Conway, matching upstream `defaultEra`.
+- 2026-06-03 Dijkstra parity audit: confirmed the touched files keep their current strict mirror status (`types.rs` -> `Testnet/Start/Types.hs`, `defaults.rs` -> `Testnet/Defaults.hs`, `process/cli/spo.rs` -> `Testnet/Process/Cli/SPO.hs`; `components/configuration.rs` remains an explicit strict-none component placement for `Testnet/Components/Configuration.hs`). Public names preserve upstream terminology through idiomatic Rust casing: `CardanoEra::Dijkstra`, `ShelleyBasedEra::Dijkstra`, `DijkstraGenesisHash`, `DijkstraGenesisFile`, and `TestDijkstraHardForkAtEpoch`.
+- 2026-06-03 cardano-testnet Dijkstra verification passed: `cargo fmt --all -- --check`; `cargo test -p yggdrasil-cardano-testnet --lib`; `cargo check-all`; `cargo lint`; `cargo lint-no-default`; `cargo test-all`; `python3 dev/test/check-stale-placement.py`; `python3 dev/test/check-strict-mirror.py`; `python3 dev/test/check-doc-status-headers.py`; `python3 dev/test/check-parity-matrix.py`; `python3 dev/test/check-fixture-manifest.py`; `python3 dev/test/filetree.py accept-current`; `python3 dev/test/filetree.py render`; `python3 dev/test/filetree.py check`; `git diff --check`.
+- 2026-06-03 type/name parity guard slice: added `docs/type-parity-audit.tsv` and `dev/test/check-type-parity.py` so completed public parity surfaces now have exact Rust/upstream identifier checks in addition to strict filename mirror checks. The initial manifest covers the completed `cardano-cli key verification-key` command/run surface and the completed `cardano-testnet` era/defaults/configuration/SPO Dijkstra surface.
+- 2026-06-03 type/name parity guard verification passed: `python3 -m py_compile dev/test/check-type-parity.py`; `python3 dev/test/check-type-parity.py --self-test`; `python3 dev/test/check-type-parity.py`; `cargo fmt --all -- --check`; `cargo check-all`; `cargo lint`; `cargo lint-no-default`; `cargo test-all`; `python3 dev/test/check-strict-mirror.py`; `python3 dev/test/check-stale-placement.py`; `python3 dev/test/check-doc-status-headers.py`; `python3 dev/test/check-parity-matrix.py`; `python3 dev/test/check-fixture-manifest.py`.
+- 2026-06-03 type/name parity CI wiring: added the guard to `just parity-all` and `.github/workflows/ci.yml` after the upstream source-only reference fetch, then documented it in `README.md` and `docs/AGENTS.md`.
+- 2026-06-03 type/name parity CI wiring verification passed: `just parity-all` could not run because `just` is not installed in this environment, so the exact constituent commands were run directly and passed: `python3 dev/test/check-parity-matrix.py`; `python3 dev/test/check-fixture-manifest.py`; `python3 dev/test/check-strict-mirror.py --fail-on-violation`; `python3 dev/test/check-type-parity.py`; `python3 dev/test/check-stale-placement.py --self-test`; `python3 dev/test/check-stale-placement.py`; `python3 dev/test/check-doc-status-headers.py`; `python3 dev/test/check-type-parity.py --self-test`; `python3 -m py_compile dev/test/check-type-parity.py`; `cargo fmt --all -- --check`; `cargo check-all`; `cargo lint`; `cargo lint-no-default`; `cargo test-all`; `python3 dev/test/filetree.py accept-current`; `python3 dev/test/filetree.py render`; `python3 dev/test/filetree.py check`; `git diff --check`.
+- 2026-06-04 type/name parity audit expansion: expanded `docs/type-parity-audit.tsv` from the initial key/config rows to 238 exact Rust/upstream checks by adding the completed `cardano-cli hash genesis-file` command/run names; the completed `cardano-testnet` default committee, DRep, SPO, delegator, UTxO, and topology helper names; the completed `cardano-testnet` `Process/Cli/{Keys,Transaction,DRep,SPO}.hs` pure builder names; the completed `Testnet/Types.hs` portable/runtime record names carried in `runtime_types.rs`; the completed `Testnet/Process/{Run,RunIO}.hs` plus `Testnet/Property/{Util,Assert,Run}.hs` helper names; the completed `Testnet/Start/Types.hs` operator option/type surface; the completed shared `Cardano.Node.Testnet.Paths` plus `Testnet/Filepath.hs` path-helper surfaces; the completed `Parsers/{Cardano,Run,Version}.hs` option/command parser surfaces; and the completed `Testnet/Components/Query.hs` `TestnetWaitPeriod` surface.
+- 2026-06-03 type/name parity audit expansion verification passed: `python3 dev/test/check-type-parity.py`; `python3 dev/test/check-type-parity.py --self-test`; `python3 -m py_compile dev/test/check-type-parity.py`; `python3 dev/test/filetree.py accept-current`; `python3 dev/test/filetree.py render`; `python3 dev/test/filetree.py check`; `git diff --check`.
+- 2026-06-04 type/name parity guard hardening: `dev/test/check-type-parity.py` now rejects duplicate manifest mappings plus absolute or root-escaping manifest paths, and its self-test exercises those failure modes through the same `check_manifest` path as the live guard.
+- 2026-06-04 type/name parity guard hardening verification passed: `python3 dev/test/check-type-parity.py`; `python3 dev/test/check-type-parity.py --self-test`; `python3 -m py_compile dev/test/check-type-parity.py`.
+- 2026-06-04 type/name parity self-test robustness: `dev/test/check-type-parity.py --self-test` now creates its `target/` parent explicitly before writing temporary root-relative files, so clean checkouts and CI jobs do not depend on pre-existing Cargo output directories.
+- 2026-06-04 type/name parity self-test robustness verification passed: `python3 dev/test/check-type-parity.py --self-test`; `python3 dev/test/check-type-parity.py`; `python3 -m py_compile dev/test/check-type-parity.py`; `python3 dev/test/check-parity-matrix.py`; `python3 dev/test/check-stale-placement.py --self-test`; `python3 dev/test/check-stale-placement.py`; `python3 dev/test/check-doc-status-headers.py`; `python3 dev/test/check-fixture-manifest.py`; `python3 dev/test/filetree.py accept-current`; `python3 dev/test/filetree.py render`; `python3 dev/test/filetree.py check`; `git diff --check`.
+- 2026-06-04 type/name parity side-root hardening: `dev/test/check-type-parity.py` now requires manifest Rust paths to live under `crates/` and upstream paths to live under `.reference-haskell-cardano-node/`, with self-test coverage for both rejection paths. Root `AGENTS.md`, `docs/AGENTS.md`, and `docs/SPECS.md` now document the enforced invariant.
+- 2026-06-04 type/name parity side-root hardening verification passed: `python3 dev/test/check-type-parity.py --self-test`; `python3 dev/test/check-type-parity.py`; `python3 -m py_compile dev/test/check-type-parity.py`; `python3 dev/test/check-parity-matrix.py`; `python3 dev/test/check-stale-placement.py --self-test`; `python3 dev/test/check-stale-placement.py`; `python3 dev/test/check-doc-status-headers.py`; `python3 dev/test/check-fixture-manifest.py`; `git diff --check`.
+- 2026-06-04 type/name parity ordering hardening: `dev/test/check-type-parity.py` now rejects unsorted manifest rows, its self-test proves that failure mode, and `docs/type-parity-audit.tsv` is normalized by `(scope, rust_path, rust_text, upstream_path, upstream_text)` so future public parity additions are deterministic and reviewable.
+- 2026-06-04 type/name plus filename parity ordering verification passed: `python3 dev/test/check-type-parity.py --self-test`; `python3 dev/test/check-type-parity.py`; `python3 -m py_compile dev/test/check-type-parity.py`; direct manifest sort assertion (`238` rows, sorted); `python3 dev/test/check-strict-mirror.py --fail-on-violation`; `python3 dev/test/check-parity-matrix.py`; `python3 dev/test/check-doc-status-headers.py`; `python3 dev/test/check-fixture-manifest.py`; `python3 dev/test/check-stale-placement.py --self-test`; `python3 dev/test/check-stale-placement.py`; `git diff --check`.
+- 2026-06-04 type/name parity token-boundary hardening: `dev/test/check-type-parity.py` now checks manifest text with identifier-boundary token matching instead of raw substring matching, and its self-test rejects partial matches. The broad `CardanoEra` / `ShelleyBasedEra` rows now point at upstream `Testnet/Defaults.hs`, where those names appear as real imported tokens rather than substrings of `AnyCardanoEra` / `AnyShelleyBasedEra`.
+- 2026-06-04 type/name plus filename parity token-boundary verification passed: `python3 dev/test/check-type-parity.py --self-test`; `python3 dev/test/check-type-parity.py`; `python3 -m py_compile dev/test/check-type-parity.py`; direct manifest assertion (`238` rows, sorted, `0` boundary misses); `python3 dev/test/check-strict-mirror.py --fail-on-violation`; `python3 dev/test/check-parity-matrix.py`; `python3 dev/test/check-doc-status-headers.py`; `python3 dev/test/check-fixture-manifest.py`; `python3 dev/test/check-stale-placement.py --self-test`; `python3 dev/test/check-stale-placement.py`; `git diff --check`.
+- 2026-06-04 type/name parity source-file hardening: `dev/test/check-type-parity.py` now requires manifest Rust evidence paths to end in `.rs` and upstream evidence paths to end in `.hs`, with self-test coverage for both rejection paths. Root/docs/CI guidance now describes the manifest as Rust source ↔ upstream Haskell source evidence, not generic path evidence.
+- 2026-06-04 type/name plus filename parity source-file verification passed: `python3 dev/test/check-type-parity.py --self-test`; `python3 dev/test/check-type-parity.py`; `python3 -m py_compile dev/test/check-type-parity.py`; direct manifest suffix assertion (`238` rows, Rust suffixes `[.rs]`, upstream suffixes `[.hs]`); `python3 dev/test/check-strict-mirror.py --fail-on-violation`; `python3 dev/test/check-parity-matrix.py`; `python3 dev/test/check-doc-status-headers.py`; `python3 dev/test/check-fixture-manifest.py`; `python3 dev/test/check-stale-placement.py --self-test`; `python3 dev/test/check-stale-placement.py`; `git diff --check`.
+- 2026-06-04 type/name parity scope-taxonomy hardening: `dev/test/check-type-parity.py` now requires lower-kebab-case manifest scope names, with self-test coverage for invalid scope text. Root/docs/CI guidance now documents the scope naming rule so future public parity rows stay stable and grep-friendly.
+- 2026-06-04 type/name plus filename parity scope-taxonomy verification passed: `python3 dev/test/check-type-parity.py --self-test`; `python3 dev/test/check-type-parity.py`; `python3 -m py_compile dev/test/check-type-parity.py`; direct manifest assertion (`238` rows, `24` scopes, all lower-kebab-case); `python3 dev/test/check-strict-mirror.py --fail-on-violation`; `python3 dev/test/check-parity-matrix.py`; `python3 dev/test/check-doc-status-headers.py`; `python3 dev/test/check-fixture-manifest.py`; `python3 dev/test/check-stale-placement.py --self-test`; `python3 dev/test/check-stale-placement.py`; `git diff --check`.
+- 2026-06-04 type/name parity note-quality hardening: `dev/test/check-type-parity.py` now requires every manifest note to be an explanatory sentence with no leading/trailing whitespace, with self-test coverage for placeholder notes. Root/docs/CI guidance now documents that `docs/type-parity-audit.tsv` notes must explain the mapped surface rather than carry terse placeholders.
+- 2026-06-04 type/name plus filename parity note-quality verification passed: `python3 dev/test/check-type-parity.py --self-test`; `python3 dev/test/check-type-parity.py`; `python3 -m py_compile dev/test/check-type-parity.py`; direct manifest assertion (`238` rows, `0` note issues); `python3 dev/test/check-strict-mirror.py --fail-on-violation`; `python3 dev/test/check-parity-matrix.py`; `python3 dev/test/check-doc-status-headers.py`; `python3 dev/test/check-fixture-manifest.py`; `python3 dev/test/check-stale-placement.py --self-test`; `python3 dev/test/check-stale-placement.py`; `git diff --check`.
+- 2026-06-04 type/name parity text-token hardening: `dev/test/check-type-parity.py` now requires `rust_text` and `upstream_text` to be single tokens with no whitespace or hidden padding, with self-test coverage for invalid token text. Root/docs/CI guidance now documents that the manifest maps exact identifiers/config keys rather than phrases.
+- 2026-06-04 type/name plus filename parity text-token verification passed: `python3 dev/test/check-type-parity.py --self-test`; `python3 dev/test/check-type-parity.py`; `python3 -m py_compile dev/test/check-type-parity.py`; direct manifest assertion (`238` rows, `0` token-text issues); `python3 dev/test/check-strict-mirror.py --fail-on-violation`; `python3 dev/test/check-parity-matrix.py`; `python3 dev/test/check-doc-status-headers.py`; `python3 dev/test/check-fixture-manifest.py`; `python3 dev/test/check-stale-placement.py --self-test`; `python3 dev/test/check-stale-placement.py`; `git diff --check`.
+- 2026-06-04 operator helper executable-mode audit: retired the stale open root `scripts/*.sh` task and replaced it with the current accepted `dev/{scripts,evidence,reference}/*.sh` evidence. `git ls-files -s '*.sh'` shows all tracked dev shell helpers as `100755`, and the filesystem mode scan shows the same helpers as executable (`755`).
+- 2026-06-04 operator helper executable-mode verification passed: `git ls-files -s '*.sh'`; filesystem mode scan for `dev/{scripts,evidence,reference}/*.sh`; `python3 dev/test/check-stale-placement.py --self-test`; `python3 dev/test/check-stale-placement.py`.
+- 2026-06-04 checklist hygiene: closed stale parent TODO boxes where all child evidence was already recorded: current-baseline establishment, relevant AGENTS guidance updates, one bounded partial sister-tool naming-parity slice, `cardano-cli hash genesis-file` naming parity, and verification/review documentation. Left the broad cargo rerun item, live closeout evidence policy, Gap BO, Gap BP, R178, and BlockFetch soak blockers open because they still require either fresh broad verification or upstream/operator artifacts.
+- 2026-06-04 checklist hygiene verification passed: `python3 dev/test/check-stale-placement.py --self-test`; `python3 dev/test/check-stale-placement.py`; `python3 dev/test/check-type-parity.py`; `python3 dev/test/check-strict-mirror.py --fail-on-violation`; `python3 dev/test/check-parity-matrix.py`; `python3 dev/test/check-doc-status-headers.py`; `python3 dev/test/check-fixture-manifest.py`; `python3 dev/test/filetree.py accept-current`; `python3 dev/test/filetree.py render`; `python3 dev/test/filetree.py check`; `git diff --check`.
+- 2026-06-04 broad local quality-gate rerun passed: `cargo fmt --all -- --check`; `cargo check-all`; `cargo lint`; `cargo lint-no-default`; `cargo test-all`; `python3 dev/test/check-strict-mirror.py --fail-on-violation`; `python3 dev/test/check-stale-placement.py --self-test`; `python3 dev/test/check-stale-placement.py`; `python3 dev/test/check-doc-status-headers.py`; `python3 dev/test/check-parity-matrix.py`; `python3 dev/test/check-fixture-manifest.py`; `python3 dev/test/check-type-parity.py`; `python3 dev/test/filetree.py check`.
+- 2026-06-04 `kes-agent-control` parser/type parity slice: aligned the shipped parser with upstream `ControlMain.hs` flag spellings (`--kes-verification-key-file` and `--opcert-file`) instead of the earlier local shorthand, renamed the helper to `extract_ver_key_file`, and expanded `docs/type-parity-audit.tsv` from 238 to 267 exact Rust/upstream rows with `kes-agent-control` parser and option-type coverage. Runtime ControlClient socket I/O remains deliberately deferred on the R444+ daemon/socket follow-on.
+- 2026-06-04 `kes-agent-control` focused verification passed: `cargo fmt --all -- --check`; `cargo test -p yggdrasil-kes-agent-control --lib`; `python3 dev/test/check-type-parity.py`.
+- 2026-06-04 post-`kes-agent-control` broad verification passed: `cargo fmt --all -- --check`; `cargo check-all`; `cargo lint`; `cargo lint-no-default`; `cargo test-all`; `python3 dev/test/check-strict-mirror.py --fail-on-violation`; `python3 dev/test/check-type-parity.py`; `python3 dev/test/check-stale-placement.py --self-test`; `python3 dev/test/check-stale-placement.py`; `python3 dev/test/check-parity-matrix.py`; `python3 dev/test/check-doc-status-headers.py`; `python3 dev/test/check-fixture-manifest.py`; `python3 dev/test/filetree.py accept-current`; `python3 dev/test/filetree.py render`; `python3 dev/test/filetree.py check`; `git diff --check`.
+- 2026-06-04 `kes-agent` typed parser slice: ported the locally closable `AgentMain.hs` parser/options surface while keeping daemon/socket dispatch deferred. The parser now returns typed `ProgramOptions` for `start|stop|restart|status|run`, config-file aliases, normal-mode socket/bootstrap/log/genesis/cold-key flags, upstream log-level/log-target spellings, and service/normal default records. It also rejects the previous local `-v` version shortcut because upstream exposes only `--version`. `docs/type-parity-audit.tsv` expanded from 267 to 295 rows with exact `kes-agent` parser/type coverage.
+- 2026-06-04 `kes-agent` focused verification passed: `cargo fmt --all -- --check`; `cargo test -p yggdrasil-kes-agent --lib`; `cargo test -p yggdrasil-kes-agent --test cli_help_golden`; `python3 dev/test/check-type-parity.py`; `python3 dev/test/check-strict-mirror.py --fail-on-violation`.
+- 2026-06-04 post-`kes-agent` broad verification passed: `cargo fmt --all -- --check`; `cargo check-all`; `cargo lint`; `cargo lint-no-default`; `cargo test-all`; `python3 dev/test/check-strict-mirror.py --fail-on-violation`; `python3 dev/test/check-type-parity.py`; `python3 dev/test/check-stale-placement.py --self-test`; `python3 dev/test/check-stale-placement.py`; `python3 dev/test/check-parity-matrix.py`; `python3 dev/test/check-doc-status-headers.py`; `python3 dev/test/check-fixture-manifest.py`; `python3 dev/test/filetree.py accept-current`.
+- 2026-06-04 `kes-agent` env-option slice: added deterministic mirrors of upstream `nmoFromEnv`, `smoFromEnv`, and `splitBy`, with closure-injected test variants. The helpers read the upstream `KES_AGENT_*` env names, preserve `splitBy ':'` empty/trailing segment behavior for bootstrap paths, convert invalid log-level/log-target env values into typed parser errors, and expanded `docs/type-parity-audit.tsv` from 295 to 300 exact rows.
+- 2026-06-04 `kes-agent` env-option focused verification passed: `cargo fmt --all -- --check`; `cargo test -p yggdrasil-kes-agent --lib`; `python3 dev/test/check-type-parity.py`.
+- 2026-06-04 post-`kes-agent` env-option broad verification passed: `cargo check-all`; `cargo lint`; `cargo lint-no-default`; `cargo test-all`; `python3 dev/test/check-strict-mirror.py --fail-on-violation`; `python3 dev/test/check-type-parity.py`; `python3 dev/test/check-stale-placement.py --self-test`; `python3 dev/test/check-stale-placement.py`; `python3 dev/test/check-parity-matrix.py`; `python3 dev/test/check-doc-status-headers.py`; `python3 dev/test/check-fixture-manifest.py`; `git diff --check`.
+- 2026-06-04 `kes-agent` common protocol type slice: added strict filename mirrors for upstream `Cardano.KESAgent.Protocols.AgentInfo`, `RecvResult`, and `Types`, exported through `protocols::*`. The slice ships common protocol records/enums, enum ordinal helpers, receive/command pretty rendering, selected driver trace pretty contracts, and expanded `docs/type-parity-audit.tsv` from 300 to 350 exact Rust/upstream rows while preserving the daemon/socket runtime deferral.
+- 2026-06-04 `kes-agent` common protocol focused verification passed: `cargo fmt --all -- --check`; `cargo test -p yggdrasil-kes-agent --lib`; `cargo clippy -p yggdrasil-kes-agent --all-targets --all-features -- -D warnings`; `python3 dev/test/check-type-parity.py`; `python3 dev/test/check-strict-mirror.py --fail-on-violation`.
+- 2026-06-04 post-`kes-agent` common protocol broad verification passed: `cargo check-all`; `cargo lint`; `cargo lint-no-default`; `cargo test-all`; `python3 dev/test/check-type-parity.py`; `python3 dev/test/check-strict-mirror.py --fail-on-violation`; `python3 dev/test/check-stale-placement.py --self-test`; `python3 dev/test/check-stale-placement.py`; `python3 dev/test/check-parity-matrix.py`; `python3 dev/test/check-doc-status-headers.py`; `python3 dev/test/check-fixture-manifest.py`; `python3 dev/test/filetree.py accept-current`; `python3 dev/test/filetree.py render`; `python3 dev/test/filetree.py check`; `git diff --check`.
+- 2026-06-04 `kes-agent` version-handshake slice: added strict filename mirrors for upstream `Cardano.KESAgent.Protocols.VersionHandshake.{Protocol,Peers,Driver}`. The slice strengthens `VersionIdentifier` to a typed version tag, pins `vpVersionIdentifier` as `VersionHandshake:0.1`, mirrors handshake states/messages/tokens, implements the upstream client/server common-version selection as pure helpers, adds driver trace pretty contracts, and expands `docs/type-parity-audit.tsv` from 350 to 376 exact Rust/upstream rows.
+- 2026-06-04 `kes-agent` version-handshake focused verification passed: `cargo fmt --all -- --check`; `cargo test -p yggdrasil-kes-agent --lib`; `cargo clippy -p yggdrasil-kes-agent --all-targets --all-features -- -D warnings`; `python3 dev/test/check-type-parity.py`; `python3 dev/test/check-strict-mirror.py --fail-on-violation`.
+- 2026-06-04 post-`kes-agent` version-handshake broad verification passed: `cargo check-all`; `cargo lint`; `cargo lint-no-default`; `cargo test-all`; `python3 dev/test/check-type-parity.py`; `python3 dev/test/check-strict-mirror.py --fail-on-violation`; `python3 dev/test/check-stale-placement.py --self-test`; `python3 dev/test/check-stale-placement.py`; `python3 dev/test/check-parity-matrix.py`; `python3 dev/test/check-doc-status-headers.py`; `python3 dev/test/check-fixture-manifest.py`; `git diff --check`; `git diff --cached --check`.
+- 2026-06-04 `kes-agent` Control V2 slice: added strict filename mirrors for upstream `Cardano.KESAgent.Protocols.Control.V2.{Protocol,Peers,Driver}`. The slice pins the typed `Control:2.0` version identifier, mirrors Control V2 states/messages/tokens, the older `AgentInfo`/bundle/bootstrap record vocabulary, pure command peer choices, command discriminators, and `readErrorToControlDriverTrace`, and expands `docs/type-parity-audit.tsv` from 473 to 536 exact Rust/upstream rows while preserving the daemon/socket runtime deferral.
+- 2026-06-04 `kes-agent` Control V2 focused verification passed: `cargo fmt --all`; `cargo test -p yggdrasil-kes-agent --lib` (72 tests); `cargo clippy -p yggdrasil-kes-agent --all-targets --all-features -- -D warnings`; `python3 dev/test/check-type-parity.py`; `python3 dev/test/check-strict-mirror.py --fail-on-violation`.
+- 2026-06-04 post-`kes-agent` Control V2 broad verification passed: `cargo fmt --all -- --check`; `cargo check-all`; `cargo lint`; `cargo lint-no-default`; `cargo test-all`; `python3 dev/test/check-type-parity.py`; `python3 dev/test/check-strict-mirror.py --fail-on-violation`; `python3 dev/test/check-stale-placement.py --self-test`; `python3 dev/test/check-stale-placement.py`; `python3 dev/test/check-parity-matrix.py`; `python3 dev/test/check-doc-status-headers.py`; `python3 dev/test/check-fixture-manifest.py`.
+- 2026-06-04 `kes-agent` Control V3 slice: added strict filename mirrors for upstream `Cardano.KESAgent.Protocols.Control.V3.{Protocol,Peers,Driver}`. The slice pins the typed `Control:3.0` version identifier, mirrors Control V3 states/messages/tokens, `AgentInfo`/bundle/bootstrap record vocabulary, pure command peer choices, command discriminators, and `readErrorToControlDriverTrace`, and expands `docs/type-parity-audit.tsv` from 410 to 473 exact Rust/upstream rows while preserving the daemon/socket runtime deferral.
+- 2026-06-04 `kes-agent` Control V3 focused verification passed: `cargo fmt --all`; `cargo test -p yggdrasil-kes-agent --lib` (60 tests); `cargo clippy -p yggdrasil-kes-agent --all-targets --all-features -- -D warnings`; `python3 dev/test/check-type-parity.py`; `python3 dev/test/check-strict-mirror.py --fail-on-violation`.
+- 2026-06-04 post-`kes-agent` Control V3 broad verification passed: `cargo fmt --all -- --check`; `cargo check-all`; `cargo lint`; `cargo lint-no-default`; `cargo test-all`; `python3 dev/test/check-type-parity.py`; `python3 dev/test/check-strict-mirror.py --fail-on-violation`; `python3 dev/test/check-stale-placement.py --self-test`; `python3 dev/test/check-stale-placement.py`; `python3 dev/test/check-parity-matrix.py`; `python3 dev/test/check-doc-status-headers.py`; `python3 dev/test/check-fixture-manifest.py`.
+- 2026-06-04 `kes-agent` Service V2 slice: added strict filename mirrors for upstream `Cardano.KESAgent.Protocols.Service.V2.{Protocol,Peers,Driver}`. The slice pins the typed `Service:2.0` version identifier, mirrors Service V2 states/messages/tokens, pure receiver/pusher choices, key/drop discriminants, and `readErrorToServiceDriverTrace`, and expands `docs/type-parity-audit.tsv` from 376 to 410 exact Rust/upstream rows while preserving the daemon/socket runtime deferral.
+- 2026-06-04 `kes-agent` Service V2 focused verification passed: `cargo fmt --all -- --check`; `cargo test -p yggdrasil-kes-agent --lib`; `cargo clippy -p yggdrasil-kes-agent --all-targets --all-features -- -D warnings`; `python3 dev/test/check-type-parity.py`; `python3 dev/test/check-strict-mirror.py --fail-on-violation`; `git diff --check`; `git diff --cached --check`.
+- 2026-06-04 post-`kes-agent` Service V2 broad verification passed: `cargo fmt --all -- --check`; `cargo check-all`; `cargo lint`; `cargo lint-no-default`; `cargo test-all`; `python3 dev/test/check-type-parity.py`; `python3 dev/test/check-strict-mirror.py --fail-on-violation`; `python3 dev/test/check-stale-placement.py --self-test`; `python3 dev/test/check-stale-placement.py`; `python3 dev/test/check-parity-matrix.py`; `python3 dev/test/check-doc-status-headers.py`; `python3 dev/test/check-fixture-manifest.py`.
 
 - `cardano-cli hash genesis-file` parity slice: replaced the hash command/run placeholders with upstream-shaped `HashCmds`, `GenesisFile`, `render_hash_cmds`, and `run_hash_cmds`; wired nested `hash genesis-file --genesis FILE` parsing/dispatch; added deterministic Blake2b-256 genesis-file hashing tests.
 - Smoke-test placement fix: full `cargo test-all` exposed stale root `scripts/` lookups in `crates/node/cardano-node/tests/smoke.rs`; tests now resolve accepted `dev/scripts/` and `dev/evidence/` locations, including Windows Git Bash relative path handling.

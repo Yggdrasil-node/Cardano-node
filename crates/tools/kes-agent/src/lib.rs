@@ -11,6 +11,7 @@ use std::io::Write;
 use std::process::ExitCode;
 
 pub mod parser;
+pub mod protocols;
 pub mod status;
 
 /// Process-exit-code wrapper around the run-loop dispatch.
@@ -35,6 +36,10 @@ pub fn run_main() -> ExitCode {
         Err(parser::ParseError::VersionRequested) => {
             let _ = std::io::stdout().write_all(parser::VERSION_TEXT.as_bytes());
             ExitCode::SUCCESS
+        }
+        Err(err) => {
+            let _ = writeln!(std::io::stderr(), "Error: {err}");
+            ExitCode::FAILURE
         }
     }
 }

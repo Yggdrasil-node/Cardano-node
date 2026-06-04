@@ -4,8 +4,8 @@
 > Update descriptions in the manifest, then run `python dev/test/filetree.py accept-current`.
 
 - Schema version: 1
-- Generated at: 2026-06-03T01:14:13Z
-- Files described: 1700
+- Generated at: 2026-06-04T23:40:06Z
+- Files described: 1731
 
 ## Workspace
 
@@ -1792,6 +1792,64 @@
   - Binary entry point for the `kes-agent` deployable.
 - `crates/tools/kes-agent/src/parser.rs`
   - CLI argument parser shell for the `kes-agent` binary.
+- `crates/tools/kes-agent/src/protocols/agent_info.rs`
+  - Agent state information displayed by control clients.
+- `crates/tools/kes-agent/src/protocols/bearer_util.rs`
+  - Duplex raw-bearer helper vocabulary.
+- `crates/tools/kes-agent/src/protocols/control_v0_driver.rs`
+  - Version 0 control driver vocabulary.
+- `crates/tools/kes-agent/src/protocols/control_v0_peers.rs`
+  - Pure peers for the version 0 control protocol.
+- `crates/tools/kes-agent/src/protocols/control_v0_protocol.rs`
+  - Version 0 control protocol for KES-agent control commands.
+- `crates/tools/kes-agent/src/protocols/control_v1_driver.rs`
+  - Version 1 control driver vocabulary.
+- `crates/tools/kes-agent/src/protocols/control_v1_peers.rs`
+  - Pure peers for the version 1 control protocol.
+- `crates/tools/kes-agent/src/protocols/control_v1_protocol.rs`
+  - Version 1 control protocol for KES-agent control commands.
+- `crates/tools/kes-agent/src/protocols/control_v2_driver.rs`
+  - Version 2 control driver vocabulary.
+- `crates/tools/kes-agent/src/protocols/control_v2_peers.rs`
+  - Pure peers for the version 2 control protocol.
+- `crates/tools/kes-agent/src/protocols/control_v2_protocol.rs`
+  - Version 2 control protocol for KES-agent control commands.
+- `crates/tools/kes-agent/src/protocols/control_v3_driver.rs`
+  - Version 3 control driver vocabulary.
+- `crates/tools/kes-agent/src/protocols/control_v3_peers.rs`
+  - Pure peers for the version 3 control protocol.
+- `crates/tools/kes-agent/src/protocols/control_v3_protocol.rs`
+  - Version 3 control protocol for KES-agent control commands.
+- `crates/tools/kes-agent/src/protocols/mod.rs`
+  - Common protocol vocabulary for the pure-Rust `kes-agent` port.
+- `crates/tools/kes-agent/src/protocols/recv_result.rs`
+  - Result of receiving a KES key bundle.
+- `crates/tools/kes-agent/src/protocols/service_v0_driver.rs`
+  - Version 0 service driver vocabulary.
+- `crates/tools/kes-agent/src/protocols/service_v0_peers.rs`
+  - Pure peers for the version 0 service protocol.
+- `crates/tools/kes-agent/src/protocols/service_v0_protocol.rs`
+  - Version 0 service protocol for pushing KES keys.
+- `crates/tools/kes-agent/src/protocols/service_v1_driver.rs`
+  - Version 1 service driver vocabulary.
+- `crates/tools/kes-agent/src/protocols/service_v1_peers.rs`
+  - Pure peers for the version 1 service protocol.
+- `crates/tools/kes-agent/src/protocols/service_v1_protocol.rs`
+  - Version 1 service protocol for pushing KES keys.
+- `crates/tools/kes-agent/src/protocols/service_v2_driver.rs`
+  - Version 2 service driver vocabulary.
+- `crates/tools/kes-agent/src/protocols/service_v2_peers.rs`
+  - Pure peers for the version 2 service protocol.
+- `crates/tools/kes-agent/src/protocols/service_v2_protocol.rs`
+  - Version 2 service protocol for pushing KES keys.
+- `crates/tools/kes-agent/src/protocols/types.rs`
+  - Common protocol types used by control and service protocols.
+- `crates/tools/kes-agent/src/protocols/version_handshake_driver.rs`
+  - Version-handshake driver trace vocabulary.
+- `crates/tools/kes-agent/src/protocols/version_handshake_peers.rs`
+  - Pure peers for version negotiation.
+- `crates/tools/kes-agent/src/protocols/version_handshake_protocol.rs`
+  - Protocol for negotiating KES-agent protocol versions.
 - `crates/tools/kes-agent/src/status.rs`
   - Programmatic-introspection helpers for the kes-agent deferred surfaces. R443 surfaces the upstream kes-agent daemon surfaces (socket server protocol, KES key lifecycle, daemonizati
 - `crates/tools/kes-agent/tests/cli_help_golden.rs`
@@ -3245,6 +3303,8 @@
   - Architecture &amp; parity: <div class="yg-hero" markdown="0">.
 - `docs/strict-mirror-audit.tsv`
   - Project file at docs/strict-mirror-audit.tsv.
+- `docs/type-parity-audit.tsv`
+  - Project file at docs/type-parity-audit.tsv.
 - `docs/upstream-haskell-files.txt`
   - Project file at docs/upstream-haskell-files.txt.
 
@@ -3496,6 +3556,8 @@
   - Scans current non-historical surfaces while excluding changelog and operational-run evidence.
 - `dev/test/check-strict-mirror.py`
   - Project file at dev/test/check-strict-mirror.py.
+- `dev/test/check-type-parity.py`
+  - Project file at dev/test/check-type-parity.py.
 - `dev/test/filetree.py`
   - Stdlib-only maintenance tool for scanning, rendering, checking, and accepting filetree metadata.
   - Maintains dev/filetree/manifest.json and dev/filetree/FILETREE.md for Codex-only workspace organization.

@@ -238,8 +238,8 @@ Edit the file, then run with `--config /etc/yggdrasil/config.json`.
 A pure-Rust `cardano-cli` compatibility wrapper. Reusable command logic lives
 in `crates/tools/cardano-cli`; this node subcommand adapts the
 `CardanoCliCommand` variants declared in `crates/node/cardano-node/src/cli.rs`.
-The standalone `yggdrasil-cardano-cli` binary owns the broader 40-command C-arc
-surface.
+The standalone `yggdrasil-cardano-cli` binary owns the broader 41-command
+surface: the completed 40-command C-arc plus `key verification-key`.
 
 ### Synopsis
 

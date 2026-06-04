@@ -3,13 +3,7 @@
 //! ## Naming parity
 //!
 //! **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraIndependent/Key/Option.hs`.
-//! R293 lands the file with the API skeleton. Concrete
-//! EraIndependent command implementations port from upstream over
-//! subsequent rounds + R295 integration tests.
+//! R293 landed the file with the API skeleton. R520 maps upstream
+//! `pKeyCmds` to clap's derive parser on [`KeyCmds`].
 
-/// EraIndependent option placeholder.
-///
-/// Mirrors upstream `Cardano.CLI.EraIndependent.Key.Option` types; the Rust port lands
-/// as concrete subcommand implementations come online.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum OptionPlaceholder {}
+pub use crate::era_independent::key::command::KeyCmds;

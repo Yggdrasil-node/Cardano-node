@@ -6,7 +6,7 @@ Keep these documents synchronized with the implemented workspace, not with specu
 
 `docs/` carries policy + parity + operator-facing markdown, not Rust
 code, so the workspace strict-mirror file-policy (R274+) does not
-apply directly here. Five validators guard this tree's invariants:
+apply directly here. These validators guard this tree's invariants:
 
 - `python3 dev/test/check-parity-matrix.py` (CI gate since R303) —
   validates `parity-matrix.json` schema + every
@@ -33,6 +33,15 @@ apply directly here. Five validators guard this tree's invariants:
   `crates/node/config/src/upstream_pins.rs::UPSTREAM_CARDANO_BASE_COMMIT`,
   `dev/specs/upstream-test-vectors/cardano-base/<SHA>/`, `SPECS.md`,
   and `UPSTREAM_PARITY.md` (this directory's own pin matrix).
+- `python3 dev/test/check-type-parity.py` — validates
+  `type-parity-audit.tsv` exact Rust/upstream identifier and config-key
+  mappings for public parity surfaces that need name evidence beyond
+  filename parity, including identifier-boundary token matching,
+  single-token text fields, duplicate-row hygiene, lower-kebab-case
+  scope names, explanatory sentence notes, deterministic row order, and
+  side-specific manifest roots/extensions (`crates/**/*.rs` for Rust and
+  `.reference-haskell-cardano-node/**/*.hs` for upstream). Requires the
+  source-only upstream reference tree.
 - `python3 dev/test/check-strict-mirror.py --fail-on-violation`
   (R288) — uses [`strict-mirror-audit.tsv`](strict-mirror-audit.tsv)
   as its allowlist; this directory is the source of truth for the

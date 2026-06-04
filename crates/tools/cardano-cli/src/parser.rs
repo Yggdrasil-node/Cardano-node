@@ -131,6 +131,33 @@ mod tests {
         );
     }
 
+    /// `key verification-key --signing-key-file … --verification-key-file …`
+    /// parses through the nested upstream `KeyCmds` group.
+    #[test]
+    fn parses_key_verification_key() {
+        let cmd = parse_command([
+            "yggdrasil-cardano-cli",
+            "key",
+            "verification-key",
+            "--signing-key-file",
+            "/tmp/p.skey",
+            "--verification-key-file",
+            "/tmp/p.vkey",
+        ])
+        .expect("parse");
+        assert_eq!(
+            cmd,
+            Command::Key {
+                command: crate::era_independent::key::command::KeyCmds::KeyVerificationKeyCmd(
+                    crate::era_independent::key::command::KeyVerificationKeyCmdArgs {
+                        signing_key_file: PathBuf::from("/tmp/p.skey"),
+                        verification_key_file: PathBuf::from("/tmp/p.vkey"),
+                    },
+                ),
+            }
+        );
+    }
+
     /// `address key-hash --payment-verification-key-file … --out-file …`
     /// parses through the nested upstream `AddressCmds` group.
     #[test]

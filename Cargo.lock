@@ -3278,10 +3278,12 @@ version = "0.2.0"
 dependencies = [
  "clap",
  "eyre",
+ "hex",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
  "yggdrasil-network",
+ "yggdrasil-node-genesis",
  "yggdrasil-telemetry",
 ]
 

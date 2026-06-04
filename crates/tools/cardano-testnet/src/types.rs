@@ -36,8 +36,7 @@ pub const DEFAULT_TESTNET_MAGIC: i64 = 42;
 
 /// A Cardano ledger era.
 ///
-/// Mirror of `Cardano.Api`'s `CardanoEra` era tag (Byron through
-/// Conway, matching `yggdrasil_ledger::eras::Era`). Upstream's
+/// Mirror of `Cardano.Api`'s `CardanoEra` era tag. Upstream's
 /// `AnyCardanoEra` is the GADT-erased existential wrapper — a plain
 /// Rust enum is already the erased form.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -56,6 +55,8 @@ pub enum CardanoEra {
     Babbage,
     /// The Conway era.
     Conway,
+    /// The Dijkstra era.
+    Dijkstra,
 }
 
 impl CardanoEra {
@@ -72,6 +73,7 @@ impl CardanoEra {
             CardanoEra::Alonzo => "alonzo",
             CardanoEra::Babbage => "babbage",
             CardanoEra::Conway => "conway",
+            CardanoEra::Dijkstra => "dijkstra",
         }
     }
 }
@@ -94,6 +96,8 @@ pub enum ShelleyBasedEra {
     Babbage,
     /// The Conway era.
     Conway,
+    /// The Dijkstra era.
+    Dijkstra,
 }
 
 impl ShelleyBasedEra {
@@ -117,6 +121,7 @@ impl From<ShelleyBasedEra> for CardanoEra {
             ShelleyBasedEra::Alonzo => CardanoEra::Alonzo,
             ShelleyBasedEra::Babbage => CardanoEra::Babbage,
             ShelleyBasedEra::Conway => CardanoEra::Conway,
+            ShelleyBasedEra::Dijkstra => CardanoEra::Dijkstra,
         }
     }
 }
@@ -531,17 +536,23 @@ mod tests {
     fn cardano_era_to_string_is_lowercase_name() {
         assert_eq!(CardanoEra::Byron.era_to_string(), "byron");
         assert_eq!(CardanoEra::Conway.era_to_string(), "conway");
+        assert_eq!(CardanoEra::Dijkstra.era_to_string(), "dijkstra");
         assert_eq!(CardanoEra::Alonzo.era_to_string(), "alonzo");
     }
 
     #[test]
     fn shelley_based_era_to_string_and_widening() {
         assert_eq!(ShelleyBasedEra::Conway.era_to_string(), "conway");
+        assert_eq!(ShelleyBasedEra::Dijkstra.era_to_string(), "dijkstra");
         assert_eq!(ShelleyBasedEra::Shelley.era_to_string(), "shelley");
         assert_eq!(CardanoEra::from(ShelleyBasedEra::Mary), CardanoEra::Mary);
         assert_eq!(
             CardanoEra::from(ShelleyBasedEra::Babbage),
             CardanoEra::Babbage
+        );
+        assert_eq!(
+            CardanoEra::from(ShelleyBasedEra::Dijkstra),
+            CardanoEra::Dijkstra
         );
     }
 
@@ -549,6 +560,7 @@ mod tests {
     fn cardano_era_is_ordered_byron_first() {
         assert!(CardanoEra::Byron < CardanoEra::Shelley);
         assert!(CardanoEra::Babbage < CardanoEra::Conway);
+        assert!(CardanoEra::Conway < CardanoEra::Dijkstra);
     }
 
     #[test]

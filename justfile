@@ -59,11 +59,14 @@ parity-fixtures:
 parity-mirror:
     python3 dev/test/check-strict-mirror.py --fail-on-violation
 
+parity-types:
+    python3 dev/test/check-type-parity.py
+
 placement-check:
     python3 dev/test/check-stale-placement.py --self-test
     python3 dev/test/check-stale-placement.py
 
-parity-all: parity-check parity-fixtures parity-mirror placement-check
+parity-all: parity-check parity-fixtures parity-mirror parity-types placement-check
 
 # Scaffold a parity-matrix.json entry for a newly-added Rust file.
 # Wave 9 PR 27 lands the xtask subcommand; this recipe wraps it.
